@@ -302,3 +302,6 @@ coverage/
 screenshot.sh
 screenshots/
 *.png.tmp
+
+# Claude Code local config
+blogs/.claude/
