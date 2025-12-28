@@ -20,6 +20,8 @@ Tools change. Fundamentals don't. Deep understanding cannot be outsourced.
 
 Design for failure. If something can go wrong, make it recoverable.
 
+Health is not optional. Mind and body are the foundation everything else is built on.
+
 ---
 
 ## Directory Structure
