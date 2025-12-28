@@ -1,0 +1,10 @@
+{
+  "filters": {},
+  "rules": {
+    "preset-ja-technical-writing": true,
+    "ja-no-weak-phrase": true,
+    "prh": {
+      "rulePaths": ["./prh.yml"]
+    }
+  }
+}

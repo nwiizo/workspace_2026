@@ -1,0 +1,102 @@
+version: 1
+rules:
+  # 比喩表現の除去
+  - expected: 指針
+    pattern: /羅針盤/g
+  - expected: 参考
+    pattern: /地図/g
+  - expected: 概要
+    pattern: /風景/g
+  - expected: 基盤
+    pattern: /土台/g
+  - expected: 方向性
+    pattern: /道筋/g
+
+  # AIっぽい表現の除去・修正
+  # 冗長な指示詞
+  - expected: この
+    pattern: /このような/g
+  - expected: その
+    pattern: /そのような/g
+  - expected: これは
+    pattern: /これらは/g
+
+  # 過度な強調表現（AIが多用する）
+  - expected: より
+    pattern: /さらに/g
+  - expected: 重要な
+    pattern: /非常に重要な/g
+  - expected: 役立つ
+    pattern: /非常に役立つ/g
+  - expected: 効果的
+    pattern: /非常に効果的/g
+  - expected: 有用
+    pattern: /非常に有用/g
+  - expected: 便利
+    pattern: /非常に便利/g
+  - expected: 価値がある
+    pattern: /非常に価値がある/g
+
+  # AI特有の接続詞・転換表現
+  - expected: しかし
+    pattern: /ただし/g
+  - expected: また
+    pattern: /加えて/g
+  - expected: 最後に
+    pattern: /最終的に/g
+
+  # AI特有の列挙表現
+  - expected: 例えば
+    pattern: /具体的には/g
+
+  # 不自然な丁寧表現（AIが過剰に使用）
+  - expected: できます
+    pattern: /いただくことができます/g
+  - expected: します
+    pattern: /させていただきます/g
+
+  # AI特有のまとめ表現
+  - expected: まとめると
+    pattern: /まとめますと/g
+
+  # 機械的な条件表現
+  - expected: なら
+    pattern: /(?:の)?場合には/g
+  - expected: 時は
+    pattern: /場合は/g
+
+  # 冗長な表現の簡略化
+  - expected: 重要
+    pattern: /極めて重要/g
+  - expected: 必要
+    pattern: /絶対に必要/g
+  - expected: できる
+    pattern: /することができる/g
+  - expected: である
+    pattern: /であると言える/g
+
+  # 比喩的・詩的な表現
+  - expected: 到達
+    pattern: /辿り着/g
+  - expected: 開始
+    pattern: /扉を開/g
+  - expected: 問題
+    pattern: /落とし穴/g
+  - expected: 困難
+    pattern: /壁/g
+  - expected: 深く考える
+    pattern: /深く掘り下げ/g
+
+  # 弱い表現の除去
+  - expected: だろう
+    pattern: /かもしれない/g
+  - expected: だろう
+    pattern: /かもしれません/g
+  - expected: です
+    pattern: /だと思います/g
+  - expected: でしょう
+    pattern: /と思います/g
+  - expected: ます
+    pattern: /と考えています/g
+  - expected: だ
+    pattern: /と考えます/g
