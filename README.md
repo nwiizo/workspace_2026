@@ -1,16 +1,16 @@
-# workspace_2026
+# workspace_2026 🛠️
 
-**Build. Learn. Ship.**
+**Build. Learn. Ship.** *(and mass produce it.)*
 
-[じゃあ、おうちで学べる](https://syu-m-5151.hatenablog.com/)
+📝 Blog: [じゃあ、おうちで学べる](https://syu-m-5151.hatenablog.com/) - My tech blog where mass production knows no boundaries
 
 ---
 
-## Focus
+## Focus 🎯
 
 Systems programming, distributed systems, and AI infrastructure.
 
-### Philosophy
+### Philosophy 💭
 
 Be infrastructure, not user. Build systems that work regardless of how they're used.
 
@@ -18,11 +18,11 @@ Tools change. Fundamentals don't. Deep understanding cannot be outsourced.
 
 Design for failure. If something can go wrong, make it recoverable.
 
-Health is not optional. Mind and body are the foundation everything else is built on.
+Health is not optional. Mind and body are the foundation everything else is built on. 🏃‍♂️
 
 ---
 
-## Directory Structure
+## Directory Structure 📁
 
 - `blogs/` - Blog articles
 - `tools/` - Tools and verification code
