@@ -1,6 +1,6 @@
 # workspace_2026
 
-**A document to clarify value priorities and focus on daily progress.**
+**Build. Learn. Ship.**
 
 https://github.com/nwiizo/workspace_2026
 
