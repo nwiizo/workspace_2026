@@ -2,8 +2,6 @@
 
 **Build. Learn. Ship.**
 
-https://github.com/nwiizo/workspace_2026
-
 [じゃあ、おうちで学べる](https://syu-m-5151.hatenablog.com/)
 
 ---
