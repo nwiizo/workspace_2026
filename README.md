@@ -33,4 +33,6 @@ Health is not optional. Mind and body are the foundation everything else is buil
 
 ## Star ⭐
 
+Hi! This repository is made for friends, so there's no formal license file. If you give it a ⭐ star, you're my friend and free to use it however you like. If you need reassurance, consider it MIT-equivalent.
+
 If you star this repository, you can call yourself a friend of nwiizo for one year.
