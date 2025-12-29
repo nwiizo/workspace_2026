@@ -53,3 +53,4 @@ uv run --frozen ruff format . && uv run --frozen ruff check . && uv run --frozen
 - Prefer editing existing files over creating new ones
 - Keep documentation minimal and accurate
 - No hardcoded secrets or API keys
+- **Documentation files**: Only `CLAUDE.md` and `README.md` in each directory (no other docs)
