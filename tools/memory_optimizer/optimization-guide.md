@@ -17,7 +17,7 @@ CLAUDE.md を最小限のスタートアップコンテキストにリファク�
 | ファイル拡張子 (`.ts`, `.py`) やディレクトリ (`src/api/`) | `.claude/rules/{topic}.md` | `paths: {glob}` |
 | 複数ステップのワークフロー (3+ ステップ) | `.claude/skills/{name}/SKILL.md` | `name:`, `description:` |
 | ユーザートリガーのテンプレート | `.claude/commands/{name}.md` | `description:` |
-| 限定ツールが必要な特殊タスク | `.claude/agents/{name}.md` | `name:`, `description:`, `tools:` |
+| 限定ツールが必要な特殊タスク | `.claude/agents/{name}.md` | `name:`, `description:`, `allowed-tools:` |
 | **すべての操作に必須** | CLAUDE.md に残す | — |
 
 ---

@@ -36,6 +36,7 @@ paths: src/**/*.ts
 ---
 name: {kebab-case-name}
 description: {What it does}. Use when {trigger1}, {trigger2}, or {trigger3}.
+allowed-tools: Read, Grep, Glob
 ---
 # {Name}
 
@@ -53,6 +54,10 @@ description: {What it does}. Use when {trigger1}, {trigger2}, or {trigger3}.
 ```
 
 **必須フロントマター**: `name:`, `description:`
+
+**オプションフロントマター**:
+- `allowed-tools:` - 許可するツール（カンマ区切り）
+- `model:` - 使用するモデルの指定
 
 ---
 
@@ -93,7 +98,8 @@ ARGUMENTS: $ARGUMENTS
 ---
 name: {name}
 description: {What it does}. Use proactively for {triggers}.
-tools: Read, Grep, Glob
+allowed-tools: Read, Grep, Glob
+skills: skill-name-1, skill-name-2
 ---
 # {Name}
 
@@ -114,7 +120,11 @@ tools: Read, Grep, Glob
 {Expected output}
 ```
 
-**必須フロントマター**: `name:`, `description:`, `tools:`
+**必須フロントマター**: `name:`, `description:`
+
+**オプションフロントマター**:
+- `allowed-tools:` - 許可するツール（カンマ区切り）
+- `skills:` - アクセスを許可するスキル（カンマ区切り）
 
 **利用可能なツール**:
 - `Read` - ファイル読み込み
