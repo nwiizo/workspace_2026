@@ -28,3 +28,9 @@ Health is not optional. Mind and body are the foundation everything else is buil
 - `tools/` - Tools and verification code
 - `infrastructure/` - Infrastructure experiments
 - `samples/` - Samples and experiments
+
+---
+
+## Star ⭐
+
+If you star this repository, you can call yourself a friend of nwiizo for one year.
