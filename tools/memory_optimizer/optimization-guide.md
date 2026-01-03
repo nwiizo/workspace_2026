@@ -14,7 +14,7 @@ CLAUDE.md を最小限のスタートアップコンテキストにリファク�
 
 | CLAUDE.md の内容 | 抽出先 | フロントマター |
 |-----------------|--------|---------------|
-| ファイル拡張子 (`.ts`, `.py`) やディレクトリ (`src/api/`) | `.claude/rules/{topic}.md` | `paths: {glob}` |
+| ファイル拡張子 (`.ts`, `.rs`, `.py`) やディレクトリ (`src/api/`) | `.claude/rules/{topic}.md` | `paths: {glob}` |
 | 複数ステップのワークフロー (3+ ステップ) | `.claude/skills/{name}/SKILL.md` | `name:`, `description:` |
 | ユーザートリガーのテンプレート | `.claude/commands/{name}.md` | `description:` |
 | 限定ツールが必要な特殊タスク | `.claude/agents/{name}.md` | `name:`, `description:`, `allowed-tools:` |
@@ -45,6 +45,8 @@ CLAUDE.md を読み、以下を確認:
 | Content        | Extract To                     | Type    | Trigger/Path        |
 | -------------- | ------------------------------ | ------- | ------------------- |
 | TS conventions | .claude/rules/typescript.md    | Rule    | `**/*.ts`           |
+| Rust conventions | .claude/rules/rust.md        | Rule    | `**/*.rs`           |
+| Python conventions | .claude/rules/python.md    | Rule    | `**/*.py`           |
 | Deploy process | .claude/skills/deploy/SKILL.md | Skill   | "deploy", "release" |
 | PR template    | .claude/commands/review.md     | Command | `/review`           |
 | Security check | .claude/agents/security.md     | Agent   | security tasks      |
@@ -80,6 +82,7 @@ Reduction: 77%
 
 **例**:
 - TypeScript規約 → `.claude/rules/typescript.md`
+- Rust規約 → `.claude/rules/rust.md`
 - Python規約 → `.claude/rules/python.md`
 - API設計 → `.claude/rules/api-design.md`
 

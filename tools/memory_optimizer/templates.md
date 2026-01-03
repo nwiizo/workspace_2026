@@ -8,7 +8,7 @@
 
 ```yaml
 ---
-paths: src/**/*.ts
+paths: src/**/*.ts  # or *.rs, *.py
 ---
 # {Topic}
 
@@ -26,7 +26,7 @@ paths: src/**/*.ts
 
 **paths の書き方**:
 - 単一: `paths: src/**/*.ts`
-- 複数: `paths: ["src/**/*.ts", "lib/**/*.ts"]`
+- 複数: `paths: ["**/*.ts", "**/*.rs", "**/*.py"]`
 
 ---
 
