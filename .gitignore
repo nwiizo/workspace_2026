@@ -63,6 +63,7 @@ downloads/
 eggs/
 .eggs/
 lib/
+!**/frontend/src/lib/
 lib64/
 parts/
 sdist/
@@ -306,3 +307,6 @@ screenshots/
 # Claude Code local config
 blogs/.claude/
 blogs/CLAUDE.md
+
+# Blog contents (working drafts)
+blogs/contents/

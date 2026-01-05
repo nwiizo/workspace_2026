@@ -1,0 +1,97 @@
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Hydra Migration (run once)
+  hydra-migrate:
+    image: oryd/hydra:v2.2
+    environment:
+      DSN: postgres://postgres:postgres@postgres:5432/postgres?sslmode=disable
+    command: migrate sql -e --yes
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # Ory Hydra OAuth2/OIDC Server
+  hydra:
+    image: oryd/hydra:v2.2
+    environment:
+      DSN: postgres://postgres:postgres@postgres:5432/postgres?sslmode=disable
+      SECRETS_SYSTEM: super-secret-system-secret-at-least-32-chars
+      SECRETS_COOKIE: super-secret-cookie-secret-at-least-32-chars
+      URLS_SELF_ISSUER: http://localhost:4444
+      URLS_CONSENT: http://localhost:3000/consent
+      URLS_LOGIN: http://localhost:3000/login
+      URLS_LOGOUT: http://localhost:3000/logout
+      URLS_POST_LOGOUT_REDIRECT: http://localhost:3000/
+      SERVE_PUBLIC_CORS_ENABLED: "true"
+      SERVE_PUBLIC_CORS_ALLOWED_ORIGINS: "*"
+      SERVE_ADMIN_CORS_ENABLED: "true"
+      SERVE_ADMIN_CORS_ALLOWED_ORIGINS: "*"
+      LOG_LEVEL: debug
+      LOG_FORMAT: json
+    command: serve all --dev
+    ports:
+      - "4444:4444"  # Public API
+      - "4445:4445"  # Admin API
+    depends_on:
+      hydra-migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:4444/health/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Rust Auth Provider / API Backend
+  auth-provider:
+    build: .
+    environment:
+      HOST: 0.0.0.0
+      PORT: 3000
+      HYDRA_ADMIN_URL: http://hydra:4445
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/postgres?sslmode=disable
+      JWT_SECRET: super-secret-jwt-key-for-development-only
+      JWT_ISSUER: auth.example.com
+      RUST_LOG: ory_hydra_rust=debug,tower_http=debug
+    ports:
+      - "3000:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      hydra:
+        condition: service_healthy
+
+  # Next.js Frontend
+  frontend:
+    build: ./frontend
+    environment:
+      NODE_ENV: development
+      API_BASE_URL: http://auth-provider:3000
+      NEXT_PUBLIC_API_URL: http://localhost:3000
+      NEXT_PUBLIC_HYDRA_URL: http://localhost:4444
+      NEXT_PUBLIC_CLIENT_ID: demo-client
+      NEXT_PUBLIC_REDIRECT_URI: http://localhost:3001/callback
+      NEXT_PUBLIC_DEFAULT_TENANT: test-shop
+      HYDRA_PUBLIC_URL: http://hydra:4444
+      HYDRA_ADMIN_URL: http://hydra:4445
+      CLIENT_SECRET: demo-secret
+    ports:
+      - "3001:3000"
+    depends_on:
+      - auth-provider
+
+volumes:
+  postgres_data:
