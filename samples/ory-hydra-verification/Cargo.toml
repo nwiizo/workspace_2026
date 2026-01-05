@@ -1,0 +1,15 @@
+[package]
+name = "ory-hydra-verification"
+version = "0.1.0"
+edition = "2021"
+description = "Technical verification for Ory Hydra authentication patterns"
+
+[dependencies]
+argon2 = { version = "0.5", features = ["std"] }
+rand_core = { version = "0.6", features = ["std"] }
+thiserror = "1"
+tokio = { version = "1", features = ["full", "sync"] }
+uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+tokio-test = "0.4"
