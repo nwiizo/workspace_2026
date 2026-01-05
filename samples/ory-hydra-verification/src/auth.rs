@@ -87,6 +87,13 @@ impl AuthService {
 
         Ok(user.clone())
     }
+
+    /// IDでユーザーを取得
+    pub async fn get_user_by_id(&self, id: &str) -> Option<User> {
+        let id = Uuid::parse_str(id).ok()?;
+        let users = self.users.read().await;
+        users.values().find(|u| u.id == id).cloned()
+    }
 }
 
 impl Default for AuthService {

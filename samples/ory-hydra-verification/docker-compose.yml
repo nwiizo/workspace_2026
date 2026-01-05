@@ -1,0 +1,55 @@
+services:
+  # PostgreSQL for Hydra
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: hydra
+      POSTGRES_PASSWORD: secret
+      POSTGRES_DB: hydra
+    ports:
+      - "5434:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hydra"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Hydra - Run migrations
+  hydra-migrate:
+    image: oryd/hydra:v2.2
+    environment:
+      DSN: postgres://hydra:secret@postgres:5432/hydra?sslmode=disable
+    command: migrate sql -e --yes
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # Hydra - OAuth2 Server
+  hydra:
+    image: oryd/hydra:v2.2
+    environment:
+      DSN: postgres://hydra:secret@postgres:5432/hydra?sslmode=disable
+      URLS_SELF_ISSUER: http://localhost:4444
+      URLS_LOGIN: http://localhost:3000/login
+      URLS_CONSENT: http://localhost:3000/consent
+      URLS_LOGOUT: http://localhost:3000/logout
+      SECRETS_SYSTEM: youReallyNeedToChangeThis
+      OIDC_SUBJECT_IDENTIFIERS_SUPPORTED_TYPES: public
+      LOG_LEVEL: debug
+    command: serve all --dev
+    ports:
+      - "4444:4444"  # Public API
+      - "4445:4445"  # Admin API
+    depends_on:
+      hydra-migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:4444/health/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:
