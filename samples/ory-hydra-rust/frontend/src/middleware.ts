@@ -2,7 +2,8 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
 const PROTECTED_PATHS = ["/dashboard", "/incidents", "/projects", "/engineers", "/recruitment", "/leaderboard", "/tenants"];
-const ADMIN_PATHS = ["/dashboard", "/incidents", "/projects", "/engineers", "/recruitment", "/leaderboard"];
+const ADMIN_PATHS = ["/dashboard", "/projects", "/engineers", "/recruitment", "/leaderboard"];
+const REPORTER_PATHS = ["/incidents"];  // Reporter can only access incidents
 const PLATFORM_ADMIN_PATHS = ["/tenants"];
 
 function getUserFromCookie(request: NextRequest): { email: string; role: string } | null {
@@ -47,7 +48,13 @@ export function middleware(request: NextRequest) {
       return NextResponse.redirect(new URL("/?error=unauthorized", request.url));
     }
 
-    // Admin paths - platform_admin, manager, engineer can access
+    // Reporter paths - reporter, engineer, manager, platform_admin can access
+    const isReporterPath = REPORTER_PATHS.some((p) => pathname.startsWith(p));
+    if (isReporterPath && !["platform_admin", "manager", "engineer", "reporter"].includes(role)) {
+      return NextResponse.redirect(new URL("/?error=unauthorized", request.url));
+    }
+
+    // Admin paths - platform_admin, manager, engineer can access (not reporter)
     const isAdminPath = ADMIN_PATHS.some((p) => pathname.startsWith(p));
     if (isAdminPath && !["platform_admin", "manager", "engineer"].includes(role)) {
       return NextResponse.redirect(new URL("/?error=unauthorized", request.url));

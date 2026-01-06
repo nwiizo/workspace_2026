@@ -261,8 +261,8 @@ pub async fn show_consent(
             </div>
 
             <div class="button-group">
-                <button type="submit" name="accept" value="deny" class="deny">Deny</button>
-                <button type="submit" name="accept" value="accept">Allow</button>
+                <button type="submit" id="deny-btn" name="accept" value="deny" class="deny">Deny</button>
+                <button type="submit" id="allow-btn" name="accept" value="accept">Allow</button>
             </div>
         </form>
 

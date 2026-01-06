@@ -144,7 +144,7 @@ function HomeContent() {
                       Reporter
                     </span>
                   </td>
-                  <td className="px-4 py-3 font-mono text-gray-900">customer@example.com</td>
+                  <td className="px-4 py-3 font-mono text-gray-900">reporter@example.com</td>
                   <td className="px-4 py-3 text-gray-600">Report incidents only</td>
                 </tr>
               </tbody>
