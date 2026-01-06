@@ -5,15 +5,20 @@ use axum::{
     response::Response,
 };
 use std::sync::Arc;
-use tracing::instrument;
+use tracing::{debug, instrument};
+use uuid::Uuid;
 
 use crate::error::AppError;
 use crate::models::Claims;
 use crate::state::AppState;
 
-/// Middleware to require authentication via JWT
+/// Middleware to require authentication via JWT or Hydra token
 ///
-/// Extracts and validates the JWT token from the Authorization header.
+/// Extracts and validates the token from the Authorization header.
+/// Supports both:
+/// - JWT tokens issued by this service
+/// - Ory Hydra access tokens (validated via introspection)
+///
 /// On success, adds the Claims to request extensions.
 #[instrument(skip(state, request, next))]
 pub async fn require_auth(
@@ -37,11 +42,62 @@ pub async fn require_auth(
             "Invalid Authorization header format. Expected: Bearer <token>".to_string(),
         ))?;
 
-    // Verify token
-    let claims = state
-        .jwt
-        .verify_access_token(token)
-        .map_err(|_| AppError::AuthenticationFailed("Invalid or expired token".to_string()))?;
+    // Try JWT verification first
+    let claims = match state.jwt.verify_access_token(token) {
+        Ok(claims) => {
+            debug!("JWT token verified successfully");
+            claims
+        }
+        Err(_) => {
+            // JWT verification failed, try Hydra introspection
+            debug!("JWT verification failed, trying Hydra introspection");
+
+            let introspection = state
+                .hydra
+                .introspect_token(token)
+                .await
+                .map_err(|e| {
+                    debug!("Hydra introspection failed: {:?}", e);
+                    AppError::AuthenticationFailed("Invalid or expired token".to_string())
+                })?;
+
+            debug!("Hydra token introspection successful: sub={:?}", introspection.sub);
+
+            // Convert introspection response to Claims
+            let sub = introspection.sub.ok_or_else(|| {
+                AppError::AuthenticationFailed("Token has no subject".to_string())
+            })?;
+
+            // Extract custom claims from ext (set during consent)
+            let (email, role, tenant_id) = if let Some(ext) = &introspection.ext {
+                (
+                    ext.get("email").and_then(|v| v.as_str()).map(String::from),
+                    ext.get("role").and_then(|v| v.as_str()).map(String::from),
+                    ext.get("tenant_id")
+                        .and_then(|v| v.as_str())
+                        .and_then(|s| Uuid::parse_str(s).ok()),
+                )
+            } else {
+                (None, None, None)
+            };
+
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs() as usize;
+
+            Claims {
+                sub,
+                exp: introspection.exp.unwrap_or(0) as usize,
+                iat: introspection.iat.unwrap_or(now as i64) as usize,
+                iss: introspection.iss.unwrap_or_default(),
+                aud: introspection.aud.unwrap_or_default(),
+                email,
+                role,
+                tenant_id,
+            }
+        }
+    };
 
     // Add claims to request extensions
     request.extensions_mut().insert(claims);

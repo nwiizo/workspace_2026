@@ -196,6 +196,7 @@ export interface AddSpecialtyRequest {
 class ApiClient {
   private baseUrl: string;
   private token?: string;
+  private tenantSlug: string = "test-shop"; // Default tenant for local development
 
   constructor(baseUrl: string = API_BASE_URL) {
     this.baseUrl = baseUrl;
@@ -209,12 +210,21 @@ class ApiClient {
     this.token = undefined;
   }
 
+  setTenantSlug(slug: string) {
+    this.tenantSlug = slug;
+  }
+
+  getTenantSlug(): string {
+    return this.tenantSlug;
+  }
+
   private async fetch<T>(
     endpoint: string,
     options: RequestInit = {}
   ): Promise<T> {
     const headers: HeadersInit = {
       "Content-Type": "application/json",
+      "X-Tenant-Slug": this.tenantSlug,
       ...options.headers,
     };
 

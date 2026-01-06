@@ -18,10 +18,10 @@ export default function IncidentsPage() {
   const [formData, setFormData] = useState({ title: "", description: "", severity: "medium" });
 
   useEffect(() => {
-    const token = document.cookie
+    const cookieRow = document.cookie
       .split("; ")
-      .find((row) => row.startsWith("auth_token="))
-      ?.split("=")[1];
+      .find((row) => row.startsWith("auth_token="));
+    const token = cookieRow ? cookieRow.substring("auth_token=".length) : null;
     if (token) api.setToken(token);
 
     loadIncidents();

@@ -12,7 +12,10 @@ use axum::{
     routing::{delete, get, patch, post, put},
 };
 use std::sync::Arc;
-use tower_http::trace::TraceLayer;
+use tower_http::{
+    cors::{Any, CorsLayer},
+    trace::TraceLayer,
+};
 use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -163,6 +166,10 @@ async fn main() -> anyhow::Result<()> {
         .layer(axum_middleware::from_fn_with_state(
             state.clone(),
             middleware::require_auth,
+        ))
+        .layer(axum_middleware::from_fn_with_state(
+            state.clone(),
+            middleware::extract_tenant,
         ));
 
     // Build the router
@@ -199,6 +206,13 @@ async fn main() -> anyhow::Result<()> {
         .nest("/api/v1", platform_api)
         // API v1 - Tenant operations (DONADONA)
         .nest("/api/v1/tenant", tenant_api)
+        // Add CORS layer (allow frontend origin)
+        .layer(
+            CorsLayer::new()
+                .allow_origin(Any)
+                .allow_methods(Any)
+                .allow_headers(Any),
+        )
         // Add tracing layer
         .layer(TraceLayer::new_for_http())
         // Add shared state

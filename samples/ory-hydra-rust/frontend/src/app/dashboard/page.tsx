@@ -12,10 +12,10 @@ export default function DashboardPage() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    const token = document.cookie
+    const cookieRow = document.cookie
       .split("; ")
-      .find((row) => row.startsWith("auth_token="))
-      ?.split("=")[1];
+      .find((row) => row.startsWith("auth_token="));
+    const token = cookieRow ? cookieRow.substring("auth_token=".length) : null;
 
     if (token) {
       api.setToken(token);

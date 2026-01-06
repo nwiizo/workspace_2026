@@ -3,6 +3,9 @@
 .env.local
 .env.*.local
 
+# Claude Code local settings (personal, not shared)
+.claude/settings.local.json
+
 # Rust build artifacts
 /target/
 
@@ -26,6 +29,9 @@ Thumbs.db
 # Logs
 *.log
 npm-debug.log*
+
+# Playwright MCP (screenshots, traces)
+.playwright-mcp/
 
 # Lock files (optional - uncomment if you want to track them)
 # Cargo.lock

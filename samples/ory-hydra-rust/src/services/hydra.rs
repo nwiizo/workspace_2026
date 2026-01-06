@@ -238,4 +238,58 @@ impl HydraClient {
 
         Ok(())
     }
+
+    /// Introspect an access token
+    /// Returns token info if valid, or error if invalid/expired
+    #[instrument(skip(self, token))]
+    pub async fn introspect_token(&self, token: &str) -> Result<IntrospectionResponse, AppError> {
+        let url = format!("{}/admin/oauth2/introspect", self.admin_url);
+
+        let resp = self
+            .client
+            .post(&url)
+            .form(&[("token", token)])
+            .send()
+            .await?
+            .error_for_status()
+            .map_err(|e| AppError::HydraError(e.to_string()))?;
+
+        let introspection: IntrospectionResponse = resp
+            .json()
+            .await
+            .map_err(|e| AppError::HydraError(e.to_string()))?;
+
+        if !introspection.active {
+            return Err(AppError::AuthenticationFailed(
+                "Token is not active".to_string(),
+            ));
+        }
+
+        Ok(introspection)
+    }
+}
+
+/// Response from Hydra token introspection endpoint
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct IntrospectionResponse {
+    /// Whether the token is active
+    pub active: bool,
+    /// Subject (user ID)
+    pub sub: Option<String>,
+    /// Client ID
+    pub client_id: Option<String>,
+    /// Token scope
+    pub scope: Option<String>,
+    /// Token expiration time (Unix timestamp)
+    pub exp: Option<i64>,
+    /// Token issue time (Unix timestamp)
+    pub iat: Option<i64>,
+    /// Token not before time (Unix timestamp)
+    pub nbf: Option<i64>,
+    /// Token audience
+    pub aud: Option<Vec<String>>,
+    /// Token issuer
+    pub iss: Option<String>,
+    /// Custom claims from ID token (ext)
+    pub ext: Option<serde_json::Value>,
 }

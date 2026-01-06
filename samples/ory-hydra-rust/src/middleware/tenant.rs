@@ -39,6 +39,11 @@ pub async fn extract_tenant(
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_string());
 
+    tracing::debug!(
+        slug_from_header = ?slug_from_header,
+        "Checking X-Tenant-Slug header"
+    );
+
     // Then try subdomain
     let subdomain = host.split('.').next().unwrap_or("");
     let slug_from_subdomain = if is_special_subdomain(subdomain)
