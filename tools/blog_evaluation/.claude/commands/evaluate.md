@@ -1,8 +1,8 @@
 ---
-description: Evaluate - ブログ記事総合評価 v2.2 (project)
+description: Evaluate - ブログ記事総合評価 v2.3 (project)
 ---
 
-# Evaluate - ブログ記事総合評価 v2.2
+# Evaluate - ブログ記事総合評価 v2.3
 
 指定されたブログ記事を7つの観点から評価し、建設的なフィードバックを提供します。
 

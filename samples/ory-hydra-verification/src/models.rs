@@ -24,6 +24,9 @@ pub struct ConsentRequest {
     pub client: Option<Client>,
     pub requested_scope: Option<Vec<String>>,
     pub requested_access_token_audience: Option<Vec<String>>,
+    /// Context passed from login accept
+    /// Best Practice: Contains user metadata to avoid DB lookup
+    pub context: Option<serde_json::Value>,
 }
 
 /// OAuth2 Client information
@@ -39,6 +42,21 @@ pub struct AcceptLoginRequest {
     pub subject: String,
     pub remember: bool,
     pub remember_for: i64,
+    /// Context to pass to consent request
+    /// Best Practice: Store user metadata here to avoid DB lookup in consent
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context: Option<serde_json::Value>,
+}
+
+/// User context passed from login to consent
+/// Best Practice: Store all user metadata needed in consent to avoid DB lookup
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct UserContext {
+    pub email: String,
+    pub role: String,
+    /// For multi-tenant SaaS applications
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tenant_id: Option<String>,
 }
 
 /// Accept Consent Request body

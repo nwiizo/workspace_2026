@@ -1,0 +1,129 @@
+[package]
+name = "api-security-demo"
+version = "0.1.0"
+edition = "2024"
+description = "API Security vulnerability demonstrations in Rust - OWASP API Security Top 10"
+license = "MIT"
+authors = ["nwiizo"]
+repository = "https://github.com/nwiizo/workspace_2025"
+keywords = ["security", "api", "owasp", "vulnerability", "demo"]
+categories = ["web-programming", "development-tools"]
+
+[dependencies]
+# Web framework
+axum = { version = "0.8", features = ["macros"] }
+axum-extra = { version = "0.10", features = ["typed-header"] }
+tokio = { version = "1", features = ["full"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors", "trace", "limit"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Authentication & Authorization
+jsonwebtoken = "9"
+argon2 = "0.5"
+rand = "0.8"
+base64 = "0.22"
+
+# HTTP client (for SSRF examples and testing)
+reqwest = { version = "0.12", features = ["json"] }
+
+# Logging & Observability
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# OpenTelemetry
+opentelemetry = "0.27"
+opentelemetry_sdk = { version = "0.27", features = ["rt-tokio"] }
+opentelemetry-stdout = { version = "0.27", features = ["trace", "metrics"] }
+tracing-opentelemetry = "0.28"
+
+# Error handling
+thiserror = "2"
+anyhow = "1"
+
+# Async utilities
+async-trait = "0.1"
+
+# Database (SQLite for examples)
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+# UUID
+uuid = { version = "1", features = ["v4", "serde"] }
+
+# Time handling
+chrono = { version = "0.4", features = ["serde"] }
+
+# Rate limiting
+governor = "0.8"
+
+# URL parsing (for SSRF validation)
+url = "2"
+
+# HMAC signature verification (for API10)
+hmac = "0.12"
+sha2 = "0.10"
+hex = "0.4"
+
+[dev-dependencies]
+# Testing
+tokio-test = "0.4"
+wiremock = "0.6"
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"
+hyper = "1"
+
+# Binary definitions with descriptive names
+[[bin]]
+name = "bola-demo"
+path = "src/bin/bola.rs"
+
+[[bin]]
+name = "bfla-demo"
+path = "src/bin/bfla.rs"
+
+[[bin]]
+name = "mass-assignment-demo"
+path = "src/bin/mass_assignment.rs"
+
+[[bin]]
+name = "broken-auth-demo"
+path = "src/bin/broken_auth.rs"
+
+[[bin]]
+name = "rate-limit-demo"
+path = "src/bin/rate_limit.rs"
+
+[[bin]]
+name = "ssrf-demo"
+path = "src/bin/ssrf.rs"
+
+[[bin]]
+name = "jwt-demo"
+path = "src/bin/jwt.rs"
+
+[[bin]]
+name = "observability-demo"
+path = "src/bin/observability.rs"
+
+[[bin]]
+name = "security-test-demo"
+path = "src/bin/security_test.rs"
+
+[[bin]]
+name = "business-flow-demo"
+path = "src/bin/business_flow.rs"
+
+[[bin]]
+name = "misconfiguration-demo"
+path = "src/bin/misconfiguration.rs"
+
+[[bin]]
+name = "inventory-demo"
+path = "src/bin/inventory.rs"
+
+[[bin]]
+name = "unsafe-consumption-demo"
+path = "src/bin/unsafe_consumption.rs"

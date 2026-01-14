@@ -1,0 +1,28 @@
+version: v0.12.0
+
+log:
+  level: debug
+  format: text
+
+serve:
+  read:
+    host: 0.0.0.0
+    port: 4466
+  write:
+    host: 0.0.0.0
+    port: 4467
+  metrics:
+    host: 0.0.0.0
+    port: 4468
+
+namespaces:
+  - id: 0
+    name: User
+  - id: 1
+    name: Organization
+  - id: 2
+    name: Project
+  - id: 3
+    name: Document
+
+# DSN is set via environment variable

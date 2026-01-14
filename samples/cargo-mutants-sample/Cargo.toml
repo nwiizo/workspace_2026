@@ -1,0 +1,14 @@
+[package]
+name = "cargo-mutants-sample"
+version = "0.1.0"
+edition = "2024"
+description = "Sample project for demonstrating cargo-mutants features"
+
+[dependencies]
+mutants = "0.0.3"
+
+[dev-dependencies]
+
+[profile.mutants]
+inherits = "test"
+debug = "none"

@@ -49,11 +49,14 @@ impl HydraService {
     }
 
     /// Accept Login Request
+    ///
+    /// Best Practice: Pass user context (email, role) to avoid DB lookup in consent
     pub async fn accept_login(
         &self,
         challenge: &str,
         subject: &str,
         remember: bool,
+        context: Option<serde_json::Value>,
     ) -> Result<CompletedRequest, AppError> {
         let url = format!(
             "{}/admin/oauth2/auth/requests/login/accept?login_challenge={}",
@@ -64,6 +67,7 @@ impl HydraService {
             subject: subject.to_string(),
             remember,
             remember_for: 3600,
+            context,
         };
 
         let response = self

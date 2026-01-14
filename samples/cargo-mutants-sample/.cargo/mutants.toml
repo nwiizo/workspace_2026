@@ -1,0 +1,20 @@
+# cargo-mutants 設定ファイル
+# https://mutants.rs/configuration.html
+
+# テストツールの選択（cargo test または nextest）
+# test_tool = "nextest"
+
+# 並列実行数（デフォルトは論理CPUコア数）
+# jobs = 2
+
+# タイムアウト倍率（デフォルトの5倍を基準に計算）
+timeout_multiplier = 3.0
+
+# 除外するファイルパターン
+# exclude_globs = ["src/generated/*.rs"]
+
+# 除外する正規表現パターン
+# exclude_re = ["impl Debug", "impl Display"]
+
+# 追加の cargo test 引数
+# additional_cargo_test_args = ["--all-targets"]

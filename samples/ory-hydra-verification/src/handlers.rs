@@ -12,7 +12,7 @@ use serde::Deserialize;
 use crate::auth::AuthService;
 use crate::error::AppError;
 use crate::hydra::HydraService;
-use crate::models::ConsentSession;
+use crate::models::{ConsentSession, UserContext};
 
 /// Application state shared across handlers
 #[derive(Clone)]
@@ -46,10 +46,11 @@ pub async fn login_page(
     let login_request = state.hydra.get_login_request(challenge).await?;
 
     // skipフラグが立っている場合は既にセッションがある
+    // Note: skip時はcontextが既に設定されているためNoneで良い
     if login_request.skip {
         let completed = state
             .hydra
-            .accept_login(challenge, &login_request.subject, false)
+            .accept_login(challenge, &login_request.subject, false, None)
             .await?;
         return Ok(Redirect::to(&completed.redirect_to).into_response());
     }
@@ -99,11 +100,27 @@ pub async fn login_submit(
     // 認証処理
     let user = state.auth.authenticate(&form.email, &form.password).await?;
 
-    // Hydraに認証成功を通知
-    let completed = state
-        .hydra
-        .accept_login(&form.login_challenge, &user.id.to_string(), false)
-        .await?;
+    // Best Practice: ユーザー情報をcontextに保存
+    // Consent時にDBルックアップを回避できる
+    let user_context = UserContext {
+        email: user.email.clone(),
+        role: "customer".to_string(), // 実際のアプリではユーザーのロールを取得
+        tenant_id: None,              // マルチテナントSaaSの場合はユーザーのテナントIDを設定
+    };
+
+    // Hydraに認証成功を通知（contextにユーザー情報を含める）
+    let completed =
+        state
+            .hydra
+            .accept_login(
+                &form.login_challenge,
+                &user.id.to_string(),
+                false,
+                Some(serde_json::to_value(&user_context).map_err(|e| {
+                    AppError::Internal(format!("Failed to serialize context: {}", e))
+                })?),
+            )
+            .await?;
 
     // Hydraが指示するURLにリダイレクト
     Ok(Redirect::to(&completed.redirect_to))
@@ -132,17 +149,28 @@ pub async fn consent_page(
     let challenge = &query.consent_challenge;
     let consent_request = state.hydra.get_consent_request(challenge).await?;
 
-    // ユーザー情報を取得
-    let user = state.auth.get_user_by_id(&consent_request.subject).await;
-    let user_email = user.as_ref().map(|u| u.email.clone()).unwrap_or_default();
+    // Best Practice: contextからユーザー情報を取得（DBルックアップ不要）
+    let user_context: Option<UserContext> = consent_request
+        .context
+        .as_ref()
+        .and_then(|ctx| serde_json::from_value(ctx.clone()).ok());
+
+    let (user_email, user_role, user_tenant_id) = user_context
+        .map(|ctx| (ctx.email, ctx.role, ctx.tenant_id))
+        .unwrap_or_default();
 
     // skipフラグが立っている場合は自動承認
     if consent_request.skip {
+        let mut id_token_claims = serde_json::json!({
+            "email": user_email,
+            "role": user_role,
+        });
+        // マルチテナントSaaSの場合はtenant_idを含める
+        if let Some(ref tenant_id) = user_tenant_id {
+            id_token_claims["tenant_id"] = serde_json::json!(tenant_id);
+        }
         let session = ConsentSession {
-            id_token: serde_json::json!({
-                "email": user_email,
-                "role": "customer",
-            }),
+            id_token: id_token_claims,
         };
 
         let completed = state
@@ -170,7 +198,12 @@ pub async fn consent_page(
     let scopes = consent_request.requested_scope.unwrap_or_default();
     let scope_html: String = scopes
         .iter()
-        .map(|s| format!(r#"<li><input type="checkbox" name="grant_scope" value="{}" checked /> {}</li>"#, s, s))
+        .map(|s| {
+            format!(
+                r#"<li><input type="checkbox" name="grant_scope" value="{}" checked /> {}</li>"#,
+                s, s
+            )
+        })
         .collect();
 
     let html = format!(
@@ -217,9 +250,15 @@ pub async fn consent_submit(
     let challenge = &form.consent_challenge;
     let consent_request = state.hydra.get_consent_request(challenge).await?;
 
-    // ユーザー情報を取得
-    let user = state.auth.get_user_by_id(&consent_request.subject).await;
-    let user_email = user.as_ref().map(|u| u.email.clone()).unwrap_or_default();
+    // Best Practice: contextからユーザー情報を取得（DBルックアップ不要）
+    let user_context: Option<UserContext> = consent_request
+        .context
+        .as_ref()
+        .and_then(|ctx| serde_json::from_value(ctx.clone()).ok());
+
+    let (user_email, user_role, user_tenant_id) = user_context
+        .map(|ctx| (ctx.email, ctx.role, ctx.tenant_id))
+        .unwrap_or_default();
 
     let grant_scope = consent_request.requested_scope.unwrap_or_default();
     let grant_audience = consent_request
@@ -227,11 +266,16 @@ pub async fn consent_submit(
         .unwrap_or_default();
 
     // IDトークンにカスタムクレームを追加
+    let mut id_token_claims = serde_json::json!({
+        "email": user_email,
+        "role": user_role,
+    });
+    // マルチテナントSaaSの場合はtenant_idを含める
+    if let Some(ref tenant_id) = user_tenant_id {
+        id_token_claims["tenant_id"] = serde_json::json!(tenant_id);
+    }
     let session = ConsentSession {
-        id_token: serde_json::json!({
-            "email": user_email,
-            "role": "customer",
-        }),
+        id_token: id_token_claims,
     };
 
     let completed = state

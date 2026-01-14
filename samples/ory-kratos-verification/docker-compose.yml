@@ -1,0 +1,116 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: secret
+      POSTGRES_DB: postgres
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - ory
+
+  kratos-migrate:
+    image: oryd/kratos:v1.3.1
+    environment:
+      DSN: postgres://postgres:secret@postgres:5432/kratos?sslmode=disable
+    volumes:
+      - ./kratos:/etc/config/kratos:ro
+    command: migrate sql -e --yes --config /etc/config/kratos/kratos.yml
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - ory
+
+  kratos:
+    image: oryd/kratos:v1.3.1
+    environment:
+      DSN: postgres://postgres:secret@postgres:5432/kratos?sslmode=disable
+      LOG_LEVEL: debug
+      SERVE_PUBLIC_BASE_URL: http://localhost:4433
+      SERVE_ADMIN_BASE_URL: http://localhost:4434
+    volumes:
+      - ./kratos:/etc/config/kratos:ro
+    command: serve all --dev --config /etc/config/kratos/kratos.yml
+    ports:
+      - "4433:4433"  # Public API
+      - "4434:4434"  # Admin API
+    depends_on:
+      kratos-migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:4433/health/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - ory
+
+  hydra-migrate:
+    image: oryd/hydra:v2.2
+    environment:
+      DSN: postgres://postgres:secret@postgres:5432/hydra?sslmode=disable
+    command: migrate sql -e --yes
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - ory
+
+  hydra:
+    image: oryd/hydra:v2.2
+    environment:
+      DSN: postgres://postgres:secret@postgres:5432/hydra?sslmode=disable
+      SECRETS_SYSTEM: super-secret-system-secret-at-least-32-chars
+      URLS_SELF_ISSUER: http://localhost:4444
+      URLS_CONSENT: http://localhost:4455/consent
+      URLS_LOGIN: http://localhost:4455/login
+      URLS_LOGOUT: http://localhost:4455/logout
+      LOG_LEVEL: debug
+    command: serve all --dev
+    ports:
+      - "4444:4444"  # Public API
+      - "4445:4445"  # Admin API
+    depends_on:
+      hydra-migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:4444/health/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - ory
+
+  kratos-ui:
+    image: oryd/kratos-selfservice-ui-node:v1.3.1
+    environment:
+      PORT: 4455
+      KRATOS_PUBLIC_URL: http://kratos:4433
+      KRATOS_BROWSER_URL: http://localhost:4433
+      HYDRA_ADMIN_URL: http://hydra:4445
+      COOKIE_SECRET: super-secret-cookie-secret-32chars
+      CSRF_COOKIE_NAME: ory_csrf_ui
+      CSRF_COOKIE_SECRET: super-secret-csrf-secret-32-chars
+    ports:
+      - "4455:4455"
+    depends_on:
+      kratos:
+        condition: service_healthy
+      hydra:
+        condition: service_healthy
+    networks:
+      - ory
+
+volumes:
+  postgres_data:
+
+networks:
+  ory:

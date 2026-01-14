@@ -78,8 +78,8 @@ impl AuthService {
         let users = self.users.read().await;
         let user = users.get(email).ok_or(AppError::InvalidCredentials)?;
 
-        let parsed_hash =
-            PasswordHash::new(&user.password_hash).map_err(|e| AppError::Internal(e.to_string()))?;
+        let parsed_hash = PasswordHash::new(&user.password_hash)
+            .map_err(|e| AppError::Internal(e.to_string()))?;
 
         Argon2::default()
             .verify_password(password.as_bytes(), &parsed_hash)

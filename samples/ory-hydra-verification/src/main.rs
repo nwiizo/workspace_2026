@@ -6,10 +6,10 @@ use axum::{routing::get, routing::post, Router};
 use std::env;
 use std::net::SocketAddr;
 
-use ory_hydra_verification::{AuthService, AppState, HydraService};
 use ory_hydra_verification::handlers::{
     consent_page, consent_submit, health, login_page, login_submit, logout_handler,
 };
+use ory_hydra_verification::{AppState, AuthService, HydraService};
 
 #[tokio::main]
 async fn main() {

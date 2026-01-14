@@ -1,0 +1,12 @@
+[package]
+name = "blog_06_scalability_design"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+sqlx = { version = "0.8", features = ["runtime-tokio", "postgres", "macros", "chrono", "uuid", "rust_decimal"] }
+tokio = { version = "1", features = ["full"] }
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4"] }
+rust_decimal = { version = "1", features = ["db-postgres"] }
+anyhow = "1"
