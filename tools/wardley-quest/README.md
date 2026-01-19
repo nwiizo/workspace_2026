@@ -21,6 +21,12 @@ Strategic Evolution Questをプレイしたいです。
 | 3 | スケーリング危機 | ★★★★ |
 | 4 | カスタム | 可変 |
 
+## アドオン
+
+続いて生成AIに読み込ませてデータモデリング編をスタート：
+
+- [addon-datamodeling](./addon-datamodeling/) - 概念・論理・物理モデリングを学ぶ
+
 ---
 
 良ければStarをお願いします。
