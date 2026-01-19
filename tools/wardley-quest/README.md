@@ -20,3 +20,11 @@ Strategic Evolution Questをプレイしたいです。
 | 2 | レガシーモダナイゼーション | ★★★ |
 | 3 | スケーリング危機 | ★★★★ |
 | 4 | カスタム | 可変 |
+
+---
+
+良ければStarをお願いします。
+
+## ライセンス
+
+Friend License (MIT-equivalent)

@@ -24,3 +24,7 @@
 # memory_optimizer/
 /optimize [ファイルパス]
 ```
+
+## ライセンス
+
+Friend License (MIT-equivalent)
