@@ -69,13 +69,15 @@ Each scenario.md follows a consistent structure:
 1. 概要（参考文献含む）
 2. 核心概念
 3-5. テーマ別章（3章）
-6. NPCガイド（5名）
+6. NPCガイド
 7. ゲームメカニクス
 8. 実践シナリオ（0-3）
 9. エンディング（バッド5+グッド3）
 10. 関連クエスト
 
-### NPC Roles (5 required)
+### NPC Roles (recommended patterns)
+
+以下の役割パターンを参考に、シナリオのテーマに応じてNPCを設計する：
 
 | 役割 | 視点 | 提供するクエスト |
 |------|------|-----------------|
@@ -84,6 +86,8 @@ Each scenario.md follows a consistent structure:
 | ドメインエキスパート | 業務知識・ユーザー視点 | 要件理解・ユビキタス言語 |
 | 現場エンジニア | 日常の課題・実務 | 実践的な問題解決 |
 | ジュニア/新人 | 学習者の代理・素朴な疑問 | 基礎概念の確認 |
+
+※ NPCの人数はシナリオの複雑さに応じて調整可能
 
 ### Endings Standard
 
