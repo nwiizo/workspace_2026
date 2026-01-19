@@ -11,6 +11,7 @@
 | `blog_evaluation/` | ブログ記事評価プロンプト v2.2 |
 | `memory_optimizer/` | CLAUDE.md 最適化ツール |
 | `rust-sql-anti-pattern/` | SQLアンチパターン検証コード（Rust） |
+| `wardley-quest/` | 戦略シミュレーションRPG（Wardley Mapping × DDD × Team Topologies） |
 
 ## コマンド
 

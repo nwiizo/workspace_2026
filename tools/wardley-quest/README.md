@@ -4,7 +4,7 @@ Wardley Mapping × DDD × Team Topologies を統合的に学ぶ戦略シミュ�
 
 ## 遊び方
 
-Claudeに scenario.md を読み込ませて、以下を伝える：
+生成AIに [scenario.md](./scenario.md) を読み込ませて、以下を伝える：
 
 ```
 Strategic Evolution Questをプレイしたいです。
