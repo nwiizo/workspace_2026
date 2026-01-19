@@ -468,6 +468,8 @@ Link: </api/v2/users>; rel="successor-version"
 
 ## 6. NPCガイド
 
+> **Note**: 以下のNPCは代表的な役割パターンです。GMはシナリオのテーマや複雑さに応じて、NPCの追加・削除・変更を自由に行えます。
+
 ### 6.1 主要NPC
 
 ```
