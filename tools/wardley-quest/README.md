@@ -66,8 +66,11 @@ Strategic Evolution Questをプレイしたいです。
 | [addon-discovery](./addon-discovery/) | ステークホルダー発見と合意形成 | 発見 |
 | [addon-eventstorming](./addon-eventstorming/) | ドメイン発見ワークショップ | 発見 |
 | [addon-portfolio](./addon-portfolio/) | 戦略的ITポートフォリオ管理 | 戦略 |
+| [addon-domainboundary](./addon-domainboundary/) | 境界づけられたコンテキスト | 設計 |
+| [addon-apidesign](./addon-apidesign/) | 契約としてのAPI設計 | 設計 |
 | [addon-platform](./addon-platform/) | 内部開発者プラットフォーム | 実装 |
 | [addon-datamodeling](./addon-datamodeling/) | DDDに基づくデータ設計 | 実装 |
+| [addon-techdebt](./addon-techdebt/) | 技術的負債の戦略的管理 | 運用 |
 | [addon-change](./addon-change/) | 組織変革リーダーシップ | 全体 |
 
 ### 推奨プレイ順序
@@ -98,21 +101,37 @@ Strategic Evolution Questをプレイしたいです。
 │                                                │
 └────────────────────────────────────────────────┘
                       ↓
+┌─ 設計フェーズ ─────────────────────────────────┐
+│                                                │
+│  5. Domain Boundary Quest                      │
+│     └─ 境界づけられたコンテキストの発見         │
+│     └─ モジュラーモノリス、Context Map          │
+│                                                │
+│  6. API Design Quest                           │
+│     └─ 契約としてのAPI、バージョニング戦略      │
+│     └─ ドメインモデルをAPIで表現                │
+│                                                │
+└────────────────────────────────────────────────┘
+                      ↓
 ┌─ 実装フェーズ ─────────────────────────────────┐
 │                                                │
-│  5. Platform Engineering Quest                 │
+│  7. Platform Engineering Quest                 │
 │     └─ 内部開発者プラットフォーム               │
 │     └─ チームの自律性を支える基盤を構築         │
 │                                                │
-│  6. Data Modeling Quest                        │
+│  8. Data Modeling Quest                        │
 │     └─ データメッシュ、データプロダクト         │
 │     └─ ドメインに沿ったデータアーキテクチャ     │
 │                                                │
 └────────────────────────────────────────────────┘
                       ↓
-┌─ 継続フェーズ ─────────────────────────────────┐
+┌─ 運用・継続フェーズ ──────────────────────────┐
 │                                                │
-│  7. Change Leadership Quest                    │
+│  9. Technical Debt Quest                       │
+│     └─ 技術的負債の可視化と戦略的返済           │
+│     └─ 4象限フレームワーク                      │
+│                                                │
+│ 10. Change Leadership Quest                    │
 │     └─ AMET、組織変革リーダーシップ             │
 │     └─ 継続的な変革を推進する                   │
 │                                                │
@@ -123,10 +142,12 @@ Strategic Evolution Questをプレイしたいです。
 
 | 興味のあるテーマ | 推奨アドオン |
 |---|---|
-| ドメイン発見・設計 | EventStorming Quest → Data Modeling Quest |
+| ドメイン発見・設計 | EventStorming Quest → Domain Boundary Quest → Data Modeling Quest |
+| API・実装力 | Domain Boundary Quest → API Design Quest |
 | 組織・チーム | Discovery Workshop Quest → Change Leadership Quest |
 | 技術基盤 | Platform Engineering Quest |
 | 投資判断・戦略 | Portfolio Modernization Quest |
+| 技術的負債 | Technical Debt Quest → Change Leadership Quest |
 
 ---
 
@@ -224,6 +245,67 @@ Alberto Brandoliniが考案したEventStormingは、ドメインエキスパー�
 **データプロダクトの特性（DAUNTIVS）：** 発見可能、対処可能、理解可能、ネイティブにアクセス可能、信頼でき真実である、相互運用可能、それ自体で価値がある、セキュア
 
 **結合バランス（Vlad Khononov）：** 結合は悪ではなく、不適切な結合が問題。距離×揮発性×強度で結合コストを評価。
+
+---
+
+### Domain Boundary Quest
+
+**境界づけられたコンテキスト**
+
+「境界を正しく切る者、システムを制す」。DDDの境界づけられたコンテキストを実践的に学びます。モノリスの分割、マイクロサービス設計、チームの自律性を実現する境界設計を体験します。
+
+**境界を見つける技術：**
+- **言語の違いに注目** - 同じ言葉、違う意味 = コンテキスト境界のサイン
+- **変更の軸に注目** - 変更頻度が異なる領域は別コンテキストに
+- **チーム構造に注目** - 逆コンウェイ戦略：1チームが担当できる認知負荷 ≒ 1コンテキストの上限
+
+**実装パターン：**
+- **モジュラーモノリス** - 最初から境界を明確にし、必要に応じて分離
+- **Anti-Corruption Layer（ACL）** - レガシーシステムとの境界を守る
+- **Context Map** - コンテキスト間の関係性（Partnership、Customer-Supplier、Conformist）
+
+**コードで境界を強制する：** `pub/private`によるモジュール境界、Architecture Testによる依存関係検証
+
+---
+
+### API Design Quest
+
+**契約としてのAPI設計**
+
+APIを「システム間の技術的インターフェース」としてだけでなく、「チーム間の契約」として捉えます。設計から実装まで、エンジニアとしての実装力を磨きます。
+
+**良いAPIの4つの柱：**
+1. **運用可能性（Operability）** - ヘルスチェック、メトリクス、トレーシング
+2. **表現力（Expressiveness）** - ドメインモデルを適切に表現するリソース設計
+3. **シンプル性（Simplicity）** - 複雑さを隠蔽し、シンプルなインターフェースを提供
+4. **予測可能性（Predictability）** - 一貫した命名、エラーレスポンス、ページネーション
+
+**実装の醍醐味：**
+- 集約ルートをリソースとして表現
+- ドメインイベントとAPI（同期コマンド + 非同期イベント）
+- RFC 7807 Problem Detailsによるエラーハンドリング
+- バージョニング戦略と後方互換性
+
+---
+
+### Technical Debt Quest
+
+**技術的負債の戦略的管理**
+
+Ward Cunninghamが1992年に提唱した技術的負債メタファーを深く理解し、負債の可視化・定量化・戦略的返済を学びます。
+
+**技術的負債の4象限（Martin Fowler）：**
+|  | 慎重 | 無謀 |
+|---|---|---|
+| **意図的** | 「リスクを理解した上でリリースを優先」 | 「設計する時間がない」 |
+| **無意識** | 「今ならもっと良い方法がわかる」 | 「レイヤリングって何？」 |
+
+**負債の可視化：**
+- コードメトリクス（循環的複雑度、結合度、凝集度）
+- 変更頻度 × 複雑度マトリクス
+- 開発者の「痛みポイント」ヒートマップ
+
+**戦略的返済：** 返済しない負債もある。ビジネス価値と返済コストのバランスで判断。
 
 ---
 
