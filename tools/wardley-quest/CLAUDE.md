@@ -62,6 +62,43 @@ Each scenario.md follows a consistent structure:
 - Update main scenario.md addon list when adding new addons
 - Update README.md addon table and detailed descriptions
 
+## Scenario Design Standards
+
+### Chapter Structure (10 chapters)
+
+1. 概要（参考文献含む）
+2. 核心概念
+3-5. テーマ別章（3章）
+6. NPCガイド（5名）
+7. ゲームメカニクス
+8. 実践シナリオ（0-3）
+9. エンディング（バッド5+グッド3）
+10. 関連クエスト
+
+### NPC Roles (5 required)
+
+| 役割 | 視点 | 提供するクエスト |
+|------|------|-----------------|
+| 経営層/スポンサー | ビジネス価値・投資判断 | 戦略的意思決定 |
+| アーキテクト/テックリード | 技術設計・実装 | 設計判断・実装パターン |
+| ドメインエキスパート | 業務知識・ユーザー視点 | 要件理解・ユビキタス言語 |
+| 現場エンジニア | 日常の課題・実務 | 実践的な問題解決 |
+| ジュニア/新人 | 学習者の代理・素朴な疑問 | 基礎概念の確認 |
+
+### Endings Standard
+
+- Bad endings: 5 + undetermined section
+- Good endings: 3
+- Naming: "GAME OVER: [X]" / "SUCCESS: [X]"
+
+### Scenario Format
+
+```
+シナリオ0: 学習モード（チュートリアル）
+シナリオ1-3: 難易度別の実践シナリオ
+各シナリオ内に選択肢[A/B/C]を含む
+```
+
 ## No Build/Test Commands
 
 This is a content-only project. No compilation, linting, or testing required.
