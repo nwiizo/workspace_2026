@@ -1758,6 +1758,51 @@ GMに以下を伝えてください：
 
 ---
 
+# 付録C: 次のステップ - アドオンシナリオ
+
+## ゲームクリアおめでとうございます！
+
+Strategic Evolution Questを完了したあなたは、Wardley Mapping、DDD、Team Topologiesの基礎を体験的に学びました。
+
+さらに深く学びたい場合は、以下のアドオンシナリオに挑戦してください。
+
+## アドオン一覧
+
+| アドオン | 内容 | こんな方におすすめ |
+|---|---|---|
+| **EventStorming Quest** | ドメイン発見ワークショップ | DDDの実践を深めたい |
+| **Data Modeling Quest** | DDDに基づくデータ設計 | データアーキテクチャに興味がある |
+| **Platform Engineering Quest** | 内部開発者プラットフォーム | プラットフォームチームを作りたい |
+| **Portfolio Modernization Quest** | 戦略的ITポートフォリオ管理 | 投資判断・意思決定を学びたい |
+| **Discovery Workshop Quest** | ステークホルダー発見と合意形成 | プロジェクト初期フェーズを学びたい |
+| **Change Leadership Quest** | 組織変革リーダーシップ | 変革を成功させたい |
+
+## 推奨順序
+
+```
+このゲーム（Strategic Evolution Quest）
+    ↓
+EventStorming Quest（ドメイン発見の深掘り）
+    ↓
+Data Modeling Quest（データ設計の実践）
+    ↓
+Platform Engineering Quest または Portfolio Modernization Quest
+    ↓
+Discovery Workshop Quest（ステークホルダー管理）
+    ↓
+Change Leadership Quest（組織変革）
+```
+
+## 書籍で深く学ぶ
+
+**このゲームをより深く楽しむために、書籍「アーキテクチャモダナイゼーション」を強くお勧めします。**
+
+ゲームでは体験できますが、「なぜそうなのか」の深い理由は書籍でしか学べません。書籍を読んでからもう一度プレイすると、まったく違う体験ができます。
+
+📚 **[アーキテクチャモダナイゼーション 組織とビジネスの未来を設計する](https://amzn.to/4qqit8T)**
+
+---
+
 > _「戦略とは、解決可能な最重要課題を見極め、それを解決する方法を見つけることだ。何をやるかではない。何をやらないかだ。」_
 >
 > _— Richard Rumelt の思想に基づく_
