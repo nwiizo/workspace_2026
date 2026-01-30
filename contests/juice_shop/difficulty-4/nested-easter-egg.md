@@ -2,47 +2,100 @@
 
 **難易度:** ⭐⭐⭐⭐
 **カテゴリ:** その他
-**目標:** 多重エンコードされたイースターエッグを解読
+**目標:** イースターエッグの中にある、さらなる隠しコンテンツを発見する
 
-## ヒント
+---
 
-- **ソース:** `/ftp/eastere.gg` (Poison Null Byte でアクセス)
-- **URL:** `/ftp/eastere.gg%2500.md`
-- **エンコード:** Base64 → ROT13 の順でデコード
+## 思考プロセス
 
-## デコード手順
-
-```bash
-# 1. ファイル取得
-curl "http://localhost:3000/ftp/eastere.gg%2500.md"
-
-# 2. Base64 デコード
-echo "エンコードされた文字列" | base64 -d
-
-# 3. ROT13 デコード
-echo "Base64デコード結果" | tr 'A-Za-z' 'N-ZA-Mn-za-m'
+**ステップ1: Easter Egg チャレンジからの継続**
+```
+「Easter Egg チャレンジで隠しページを発見した」
+    ↓
+「/the/devs/are/so/funny/they/hid/an/easter/egg/within/the/easter/egg」
+    ↓
+「"within the easter egg" = イースターエッグの中にもう一つある？」
+    ↓
+「このページのソースコードや隠し要素を調べよう」
 ```
 
-## オンラインツール
-
-- Base64: https://www.base64decode.org/
-- ROT13: https://rot13.com/
-
-## eastere.gg の内容（予想）
-
+**ステップ2: 隠しコンテンツを探す**
 ```
-Base64エンコードされた文字列
-↓ Base64デコード
-ROT13エンコードされた文字列
-↓ ROT13デコード
-隠されたメッセージ or URL
+「ページにアクセスすると Planet Orangeuze が表示される」
+    ↓
+「このページのHTML/CSS/JSを確認」
+    ↓
+「隠し要素（display:none, visibility:hidden）がないか？」
+    ↓
+「Base64やエンコードされた文字列がないか？」
 ```
+
+**ステップ3: DevToolsで詳細調査**
+```
+「Elements タブでHTML構造を確認」
+    ↓
+「Network タブで読み込まれるリソースを確認」
+    ↓
+「Console でエラーやログを確認」
+    ↓
+「Sources タブでJSファイルを確認」
+```
+
+## 前提条件
+
+- Easter Egg チャレンジが完了していること
+- 隠しページ `/the/devs/are/so/funny/they/hid/an/easter/egg/within/the/easter/egg` にアクセス済み
+
+## 調査ポイント
+
+1. **ページ内のテキスト/画像**
+   - 目に見えない要素はないか
+   - 画像に隠されたデータ（ステガノグラフィ）
+
+2. **ソースコード**
+   - コメントに隠されたヒント
+   - Base64エンコードされた文字列
+   - 難読化されたJavaScript
+
+3. **HTTPレスポンス**
+   - カスタムヘッダー
+   - Cookie に隠された情報
+
+## 実行手順
+
+1. 隠しページにアクセス:
+   ```
+   http://localhost:3000/the/devs/are/so/funny/they/hid/an/easter/egg/within/the/easter/egg
+   ```
+
+2. DevTools を開いて調査:
+   ```javascript
+   // ページ内の全テキストを確認
+   document.body.innerText
+   
+   // 隠し要素を確認
+   document.querySelectorAll('[style*="display:none"], [style*="visibility:hidden"]')
+   
+   // data 属性を確認
+   document.querySelectorAll('[data-*]')
+   ```
+
+3. ページソースを確認:
+   - Ctrl+U でソースを表示
+   - コメント `<!-- -->` を検索
+   - Base64 らしき文字列を検索
 
 ## 検証ポイント
 
-- [ ] Poison Null Byte で eastere.gg を取得
-- [ ] Base64 デコード成功
-- [ ] ROT13 デコードで意味のある文字列
+- [ ] Easter Egg ページのソースを詳細に確認
+- [ ] 隠し要素やコメントを発見
+- [ ] エンコードされた文字列をデコード
+- [ ] 新しいURLやコンテンツを発見
+
+## 関連チャレンジ
+
+- [Easter Egg](easter-egg.md) - このチャレンジの前提
+- [Score Board](../difficulty-1/score-board.md) - 隠しページの発見
 
 ## 解説
 
