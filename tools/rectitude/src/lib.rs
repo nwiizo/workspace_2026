@@ -127,4 +127,9 @@ pub mod prelude {
 pub use config::RectitudeConfig;
 pub use ctf::{ChallengeProgress, ChallengeVerifier};
 pub use error::{Error, Result};
+pub use helpers::{
+    auth_helpers, captcha_helpers, file_disclosure, forgery_helpers, header_helpers,
+    idor_helpers, omission_helpers, osint_helpers, sqli_helpers, upload_helpers,
+    validation_helpers,
+};
 pub use reporter::{ReportBuilder, TestReport};

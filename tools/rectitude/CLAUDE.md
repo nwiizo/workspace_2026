@@ -224,3 +224,76 @@ exclude_tags = ["slow"]
 [variables]
 API_KEY = "test"
 ```
+
+### helpers.rs - セキュリティテストヘルパー
+
+CTF攻略で得たパターンを汎用化したヘルパー群。
+
+| モジュール | 用途 |
+|-----------|------|
+| `sqli_helpers` | SQLi認証バイパス、UNION抽出、カラム数発見 |
+| `idor_helpers` | 連番ID探索、水平権限昇格テスト |
+| `auth_helpers` | JWT alg:none攻撃、セキュリティ質問ブルートフォース |
+| `validation_helpers` | Null Byte注入、Mass Assignment、負値テスト |
+| `captcha_helpers` | CAPTCHA取得、再利用脆弱性テスト |
+| `upload_helpers` | Multipart構築、XXEペイロード生成 |
+| `forgery_helpers` | ユーザーID偽装、著者偽装テスト |
+| `file_disclosure` | Null Byteファイルアクセス、機密ファイルリスト |
+| `osint_helpers` | セキュリティ質問の一般的回答辞書 |
+| `omission_helpers` | パラメータ省略攻撃（currentパスワード省略等） |
+| `header_helpers` | セキュリティヘッダー監査 |
+
+#### 使用例
+
+```rust
+use rectitude::helpers::*;
+
+// Null Byteでファイル取得
+let resp = file_disclosure::access_with_null_byte(
+    &ctx, "/ftp", "package.json.bak", "md"
+).await?;
+
+// CAPTCHA取得と再利用テスト
+let captcha = captcha_helpers::get_captcha(&ctx, "/rest/captcha").await?;
+let reuse_count = captcha_helpers::test_captcha_reuse(
+    &ctx, "/api/Feedbacks", &captcha.unwrap(), &data, 5
+).await?;
+
+// Multipartアップロード
+let body = upload_helpers::build_multipart_body(
+    "file", "exploit.xml", "text/xml",
+    &upload_helpers::xxe_file_read("/etc/passwd")
+);
+
+// パスワード変更バイパス（currentパラメータ省略）
+let bypassed = omission_helpers::test_password_change_bypass(
+    &ctx, "/rest/user/change-password", &token, "newpass"
+).await?;
+```
+
+---
+
+## CTF攻略から得た学び
+
+### 検証すべき脆弱性パターン
+
+| パターン | 手法 | ヘルパー |
+|---------|------|---------|
+| 認証バイパス | SQLi `'--`, NoSQLi `$ne` | `sqli_helpers::try_auth_bypass` |
+| 権限昇格 | IDOR連番、UserId偽装 | `idor_helpers::probe_ids` |
+| ファイル漏洩 | Null Byte `%2500`, パストラバーサル | `file_disclosure::access_with_null_byte` |
+| 入力検証不備 | 負値、Mass Assignment | `validation_helpers::test_negative_values` |
+| 認証フロー | current省略、JWT alg:none | `omission_helpers`, `auth_helpers` |
+| OSINT | セキュリティ質問推測 | `osint_helpers::common_answers_for_category` |
+
+### セキュリティ質問の答え推測
+
+```rust
+// ペットの名前
+osint_helpers::common_answers_for_category("pet")
+// -> ["Fluffy", "Max", "Buddy", "Zaya", ...]
+
+// ポップカルチャー参照（Futurama等）
+osint_helpers::pop_culture_references().get("futurama")
+// -> [("employer", "Stop'n'Drop"), ...]
+```
