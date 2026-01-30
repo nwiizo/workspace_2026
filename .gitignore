@@ -310,3 +310,7 @@ blogs/CLAUDE.md
 
 # Blog contents (working drafts)
 blogs/contents/
+
+# Playwright MCP cache/screenshots
+.playwright-mcp/
+**/.playwright-mcp/
