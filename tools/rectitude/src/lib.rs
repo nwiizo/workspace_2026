@@ -83,7 +83,9 @@
 //! }
 //! ```
 
+pub mod assertions;
 pub mod client;
+pub mod clients;
 pub mod config;
 pub mod ctf;
 pub mod error;
@@ -91,16 +93,19 @@ pub mod extractors;
 pub mod helpers;
 pub mod payloads;
 pub mod reporter;
+pub mod resource;
 pub mod scenario;
 
 /// Prelude module for convenient imports
 pub mod prelude {
+    pub use crate::assertions::{Expect, expect};
     pub use crate::client::{SecurityClient, SecurityClientBuilder, SecurityResponse};
     pub use crate::error::{Error, Result};
     pub use crate::extractors::{ExtractBuilder, Extractor, JsonExtractor, RegexExtractor};
     pub use crate::payloads::encoding::{
         base64_decode, base64_encode, hex_decode, hex_encode, url_encode,
     };
+    pub use crate::resource::{Resource, ResourceManager};
     pub use crate::scenario::{Scenario, ScenarioContext, ScenarioResult, Step, StepResult};
 
     /// Quick success result
@@ -124,12 +129,16 @@ pub mod prelude {
     }
 }
 
-pub use config::RectitudeConfig;
+pub use config::{RectitudeConfig, TagFilter};
 pub use ctf::{ChallengeProgress, ChallengeVerifier};
 pub use error::{Error, Result};
 pub use helpers::{
-    auth_helpers, captcha_helpers, file_disclosure, forgery_helpers, header_helpers,
-    idor_helpers, omission_helpers, osint_helpers, sqli_helpers, upload_helpers,
-    validation_helpers,
+    auth_helpers, captcha_helpers, file_disclosure, forgery_helpers, header_helpers, idor_helpers,
+    omission_helpers, osint_helpers, sqli_helpers, upload_helpers, validation_helpers,
 };
-pub use reporter::{ReportBuilder, TestReport};
+pub use reporter::{ReportBuilder, ReportFormat, TestReport};
+
+// Re-export the clients module types
+pub use clients::{
+    Client, ClientConfig, ClientError, ClientResult, HttpClient, HttpRequest, HttpResponse,
+};

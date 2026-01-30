@@ -479,8 +479,20 @@ pub mod forgery_helpers {
         }
 
         let resp = match method.to_uppercase().as_str() {
-            "POST" => ctx.post(endpoint).bearer_auth(token).json(&data).send().await?,
-            "PUT" => ctx.put(endpoint).bearer_auth(token).json(&data).send().await?,
+            "POST" => {
+                ctx.post(endpoint)
+                    .bearer_auth(token)
+                    .json(&data)
+                    .send()
+                    .await?
+            }
+            "PUT" => {
+                ctx.put(endpoint)
+                    .bearer_auth(token)
+                    .json(&data)
+                    .send()
+                    .await?
+            }
             "PATCH" => {
                 // Use POST with method override for PATCH
                 ctx.post(endpoint)
@@ -509,7 +521,12 @@ pub mod forgery_helpers {
             "author": forged_author
         });
 
-        let resp = ctx.put(endpoint).bearer_auth(token).json(&data).send().await?;
+        let resp = ctx
+            .put(endpoint)
+            .bearer_auth(token)
+            .json(&data)
+            .send()
+            .await?;
 
         Ok(resp.is_success())
     }
@@ -566,7 +583,9 @@ pub mod file_disclosure {
 
     /// Common backup file extensions
     pub fn backup_extensions() -> Vec<&'static str> {
-        vec![".bak", ".backup", ".old", ".orig", ".save", ".swp", "~", ".copy"]
+        vec![
+            ".bak", ".backup", ".old", ".orig", ".save", ".swp", "~", ".copy",
+        ]
     }
 }
 
@@ -581,7 +600,13 @@ pub mod osint_helpers {
                 "Fluffy", "Max", "Buddy", "Charlie", "Rocky", "Bear", "Duke", "Zaya",
             ],
             "city" | "birth_city" | "hometown" => vec![
-                "New York", "Los Angeles", "Chicago", "Houston", "Phoenix", "London", "Tokyo",
+                "New York",
+                "Los Angeles",
+                "Chicago",
+                "Houston",
+                "Phoenix",
+                "London",
+                "Tokyo",
             ],
             "movie" | "favorite_movie" => vec![
                 "Star Wars",
@@ -600,7 +625,9 @@ pub mod osint_helpers {
                 "Initech",
             ],
             "sibling" | "brother" | "sister" => {
-                vec!["John", "James", "Michael", "David", "Samuel", "Robert", "Mary", "Sarah"]
+                vec![
+                    "John", "James", "Michael", "David", "Samuel", "Robert", "Mary", "Sarah",
+                ]
             }
             "mother_maiden" => vec![
                 "Smith", "Johnson", "Williams", "Brown", "Jones", "Garcia", "Miller",
@@ -612,8 +639,8 @@ pub mod osint_helpers {
     /// Character reference answers (from pop culture)
     ///
     /// Many CTFs use fictional character backstories
-    pub fn pop_culture_references() -> std::collections::HashMap<&'static str, Vec<(&'static str, &'static str)>>
-    {
+    pub fn pop_culture_references()
+    -> std::collections::HashMap<&'static str, Vec<(&'static str, &'static str)>> {
         let mut refs = std::collections::HashMap::new();
 
         // Star Trek references

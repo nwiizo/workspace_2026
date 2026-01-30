@@ -19,15 +19,25 @@ enum Commands {
         #[arg(default_value = ".")]
         path: PathBuf,
 
-        /// Filter by tag
-        #[arg(short, long)]
-        tag: Option<String>,
+        /// Filter by tags (AND logic, use ! for NOT)
+        ///
+        /// Examples:
+        ///   --tags "sqli,auth"      # must have both
+        ///   --tags "!slow,!flaky"   # must not have these
+        ///   --tags "sqli,!slow"     # must have sqli, must not have slow
+        ///   --tags "sqli|xss,auth"  # must have (sqli OR xss) AND auth
+        #[arg(long)]
+        tags: Option<String>,
+
+        /// Exclude scenarios with these tags (shorthand for !tag in --tags)
+        #[arg(long)]
+        exclude_tags: Option<String>,
 
         /// Run only failed scenarios from last run
         #[arg(long)]
         failed: bool,
 
-        /// Output format (text, json)
+        /// Output format (text, json, tap, dot, list)
         #[arg(short, long, default_value = "text")]
         output: String,
     },
@@ -38,9 +48,9 @@ enum Commands {
         #[arg(default_value = ".")]
         path: PathBuf,
 
-        /// Filter by tag
-        #[arg(short, long)]
-        tag: Option<String>,
+        /// Filter by tags (same format as --tags in run)
+        #[arg(long)]
+        tags: Option<String>,
     },
 
     /// Initialize configuration
@@ -54,6 +64,35 @@ enum Commands {
     Payloads {
         #[command(subcommand)]
         category: PayloadCategory,
+    },
+
+    /// Format Rust code (runs cargo fmt)
+    Fmt {
+        /// Path to format (default: current directory)
+        #[arg(default_value = ".")]
+        path: PathBuf,
+
+        /// Check only, don't modify files
+        #[arg(long)]
+        check: bool,
+    },
+
+    /// Lint code (runs cargo clippy)
+    Lint {
+        /// Path to lint (default: current directory)
+        #[arg(default_value = ".")]
+        path: PathBuf,
+
+        /// Treat warnings as errors
+        #[arg(long, short = 'D')]
+        deny_warnings: bool,
+    },
+
+    /// Check code (runs cargo check)
+    Check {
+        /// Path to check (default: current directory)
+        #[arg(default_value = ".")]
+        path: PathBuf,
     },
 }
 
@@ -110,15 +149,16 @@ async fn main() -> anyhow::Result<()> {
     match cli.command {
         Commands::Run {
             path,
-            tag,
+            tags,
+            exclude_tags,
             failed: _,
             output,
         } => {
-            run_scenarios(&path, tag.as_deref(), &output)?;
+            run_scenarios(&path, tags.as_deref(), exclude_tags.as_deref(), &output)?;
         }
 
-        Commands::List { path, tag } => {
-            list_scenarios(&path, tag.as_deref())?;
+        Commands::List { path, tags } => {
+            list_scenarios(&path, tags.as_deref())?;
         }
 
         Commands::Init { force } => {
@@ -127,6 +167,21 @@ async fn main() -> anyhow::Result<()> {
 
         Commands::Payloads { category } => {
             handle_payloads(category)?;
+        }
+
+        Commands::Fmt { path, check } => {
+            run_fmt(&path, check)?;
+        }
+
+        Commands::Lint {
+            path,
+            deny_warnings,
+        } => {
+            run_lint(&path, deny_warnings)?;
+        }
+
+        Commands::Check { path } => {
+            run_check(&path)?;
         }
     }
 
@@ -157,7 +212,9 @@ fn init_config(force: bool) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn list_scenarios(path: &PathBuf, tag: Option<&str>) -> anyhow::Result<()> {
+fn list_scenarios(path: &PathBuf, tags: Option<&str>) -> anyhow::Result<()> {
+    use rectitude::config::TagFilter;
+
     let examples_dir = path.join("examples");
     let search_path = if examples_dir.exists() {
         &examples_dir
@@ -166,6 +223,8 @@ fn list_scenarios(path: &PathBuf, tag: Option<&str>) -> anyhow::Result<()> {
     };
 
     println!("Scenarios in {:?}:\n", search_path);
+
+    let filter = tags.map(TagFilter::parse).unwrap_or_default();
 
     let mut count = 0;
     let entries: Vec<_> = std::fs::read_dir(search_path)?
@@ -178,11 +237,14 @@ fn list_scenarios(path: &PathBuf, tag: Option<&str>) -> anyhow::Result<()> {
             let name = path.file_stem().unwrap().to_string_lossy();
 
             // If tag filter is specified, check file contents (basic heuristic)
-            if let Some(t) = tag {
+            if !filter.is_empty() {
                 let content = std::fs::read_to_string(&path).unwrap_or_default();
-                if !content.contains(&format!(".tag(\"{}\")", t))
-                    && !content.contains(&format!("\"{}\"", t))
-                {
+                // Simple heuristic: check if the file mentions the required tags
+                let has_match = filter.required.iter().all(|t| {
+                    content.contains(&format!(".tag(\"{}\")", t))
+                        || content.contains(&format!("\"{}\"", t))
+                });
+                if !has_match {
                     continue;
                 }
             }
@@ -203,8 +265,26 @@ fn list_scenarios(path: &PathBuf, tag: Option<&str>) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn run_scenarios(path: &PathBuf, tag: Option<&str>, output: &str) -> anyhow::Result<()> {
+fn run_scenarios(
+    path: &PathBuf,
+    tags: Option<&str>,
+    exclude_tags: Option<&str>,
+    output: &str,
+) -> anyhow::Result<()> {
+    use rectitude::config::TagFilter;
+
     let config = rectitude::config::RectitudeConfig::load().unwrap_or_default();
+
+    // Build tag filter from CLI args
+    let mut filter = tags.map(TagFilter::parse).unwrap_or_default();
+    if let Some(excludes) = exclude_tags {
+        for tag in excludes.split(',') {
+            let tag = tag.trim();
+            if !tag.is_empty() {
+                filter = filter.exclude(tag);
+            }
+        }
+    }
 
     if output == "json" {
         // JSON output mode
@@ -229,8 +309,8 @@ fn run_scenarios(path: &PathBuf, tag: Option<&str>, output: &str) -> anyhow::Res
         }
         println!("Timeout: {}s", config.timeout_or_default());
 
-        if let Some(t) = tag {
-            println!("Filter tag: {}", t);
+        if !filter.is_empty() {
+            println!("Tag filter: {:?}", filter);
         }
 
         println!();
@@ -352,6 +432,86 @@ fn handle_payloads(category: PayloadCategory) -> anyhow::Result<()> {
                 println!("{}: {}", p.name, p.url);
             }
         }
+    }
+
+    Ok(())
+}
+
+fn run_fmt(path: &PathBuf, check: bool) -> anyhow::Result<()> {
+    use std::process::Command;
+
+    println!("Running cargo fmt...");
+
+    let mut cmd = Command::new("cargo");
+    cmd.arg("fmt");
+
+    if check {
+        cmd.arg("--check");
+    }
+
+    cmd.current_dir(path);
+
+    let status = cmd.status()?;
+
+    if status.success() {
+        if check {
+            println!("✓ Code is properly formatted");
+        } else {
+            println!("✓ Code formatted successfully");
+        }
+    } else {
+        if check {
+            eprintln!("✗ Code formatting issues found");
+        } else {
+            eprintln!("✗ Formatting failed");
+        }
+        std::process::exit(1);
+    }
+
+    Ok(())
+}
+
+fn run_lint(path: &PathBuf, deny_warnings: bool) -> anyhow::Result<()> {
+    use std::process::Command;
+
+    println!("Running cargo clippy...");
+
+    let mut cmd = Command::new("cargo");
+    cmd.arg("clippy");
+
+    if deny_warnings {
+        cmd.arg("--").arg("-D").arg("warnings");
+    }
+
+    cmd.current_dir(path);
+
+    let status = cmd.status()?;
+
+    if status.success() {
+        println!("✓ No linting issues found");
+    } else {
+        eprintln!("✗ Linting issues found");
+        std::process::exit(1);
+    }
+
+    Ok(())
+}
+
+fn run_check(path: &PathBuf) -> anyhow::Result<()> {
+    use std::process::Command;
+
+    println!("Running cargo check...");
+
+    let status = Command::new("cargo")
+        .arg("check")
+        .current_dir(path)
+        .status()?;
+
+    if status.success() {
+        println!("✓ Code compiles successfully");
+    } else {
+        eprintln!("✗ Compilation errors found");
+        std::process::exit(1);
     }
 
     Ok(())

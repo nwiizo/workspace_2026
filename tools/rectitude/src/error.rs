@@ -60,6 +60,14 @@ pub enum Error {
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 
+    /// Timeout error
+    #[error("Timeout: {0}")]
+    Timeout(String),
+
+    /// Step skipped (not an error, but used for control flow)
+    #[error("Skip: {0}")]
+    Skip(String),
+
     /// Generic error with message
     #[error("{0}")]
     Other(String),
@@ -94,6 +102,24 @@ impl Error {
     /// Create a new generic error
     pub fn other(msg: impl Into<String>) -> Self {
         Self::Other(msg.into())
+    }
+
+    /// Create a skip "error" (for control flow)
+    pub fn skip(reason: impl Into<String>) -> Self {
+        Self::Skip(reason.into())
+    }
+
+    /// Check if this is a skip
+    pub fn is_skip(&self) -> bool {
+        matches!(self, Self::Skip(_))
+    }
+
+    /// Get the skip reason if this is a skip
+    pub fn skip_reason(&self) -> Option<&str> {
+        match self {
+            Self::Skip(reason) => Some(reason),
+            _ => None,
+        }
     }
 }
 

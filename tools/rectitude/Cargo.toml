@@ -17,9 +17,21 @@ name = "rectitude"
 path = "src/bin/main.rs"
 
 [dependencies]
-# HTTP client
+# HTTP client (always included)
 reqwest = { version = "0.12", features = ["json", "cookies", "multipart"] }
 tokio = { version = "1", features = ["full"] }
+
+# GraphQL client (optional)
+graphql_client = { version = "0.14", optional = true }
+
+# SQL clients (optional)
+sqlx = { version = "0.8", optional = true, default-features = false }
+
+# MongoDB client (optional)
+mongodb = { version = "3", optional = true }
+
+# Redis client (optional)
+redis = { version = "0.26", optional = true, features = ["tokio-comp"] }
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
@@ -70,3 +82,14 @@ wiremock = "0.6"
 [features]
 default = ["cli"]
 cli = []
+
+# Additional client features (HTTP is always included)
+graphql = ["dep:graphql_client"]
+sql-postgres = ["dep:sqlx", "sqlx/postgres", "sqlx/runtime-tokio"]
+sql-mysql = ["dep:sqlx", "sqlx/mysql", "sqlx/runtime-tokio"]
+sql-sqlite = ["dep:sqlx", "sqlx/sqlite", "sqlx/runtime-tokio"]
+mongodb = ["dep:mongodb"]
+redis = ["dep:redis"]
+
+# Full feature set (all optional clients)
+full = ["graphql", "sql-postgres", "sql-mysql", "sql-sqlite", "mongodb", "redis"]
