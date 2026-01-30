@@ -29,6 +29,14 @@ path = "src/bin/jwt_tool.rs"
 name = "payload-gen"
 path = "src/bin/payload_gen.rs"
 
+[[bin]]
+name = "web-scanner"
+path = "src/bin/web_scanner.rs"
+
+[[bin]]
+name = "http-client"
+path = "src/bin/http_client.rs"
+
 [dependencies]
 z85 = "3.0"
 zip = "0.6"

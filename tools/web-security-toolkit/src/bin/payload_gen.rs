@@ -11,9 +11,16 @@
 //!   payload-gen traversal 5 etc/passwd
 //!   payload-gen passwords top
 //!   payload-gen passwords juice-shop
+//!   payload-gen idor endpoints
+//!   payload-gen tampering negative quantity 1
+//!   payload-gen tampering mass-assignment
+//!   payload-gen tampering juice-shop
 
 use clap::{Parser, Subcommand};
+use serde_json::json;
+use web_security_toolkit::idor::*;
 use web_security_toolkit::nosql::*;
+use web_security_toolkit::param_tampering::*;
 use web_security_toolkit::passwords::*;
 use web_security_toolkit::sqli::*;
 use web_security_toolkit::traversal::*;
@@ -63,6 +70,16 @@ enum Commands {
     Passwords {
         #[command(subcommand)]
         subcommand: PasswordCommands,
+    },
+    /// IDOR testing utilities
+    Idor {
+        #[command(subcommand)]
+        subcommand: IdorCommands,
+    },
+    /// Parameter tampering payloads
+    Tampering {
+        #[command(subcommand)]
+        subcommand: TamperingCommands,
     },
 }
 
@@ -175,6 +192,44 @@ enum PasswordCommands {
     JuiceShop,
 }
 
+#[derive(Subcommand)]
+enum IdorCommands {
+    /// Common IDOR endpoints
+    Endpoints,
+    /// Generate ID variations
+    Ids {
+        /// Current ID
+        current: i64,
+        /// Range to test
+        #[arg(default_value = "10")]
+        range: usize,
+    },
+    /// Juice Shop IDOR endpoints
+    JuiceShop,
+}
+
+#[derive(Subcommand)]
+enum TamperingCommands {
+    /// Negative value tests
+    Negative {
+        /// Field name
+        field: String,
+        /// Original value
+        #[arg(default_value = "1")]
+        value: i64,
+    },
+    /// Mass assignment payloads
+    MassAssignment,
+    /// Privilege escalation tests
+    Privilege {
+        /// Target user ID
+        #[arg(default_value = "1")]
+        target_id: i64,
+    },
+    /// Juice Shop tampering payloads
+    JuiceShop,
+}
+
 fn main() {
     let cli = Cli::parse();
 
@@ -185,6 +240,8 @@ fn main() {
         Commands::Nosql { subcommand } => handle_nosql(subcommand),
         Commands::Traversal { depth, target } => handle_traversal(depth, &target),
         Commands::Passwords { subcommand } => handle_passwords(subcommand),
+        Commands::Idor { subcommand } => handle_idor(subcommand),
+        Commands::Tampering { subcommand } => handle_tampering(subcommand),
     }
 }
 
@@ -399,6 +456,73 @@ fn handle_passwords(cmd: PasswordCommands) {
                 println!("{}", a.email);
                 println!("  Q: {}", a.question);
                 println!("  A: {}\n", a.answer);
+            }
+        }
+    }
+}
+
+fn handle_idor(cmd: IdorCommands) {
+    match cmd {
+        IdorCommands::Endpoints => {
+            println!("=== Common IDOR Endpoints ===\n");
+            for e in common_idor_endpoints() {
+                println!("{:40} - {}", e.pattern, e.description);
+            }
+        }
+        IdorCommands::Ids { current, range } => {
+            println!("=== ID Variations for {} (range: {}) ===\n", current, range);
+            let ids = generate_id_variations(current, range);
+            for id in ids {
+                println!("  {}", id);
+            }
+        }
+        IdorCommands::JuiceShop => {
+            println!("=== Juice Shop IDOR Endpoints ===\n");
+            for e in juice_shop_idor_endpoints() {
+                println!("{}", e.pattern);
+                println!("  {}\n", e.description);
+            }
+
+            println!("Example (View Basket challenge):");
+            println!("  fetch('/rest/basket/1', {{");
+            println!("    headers: {{ 'Authorization': 'Bearer ' + token }}");
+            println!("  }}).then(r => r.json())");
+        }
+    }
+}
+
+fn handle_tampering(cmd: TamperingCommands) {
+    match cmd {
+        TamperingCommands::Negative { field, value } => {
+            println!("=== Negative Value Tests for '{}' ===\n", field);
+            for t in negative_value_tests(&field, value) {
+                println!("{}", t.name);
+                println!("  Original: {}", t.original);
+                println!("  Tampered: {}\n", t.tampered);
+            }
+        }
+        TamperingCommands::MassAssignment => {
+            println!("=== Mass Assignment Payloads ===\n");
+            let base = json!({"email": "test@test.com", "password": "test123"});
+            for t in mass_assignment_tests(&base) {
+                println!("{}", t.name);
+                println!("  {}\n", t.tampered);
+            }
+        }
+        TamperingCommands::Privilege { target_id } => {
+            println!("=== Privilege Escalation Tests (target: {}) ===\n", target_id);
+            let base = json!({"data": "test"});
+            for t in privilege_escalation_tests(&base, target_id) {
+                println!("{}", t.name);
+                println!("  {}\n", t.tampered);
+            }
+        }
+        TamperingCommands::JuiceShop => {
+            println!("=== Juice Shop Parameter Tampering ===\n");
+            for t in juice_shop_tampering_tests() {
+                println!("{} ({:?})", t.name, t.category);
+                println!("  Original: {}", t.original);
+                println!("  Tampered: {}\n", t.tampered);
             }
         }
     }
