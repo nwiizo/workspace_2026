@@ -1,0 +1,47 @@
+[package]
+name = "web-security-toolkit"
+version = "0.1.0"
+edition = "2021"
+description = "Web security testing toolkit for CTF and penetration testing"
+license = "MIT"
+
+[lib]
+name = "web_security_toolkit"
+path = "src/lib.rs"
+
+[[bin]]
+name = "encoder"
+path = "src/bin/encoder.rs"
+
+[[bin]]
+name = "zip-payload"
+path = "src/bin/zip_payload.rs"
+
+[[bin]]
+name = "ssrf-scanner"
+path = "src/bin/ssrf_scanner.rs"
+
+[[bin]]
+name = "jwt-tool"
+path = "src/bin/jwt_tool.rs"
+
+[[bin]]
+name = "payload-gen"
+path = "src/bin/payload_gen.rs"
+
+[dependencies]
+z85 = "3.0"
+zip = "0.6"
+reqwest = { version = "0.12", features = ["json", "blocking", "multipart"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+base64 = "0.22"
+hmac = "0.12"
+sha2 = "0.10"
+md5 = "0.7"
+thiserror = "1.0"
+clap = { version = "4", features = ["derive"] }
+hex = "0.4"
+
+[dev-dependencies]
+tempfile = "3"
