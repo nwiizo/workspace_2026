@@ -31,17 +31,17 @@ async fn dom_xss() -> Result<ScenarioResult> {
     Scenario::new("DOM XSS - Search Parameter")
         .base_url(BASE_URL)
         .tags(&["xss", "dom-xss", "difficulty-1"])
-        .step("Inject XSS via search", |ctx: Arc<ScenarioContext>| async move {
-            // DOM XSS via hash fragment in search
-            let payload = "<iframe src=\"javascript:alert('xss')\">";
-            let resp = ctx
-                .get(&format!("/#/search?q={}", payload))
-                .send()
-                .await?;
+        .step(
+            "Inject XSS via search",
+            |ctx: Arc<ScenarioContext>| async move {
+                // DOM XSS via hash fragment in search
+                let payload = "<iframe src=\"javascript:alert('xss')\">";
+                let resp = ctx.get(&format!("/#/search?q={}", payload)).send().await?;
 
-            resp.expect_success()?;
-            ok_with("XSS payload delivered via search")
-        })
+                resp.expect_success()?;
+                ok_with("XSS payload delivered via search")
+            },
+        )
         .run()
         .await
 }
@@ -72,11 +72,14 @@ async fn privacy_policy() -> Result<ScenarioResult> {
     Scenario::new("Privacy Policy - Hidden Page")
         .base_url(BASE_URL)
         .tags(&["misc", "hidden-page", "difficulty-1"])
-        .step("Access privacy policy", |ctx: Arc<ScenarioContext>| async move {
-            let resp = ctx.get("/#/privacy-security/privacy-policy").send().await?;
-            resp.expect_success()?;
-            ok_with("Privacy policy accessed")
-        })
+        .step(
+            "Access privacy policy",
+            |ctx: Arc<ScenarioContext>| async move {
+                let resp = ctx.get("/#/privacy-security/privacy-policy").send().await?;
+                resp.expect_success()?;
+                ok_with("Privacy policy accessed")
+            },
+        )
         .run()
         .await
 }

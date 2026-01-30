@@ -18,10 +18,14 @@ cargo run -- init           # Create config file
 cargo run -- list           # List scenarios
 cargo run -- payloads sqli  # Generate SQLi payloads
 
-# Run examples
-cargo run --example juice_shop_verified
-cargo run --example juice_shop_ctf
-cargo run --example juice_shop_complete
+# Run examples by category
+cargo run --example juice_shop_verified   # CTF検証付き
+cargo run --example juice_shop_sqli       # SQLi
+cargo run --example juice_shop_auth       # 認証
+cargo run --example juice_shop_access     # アクセス制御
+cargo run --example juice_shop_files      # ファイル漏洩
+cargo run --example juice_shop_validation # 入力検証
+cargo run --example juice_shop_xss        # XSS
 ```
 
 ## Architecture
@@ -49,10 +53,13 @@ src/
 └── bin/main.rs      # CLI application
 
 examples/
-├── juice_shop_verified.rs   # JuiceShop with verification
-├── juice_shop_ctf.rs        # JuiceShop solver
-├── juice_shop_complete.rs   # Additional challenges
-└── ...
+├── juice_shop_verified.rs   # メイン: CTF検証付きシナリオ
+├── juice_shop_sqli.rs       # SQLi攻撃パターン
+├── juice_shop_auth.rs       # 認証・パスワードリセット
+├── juice_shop_access.rs     # アクセス制御・IDOR
+├── juice_shop_files.rs      # ファイル漏洩・XXE
+├── juice_shop_validation.rs # 入力検証バイパス
+└── juice_shop_xss.rs        # XSS攻撃
 ```
 
 ## Usage
