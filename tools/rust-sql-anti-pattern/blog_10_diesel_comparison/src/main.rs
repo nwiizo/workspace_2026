@@ -460,7 +460,7 @@ async fn demo_recursive_cte(pool: &PgPool) -> Result<()> {
                 id,
                 name,
                 0 as depth,
-                name as path
+                name::text as path
             FROM categories
             WHERE id = $1
 
@@ -471,7 +471,7 @@ async fn demo_recursive_cte(pool: &PgPool) -> Result<()> {
                 c.id,
                 c.name,
                 ct.depth + 1,
-                ct.path || ' > ' || c.name
+                (ct.path || ' > ' || c.name)::text
             FROM categories c
             JOIN category_tree ct ON c.parent_id = ct.id
         )

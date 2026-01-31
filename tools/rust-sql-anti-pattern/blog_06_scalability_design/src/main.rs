@@ -142,7 +142,7 @@ async fn setup_range_partitioning(pool: &PgPool) -> Result<()> {
     .await?;
 
     // 年ごとのパーティションを作成
-    for year in 2023..=2025 {
+    for year in 2023..=2027 {
         let partition_name = format!("orders_partitioned_{}", year);
         let start_date = format!("{}-01-01", year);
         let end_date = format!("{}-01-01", year + 1);
@@ -160,7 +160,7 @@ async fn setup_range_partitioning(pool: &PgPool) -> Result<()> {
         .execute(pool)
         .await?;
 
-    println!("Created partitioned table with yearly partitions (2023-2025)");
+    println!("Created partitioned table with yearly partitions (2023-2027)");
     Ok(())
 }
 

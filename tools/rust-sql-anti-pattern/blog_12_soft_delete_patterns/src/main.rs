@@ -555,6 +555,119 @@ impl Comment {
 impl_soft_deletable_basic!(Comment, "comments");
 
 // =============================================================================
+// データベースセットアップ
+// =============================================================================
+
+async fn setup_tables(pool: &PgPool) -> anyhow::Result<()> {
+    // テーブルを削除（依存関係の順序で）
+    sqlx::query("DROP TABLE IF EXISTS comments CASCADE")
+        .execute(pool)
+        .await?;
+    sqlx::query("DROP TABLE IF EXISTS posts CASCADE")
+        .execute(pool)
+        .await?;
+    sqlx::query("DROP TABLE IF EXISTS users CASCADE")
+        .execute(pool)
+        .await?;
+
+    // usersテーブル
+    sqlx::query(
+        r#"
+        CREATE TABLE users (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            name VARCHAR(100) NOT NULL,
+            email VARCHAR(255) NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            deleted_at TIMESTAMPTZ
+        )
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    // postsテーブル
+    sqlx::query(
+        r#"
+        CREATE TABLE posts (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            user_id UUID NOT NULL REFERENCES users(id),
+            title VARCHAR(255) NOT NULL,
+            content TEXT NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            deleted_at TIMESTAMPTZ
+        )
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    // commentsテーブル
+    sqlx::query(
+        r#"
+        CREATE TABLE comments (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            post_id UUID NOT NULL REFERENCES posts(id),
+            user_id UUID NOT NULL REFERENCES users(id),
+            body TEXT NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            deleted_at TIMESTAMPTZ
+        )
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    // 部分インデックス（削除されていないレコード用）
+    sqlx::query("CREATE INDEX idx_users_active ON users(id) WHERE deleted_at IS NULL")
+        .execute(pool)
+        .await?;
+    sqlx::query("CREATE INDEX idx_posts_active ON posts(id) WHERE deleted_at IS NULL")
+        .execute(pool)
+        .await?;
+    sqlx::query("CREATE INDEX idx_comments_active ON comments(id) WHERE deleted_at IS NULL")
+        .execute(pool)
+        .await?;
+
+    // パターン3用のビュー
+    sqlx::query(
+        r#"
+        CREATE VIEW active_users AS
+        SELECT id, name, email, created_at, updated_at
+        FROM users
+        WHERE deleted_at IS NULL
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        r#"
+        CREATE VIEW active_posts AS
+        SELECT id, user_id, title, content, created_at, updated_at
+        FROM posts
+        WHERE deleted_at IS NULL
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        r#"
+        CREATE VIEW active_comments AS
+        SELECT id, post_id, user_id, body, created_at
+        FROM comments
+        WHERE deleted_at IS NULL
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    Ok(())
+}
+
+// =============================================================================
 // メイン関数 - 各パターンのデモ
 // =============================================================================
 
@@ -574,10 +687,9 @@ async fn main() -> anyhow::Result<()> {
 
     println!("データベースに接続しました\n");
 
-    // テストデータをクリーンアップ
-    sqlx::query("DELETE FROM comments").execute(&pool).await?;
-    sqlx::query("DELETE FROM posts").execute(&pool).await?;
-    sqlx::query("DELETE FROM users").execute(&pool).await?;
+    // テーブルをセットアップ
+    setup_tables(&pool).await?;
+    println!("テーブルをセットアップしました\n");
 
     // ==========================================================================
     // パターン1: Newtype Pattern のデモ

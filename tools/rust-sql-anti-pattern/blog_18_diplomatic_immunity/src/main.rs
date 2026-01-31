@@ -98,11 +98,15 @@ async fn apply_migration(pool: &PgPool, name: &str, sql: &str) -> Result<bool> {
 async fn demo_migration_tracking(pool: &PgPool) -> Result<()> {
     println!("\n=== Demo: Migration Tracking ===");
 
-    // テストテーブルを削除してからマイグレーション
+    // テストテーブルとマイグレーション記録を削除してからマイグレーション
     sqlx::query("DROP TABLE IF EXISTS diplo_posts CASCADE")
         .execute(pool)
         .await?;
     sqlx::query("DROP TABLE IF EXISTS diplo_users CASCADE")
+        .execute(pool)
+        .await?;
+    // マイグレーション記録も削除（再実行できるように）
+    sqlx::query("DELETE FROM _migrations WHERE name LIKE '202412%'")
         .execute(pool)
         .await?;
 
