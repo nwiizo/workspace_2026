@@ -651,6 +651,9 @@ pub mod osint_helpers {
                 ("ship", "Enterprise"),
                 ("captain", "Kirk"),
                 ("captain", "Picard"),
+                ("brother", "Samuel"), // Jim Kirk's brother
+                ("first_officer", "Spock"),
+                ("doctor", "McCoy"),
             ],
         );
 
@@ -661,16 +664,261 @@ pub mod osint_helpers {
                 ("employer", "Stop'n'Drop"),
                 ("employer", "Planet Express"),
                 ("drink", "Slurm"),
+                ("robot", "Bender"),
+                ("captain", "Leela"),
+                ("professor", "Farnsworth"),
             ],
         );
 
         // Hunter x Hunter
         refs.insert(
             "hunter_x_hunter",
-            vec![("movie", "Silence of the Lambs"), ("ability", "Nen")],
+            vec![
+                ("movie", "Silence of the Lambs"), // Uvogin's favorite
+                ("ability", "Nen"),
+                ("exam", "Hunter Exam"),
+                ("group", "Phantom Troupe"),
+                ("leader", "Chrollo"),
+            ],
+        );
+
+        // The Matrix
+        refs.insert(
+            "matrix",
+            vec![
+                ("ship", "Nebuchadnezzar"),
+                ("captain", "Morpheus"),
+                ("hero", "Neo"),
+                ("city", "Zion"),
+            ],
+        );
+
+        // Office Space (for Initech)
+        refs.insert(
+            "office_space",
+            vec![
+                ("company", "Initech"),
+                ("boss", "Bill Lumbergh"),
+                ("consultant", "Bob"),
+            ],
         );
 
         refs
+    }
+
+    /// Hunter x Hunter character references
+    ///
+    /// Specific to HxH-themed CTF challenges.
+    pub fn hxh_references() -> std::collections::HashMap<&'static str, &'static str> {
+        let mut refs = std::collections::HashMap::new();
+
+        // Phantom Troupe members and their traits
+        refs.insert("uvogin_movie", "Silence of the Lambs");
+        refs.insert("uvogin_ability", "Big Bang Impact");
+        refs.insert("chrollo_ability", "Skill Hunter");
+        refs.insert("hisoka_category", "Transmutation");
+        refs.insert("killua_family", "Zoldyck");
+        refs.insert("gon_father", "Ging");
+
+        refs
+    }
+
+    /// Star Trek character references
+    ///
+    /// For Kirk, Spock, and other Trek-themed challenges.
+    pub fn star_trek_references() -> std::collections::HashMap<&'static str, &'static str> {
+        let mut refs = std::collections::HashMap::new();
+
+        // Kirk family
+        refs.insert("jim_brother", "Samuel");
+        refs.insert("jim_son", "David");
+        refs.insert("jim_ship", "Enterprise");
+        refs.insert("jim_registry", "NCC-1701");
+
+        // Spock
+        refs.insert("spock_father", "Sarek");
+        refs.insert("spock_mother", "Amanda");
+        refs.insert("spock_homeworld", "Vulcan");
+
+        // General
+        refs.insert("federation_hq", "San Francisco");
+        refs.insert("academy", "Starfleet Academy");
+
+        refs
+    }
+
+    /// Futurama character references
+    ///
+    /// For Bender, Fry, and other Futurama-themed challenges.
+    pub fn futurama_references() -> std::collections::HashMap<&'static str, &'static str> {
+        let mut refs = std::collections::HashMap::new();
+
+        // Bender
+        refs.insert("bender_employer", "Stop'n'Drop");
+        refs.insert("bender_serial", "1729");
+        refs.insert("bender_catchphrase", "Bite my shiny metal ass");
+
+        // Fry
+        refs.insert("fry_dog", "Seymour");
+        refs.insert("fry_brother", "Yancy");
+        refs.insert("fry_nephew", "Philip");
+
+        // Company
+        refs.insert("company", "Planet Express");
+        refs.insert("professor", "Farnsworth");
+        refs.insert("drink", "Slurm");
+
+        refs
+    }
+}
+
+/// Coupon forgery helpers
+pub mod coupon_helpers {
+    use crate::payloads::encoding::{z85_decode, z85_encode};
+
+    /// Common coupon format patterns
+    #[derive(Debug, Clone)]
+    pub struct CouponFormat {
+        pub prefix_type: CouponPrefixType,
+        pub separator: char,
+        pub encoding: CouponEncoding,
+    }
+
+    #[derive(Debug, Clone)]
+    pub enum CouponPrefixType {
+        /// Month abbreviation (JAN, FEB, etc.)
+        Month3Letter,
+        /// Season (SPRING, SUMMER, etc.)
+        Season,
+        /// Custom prefix
+        Custom(String),
+    }
+
+    #[derive(Debug, Clone)]
+    pub enum CouponEncoding {
+        /// Plain text
+        Plain,
+        /// Base64 encoded
+        Base64,
+        /// Z85 encoded (ZeroMQ Base-85)
+        Z85,
+        /// Hex encoded
+        Hex,
+    }
+
+    impl Default for CouponFormat {
+        fn default() -> Self {
+            Self {
+                prefix_type: CouponPrefixType::Month3Letter,
+                separator: '-',
+                encoding: CouponEncoding::Z85,
+            }
+        }
+    }
+
+    /// Analyze coupon samples to determine format
+    ///
+    /// Returns the detected format based on sample coupons.
+    pub fn analyze_coupon_format(samples: &[&str]) -> CouponFormat {
+        let mut format = CouponFormat::default();
+
+        if samples.is_empty() {
+            return format;
+        }
+
+        // Try to decode as Z85
+        for sample in samples {
+            if let Some(decoded) = z85_decode(sample) {
+                let decoded = decoded.trim_end_matches('\0');
+
+                // Check for month pattern (MMMYY-DD)
+                let months = [
+                    "JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV",
+                    "DEC",
+                ];
+
+                if decoded.len() >= 3 && months.contains(&&decoded[0..3]) {
+                    format.prefix_type = CouponPrefixType::Month3Letter;
+                    format.encoding = CouponEncoding::Z85;
+
+                    // Detect separator
+                    if decoded.contains('-') {
+                        format.separator = '-';
+                    } else if decoded.contains('_') {
+                        format.separator = '_';
+                    }
+
+                    return format;
+                }
+            }
+        }
+
+        // Check for plain text patterns
+        for sample in samples {
+            if sample.contains('-') || sample.contains('_') {
+                format.encoding = CouponEncoding::Plain;
+                format.separator = if sample.contains('-') { '-' } else { '_' };
+            }
+        }
+
+        format
+    }
+
+    /// Generate a coupon based on format
+    pub fn generate_coupon(format: &CouponFormat, month: &str, year: u16, discount: u8) -> String {
+        let prefix = match &format.prefix_type {
+            CouponPrefixType::Month3Letter => month.to_uppercase(),
+            CouponPrefixType::Season => month.to_uppercase(),
+            CouponPrefixType::Custom(s) => s.clone(),
+        };
+
+        let plain = format!("{}{}{}{}", prefix, year % 100, format.separator, discount);
+
+        match format.encoding {
+            CouponEncoding::Plain => plain,
+            CouponEncoding::Base64 => {
+                use base64::{Engine as _, engine::general_purpose::STANDARD};
+                STANDARD.encode(plain.as_bytes())
+            }
+            CouponEncoding::Z85 => z85_encode(&plain),
+            CouponEncoding::Hex => hex::encode(plain.as_bytes()),
+        }
+    }
+
+    /// Generate Z85-encoded coupon (most common in Juice Shop)
+    ///
+    /// # Example
+    /// ```
+    /// use rectitude::helpers::coupon_helpers::generate_z85_coupon;
+    /// let coupon = generate_z85_coupon("JAN", 26, 90);
+    /// assert!(!coupon.is_empty());
+    /// ```
+    pub fn generate_z85_coupon(month: &str, year: u16, discount: u8) -> String {
+        let plain = format!("{}{}-{}", month.to_uppercase(), year % 100, discount);
+        z85_encode(&plain)
+    }
+
+    /// Generate all monthly coupons for a year
+    pub fn generate_year_coupons(year: u16, discount: u8) -> Vec<(String, String)> {
+        let months = [
+            "JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC",
+        ];
+
+        months
+            .iter()
+            .map(|m| {
+                let plain = format!("{}{}-{}", m, year % 100, discount);
+                let encoded = z85_encode(&plain);
+                (plain, encoded)
+            })
+            .collect()
+    }
+
+    /// Brute force discount values for a given month/year
+    pub fn brute_force_discounts(month: &str, year: u16, min: u8, max: u8) -> Vec<(u8, String)> {
+        (min..=max)
+            .map(|d| (d, generate_z85_coupon(month, year, d)))
+            .collect()
     }
 }
 
