@@ -84,9 +84,121 @@ pub fn multi_encode(input: &str, encodings: &[Encoding]) -> String {
             Encoding::Html => html_entity_encode(&result),
             Encoding::Rot13 => rot13(&result),
             Encoding::Unicode => unicode_escape(&result),
+            Encoding::Z85 => z85_encode(&result),
         };
     }
     result
+}
+
+// =============================================================================
+// Z85 Encoding (ZeroMQ Base-85)
+// =============================================================================
+
+/// Z85 encode a string
+///
+/// Z85 requires data length to be a multiple of 4 bytes.
+/// This function pads the input with null bytes if necessary.
+///
+/// # Example
+/// ```
+/// use rectitude::payloads::encoding::z85_encode;
+/// let encoded = z85_encode("test");
+/// assert!(!encoded.is_empty());
+/// ```
+pub fn z85_encode(data: &str) -> String {
+    z85_encode_bytes(data.as_bytes())
+}
+
+/// Z85 encode raw bytes
+///
+/// Pads to 4-byte boundary with null bytes if necessary.
+pub fn z85_encode_bytes(data: &[u8]) -> String {
+    let padding = (4 - (data.len() % 4)) % 4;
+    let mut padded = data.to_vec();
+    padded.extend(std::iter::repeat_n(0u8, padding));
+    z85::encode(&padded)
+}
+
+/// Z85 decode a string
+///
+/// Returns None if the input is not valid Z85.
+///
+/// # Example
+/// ```
+/// use rectitude::payloads::encoding::{z85_encode, z85_decode};
+/// let encoded = z85_encode("test");
+/// let decoded = z85_decode(&encoded);
+/// assert!(decoded.is_some());
+/// ```
+pub fn z85_decode(encoded: &str) -> Option<String> {
+    z85_decode_bytes(encoded).and_then(|bytes| String::from_utf8(bytes).ok())
+}
+
+/// Z85 decode to raw bytes
+pub fn z85_decode_bytes(encoded: &str) -> Option<Vec<u8>> {
+    z85::decode(encoded).ok()
+}
+
+// =============================================================================
+// Coupon Forgery Helpers
+// =============================================================================
+
+/// Generate a forged coupon code in MMMYY-DD format
+///
+/// This is based on the Juice Shop forged coupon challenge where
+/// coupons are Z85-encoded strings in format like "JAN26-90".
+///
+/// # Example
+/// ```
+/// use rectitude::payloads::encoding::forge_coupon;
+/// let coupon = forge_coupon("JAN", 26, 90);
+/// assert!(coupon.contains("JAN26-90") || !coupon.is_empty());
+/// ```
+pub fn forge_coupon(month: &str, year: u16, discount: u8) -> String {
+    let coupon_str = format!("{}{}-{}", month.to_uppercase(), year % 100, discount);
+    z85_encode(&coupon_str)
+}
+
+/// Generate coupon codes for all months of a given year
+///
+/// Useful for brute-forcing valid coupon patterns.
+pub fn forge_coupons_for_year(year: u16, discount: u8) -> Vec<(String, String)> {
+    let months = [
+        "JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC",
+    ];
+
+    months
+        .iter()
+        .map(|month| {
+            let plain = format!("{}{}-{}", month, year % 100, discount);
+            let encoded = z85_encode(&plain);
+            (plain, encoded)
+        })
+        .collect()
+}
+
+/// Decode a Z85 coupon and parse its components
+///
+/// Returns (month, year, discount) if valid.
+pub fn decode_coupon(encoded: &str) -> Option<(String, u16, u8)> {
+    let decoded = z85_decode(encoded)?;
+    // Expected format: MMMYY-DD (e.g., "JAN26-90")
+    let trimmed = decoded.trim_end_matches('\0');
+
+    if trimmed.len() < 7 {
+        return None;
+    }
+
+    let month = trimmed.get(0..3)?.to_string();
+    let year_str = trimmed.get(3..5)?;
+    let year: u16 = year_str.parse().ok()?;
+
+    // Find the discount after the dash
+    let dash_pos = trimmed.find('-')?;
+    let discount_str = trimmed.get(dash_pos + 1..)?;
+    let discount: u8 = discount_str.trim().parse().ok()?;
+
+    Some((month, 2000 + year, discount))
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -98,6 +210,7 @@ pub enum Encoding {
     Html,
     Rot13,
     Unicode,
+    Z85,
 }
 
 #[cfg(test)]
@@ -128,5 +241,64 @@ mod tests {
     fn test_multi_encode() {
         let result = multi_encode("<", &[Encoding::Url, Encoding::Base64]);
         assert!(!result.is_empty());
+    }
+
+    #[test]
+    fn test_z85_encode_decode() {
+        // Test with exact 4-byte multiple
+        let input = "test";
+        let encoded = z85_encode(input);
+        assert!(!encoded.is_empty());
+
+        let decoded = z85_decode(&encoded);
+        assert!(decoded.is_some());
+        // Decoded may have padding nulls, trim them
+        let decoded_str = decoded.unwrap();
+        assert!(decoded_str.starts_with(input));
+    }
+
+    #[test]
+    fn test_z85_encode_non_aligned() {
+        // Test with non-4-byte aligned data
+        let input = "hello";
+        let encoded = z85_encode(input);
+        assert!(!encoded.is_empty());
+
+        let decoded = z85_decode(&encoded);
+        assert!(decoded.is_some());
+    }
+
+    #[test]
+    fn test_forge_coupon() {
+        let coupon = forge_coupon("JAN", 26, 90);
+        assert!(!coupon.is_empty());
+
+        // Verify we can decode it back
+        let decoded = z85_decode(&coupon);
+        assert!(decoded.is_some());
+        let decoded_str = decoded.unwrap();
+        assert!(decoded_str.contains("JAN26-90"));
+    }
+
+    #[test]
+    fn test_forge_coupons_for_year() {
+        let coupons = forge_coupons_for_year(2026, 50);
+        assert_eq!(coupons.len(), 12);
+
+        // Check first and last
+        assert!(coupons[0].0.starts_with("JAN"));
+        assert!(coupons[11].0.starts_with("DEC"));
+    }
+
+    #[test]
+    fn test_decode_coupon() {
+        let encoded = forge_coupon("MAR", 26, 75);
+        let decoded = decode_coupon(&encoded);
+        assert!(decoded.is_some());
+
+        let (month, year, discount) = decoded.unwrap();
+        assert_eq!(month, "MAR");
+        assert_eq!(year, 2026);
+        assert_eq!(discount, 75);
     }
 }

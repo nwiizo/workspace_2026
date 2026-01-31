@@ -40,6 +40,10 @@ serde_json = "1.0"
 # Encoding
 base64 = "0.22"
 hex = "0.4"
+z85 = "3.0"
+
+# Archive handling (optional)
+zip = { version = "2.1", optional = true }
 
 # Crypto
 hmac = "0.12"
@@ -91,5 +95,8 @@ sql-sqlite = ["dep:sqlx", "sqlx/sqlite", "sqlx/runtime-tokio"]
 mongodb = ["dep:mongodb"]
 redis = ["dep:redis"]
 
+# Archive payloads (Zip Slip, etc.)
+zip-payloads = ["dep:zip"]
+
 # Full feature set (all optional clients)
-full = ["graphql", "sql-postgres", "sql-mysql", "sql-sqlite", "mongodb", "redis"]
+full = ["graphql", "sql-postgres", "sql-mysql", "sql-sqlite", "mongodb", "redis", "zip-payloads"]
