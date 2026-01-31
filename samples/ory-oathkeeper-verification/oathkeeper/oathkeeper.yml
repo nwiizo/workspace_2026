@@ -1,0 +1,61 @@
+serve:
+  proxy:
+    port: 4455
+    cors:
+      enabled: true
+      allowed_origins:
+        - "*"
+  api:
+    port: 4456
+
+log:
+  level: debug
+  format: text
+
+access_rules:
+  repositories:
+    - file:///etc/config/oathkeeper/rules.yml
+
+authenticators:
+  anonymous:
+    enabled: true
+    config:
+      subject: anonymous
+
+  unauthorized:
+    enabled: true
+
+  noop:
+    enabled: true
+
+authorizers:
+  allow:
+    enabled: true
+
+  deny:
+    enabled: true
+
+  remote_json:
+    enabled: true
+    config:
+      remote: http://keto:4466/relation-tuples/check
+      payload: "{}"
+
+mutators:
+  noop:
+    enabled: true
+
+  header:
+    enabled: true
+    config:
+      headers: {}
+
+errors:
+  fallback:
+    - json
+
+  handlers:
+    json:
+      enabled: true
+      config:
+        verbose: true

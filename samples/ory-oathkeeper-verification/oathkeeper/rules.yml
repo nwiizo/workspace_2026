@@ -1,0 +1,107 @@
+# Health check - public
+- id: "health"
+  match:
+    url: "<http|https>://<[^/]+>/health"
+    methods:
+      - GET
+  authenticators:
+    - handler: anonymous
+  authorizer:
+    handler: allow
+  mutators:
+    - handler: noop
+  upstream:
+    url: "http://backend:80"
+    strip_path: ""
+
+# Public API - no auth required
+- id: "api:public"
+  match:
+    url: "<http|https>://<[^/]+>/api/public"
+    methods:
+      - GET
+  authenticators:
+    - handler: anonymous
+  authorizer:
+    handler: allow
+  mutators:
+    - handler: noop
+  upstream:
+    url: "http://backend:80"
+    strip_path: ""
+
+# Protected API - requires X-User-Id header
+- id: "api:protected"
+  match:
+    url: "<http|https>://<[^/]+>/api/protected"
+    methods:
+      - GET
+  authenticators:
+    - handler: noop
+  authorizer:
+    handler: allow
+  mutators:
+    - handler: header
+      config:
+        headers:
+          X-Authenticated-User: '{{ print (.MatchContext.Header.Get "X-User-Id") }}'
+  upstream:
+    url: "http://backend:80"
+    strip_path: ""
+
+# Document API - requires Keto authorization for viewing
+- id: "api:documents:view"
+  match:
+    url: "<http|https>://<[^/]+>/api/documents/<[a-zA-Z0-9_-]+>"
+    methods:
+      - GET
+  authenticators:
+    - handler: noop
+  authorizer:
+    handler: remote_json
+    config:
+      remote: http://keto:4466/relation-tuples/check
+      payload: |
+        {
+          "namespace": "Document",
+          "object": "{{ index .MatchContext.RegexpCaptureGroups 2 }}",
+          "relation": "viewer",
+          "subject_id": "{{ print (.MatchContext.Header.Get "X-User-Id") }}"
+        }
+  mutators:
+    - handler: header
+      config:
+        headers:
+          X-User-Id: '{{ print (.MatchContext.Header.Get "X-User-Id") }}'
+  upstream:
+    url: "http://backend:80"
+    strip_path: ""
+
+# Document edit - requires editor permission
+- id: "api:documents:edit"
+  match:
+    url: "<http|https>://<[^/]+>/api/documents/<[a-zA-Z0-9_-]+>"
+    methods:
+      - PUT
+      - DELETE
+  authenticators:
+    - handler: noop
+  authorizer:
+    handler: remote_json
+    config:
+      remote: http://keto:4466/relation-tuples/check
+      payload: |
+        {
+          "namespace": "Document",
+          "object": "{{ index .MatchContext.RegexpCaptureGroups 2 }}",
+          "relation": "editor",
+          "subject_id": "{{ print (.MatchContext.Header.Get "X-User-Id") }}"
+        }
+  mutators:
+    - handler: header
+      config:
+        headers:
+          X-User-Id: '{{ print (.MatchContext.Header.Get "X-User-Id") }}'
+  upstream:
+    url: "http://backend:80"
+    strip_path: ""

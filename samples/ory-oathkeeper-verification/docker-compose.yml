@@ -1,0 +1,86 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: secret
+      POSTGRES_DB: keto
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d keto"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - ory
+
+  keto-migrate:
+    image: oryd/keto:v0.12.0
+    environment:
+      DSN: postgres://postgres:secret@postgres:5432/keto?sslmode=disable
+    command: migrate up --yes --config /etc/config/keto/keto.yml
+    volumes:
+      - ./keto:/etc/config/keto:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - ory
+
+  keto:
+    image: oryd/keto:v0.12.0
+    environment:
+      DSN: postgres://postgres:secret@postgres:5432/keto?sslmode=disable
+      LOG_LEVEL: debug
+    command: serve --config /etc/config/keto/keto.yml
+    volumes:
+      - ./keto:/etc/config/keto:ro
+    ports:
+      - "4466:4466"  # Read API
+      - "4467:4467"  # Write API
+    depends_on:
+      keto-migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:4466/health/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - ory
+
+  backend:
+    image: nginx:alpine
+    volumes:
+      - ./backend/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./backend/api.json:/usr/share/nginx/html/api.json:ro
+    networks:
+      - ory
+
+  oathkeeper:
+    image: oryd/oathkeeper:v0.40.7
+    command: serve --config /etc/config/oathkeeper/oathkeeper.yml
+    volumes:
+      - ./oathkeeper:/etc/config/oathkeeper:ro
+    ports:
+      - "4455:4455"  # Proxy
+      - "4456:4456"  # API
+    environment:
+      LOG_LEVEL: debug
+    depends_on:
+      keto:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:4456/health/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - ory
+
+volumes:
+  postgres_data:
+
+networks:
+  ory:
