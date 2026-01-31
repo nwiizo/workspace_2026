@@ -7,6 +7,104 @@ Programming contests and security challenges.
 | Directory | Description | Status |
 |-----------|-------------|--------|
 | `juice_shop/` | OWASP Juice Shop CTF - Web security challenges | Active |
+| `atcoder/` | AtCoder contests (ABC, ARC, AGC) | - |
+| `codeforces/` | Codeforces contests | - |
+| `leetcode/` | LeetCode problems | - |
+
+---
+
+## Competitive Programming
+
+### Directory Structure
+
+```
+atcoder/
+├── abc300/           # Contest name
+│   ├── a.rs          # Problem A solution
+│   ├── b.rs
+│   └── README.md     # Contest notes
+└── typical90/        # Practice problems
+
+codeforces/
+└── round900/
+
+leetcode/
+└── daily/
+```
+
+### Tools
+
+```bash
+# online-judge-tools (oj)
+pip install online-judge-tools
+
+# cargo-compete (Rust)
+cargo install cargo-compete
+
+# atcoder-cli (acc)
+npm install -g atcoder-cli
+```
+
+### Workflow (Rust + cargo-compete)
+
+```bash
+# Setup
+cargo compete init atcoder
+cd atcoder
+
+# Download contest
+cargo compete new abc300
+
+# Test solution
+cargo compete test a
+
+# Submit
+cargo compete submit a
+```
+
+### Workflow (oj)
+
+```bash
+# Download test cases
+oj download https://atcoder.jp/contests/abc300/tasks/abc300_a
+
+# Test locally
+oj test -c "cargo run --bin a"
+
+# Submit
+oj submit https://atcoder.jp/contests/abc300/tasks/abc300_a a.rs
+```
+
+### Templates
+
+**Rust**
+```rust
+use proconio::input;
+
+fn main() {
+    input! { n: usize }
+    println!("{}", solve(n));
+}
+
+fn solve(n: usize) -> usize {
+    n
+}
+```
+
+**Python**
+```python
+import sys
+input = sys.stdin.readline
+
+def main():
+    n = int(input())
+    print(n)
+
+if __name__ == "__main__":
+    main()
+```
+
+---
 
 ## OWASP Juice Shop
 
