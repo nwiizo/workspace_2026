@@ -4,6 +4,12 @@ version = "0.1.0"
 edition = "2021"
 description = "Web security testing toolkit for CTF and penetration testing"
 license = "MIT"
+authors = ["nwiizo"]
+repository = "https://github.com/nwiizo/workspace_2026"
+readme = "README.md"
+keywords = ["security", "ctf", "pentesting", "web-security", "cli"]
+categories = ["command-line-utilities", "development-tools"]
+rust-version = "1.74"
 
 [lib]
 name = "web_security_toolkit"
@@ -37,6 +43,30 @@ path = "src/bin/web_scanner.rs"
 name = "http-client"
 path = "src/bin/http_client.rs"
 
+[[bin]]
+name = "keepass-crack"
+path = "src/bin/keepass_crack.rs"
+
+[[bin]]
+name = "hashids-tool"
+path = "src/bin/hashids_tool.rs"
+
+[[bin]]
+name = "totp-tool"
+path = "src/bin/totp_tool.rs"
+
+[[bin]]
+name = "ssti-gen"
+path = "src/bin/ssti_gen.rs"
+
+[[bin]]
+name = "svg-gen"
+path = "src/bin/svg_gen.rs"
+
+[[bin]]
+name = "bruteforce-gen"
+path = "src/bin/bruteforce_gen.rs"
+
 [dependencies]
 z85 = "3.0"
 zip = "0.6"
@@ -46,10 +76,24 @@ serde_json = "1.0"
 base64 = "0.22"
 hmac = "0.12"
 sha2 = "0.10"
+sha1 = "0.10"
 md5 = "0.7"
 thiserror = "1.0"
 clap = { version = "4", features = ["derive"] }
 hex = "0.4"
+# KeePass KDBX decryption
+aes = "0.8"
+cbc = { version = "0.1", features = ["std"] }
+cipher = "0.4"
+block-padding = "0.3"
+# Hashids encoding/decoding
+harsh = "0.2"
+# Parallel processing
+rayon = "1.10"
+# Gzip decompression for KDBX
+flate2 = "1.0"
+# Salsa20 stream cipher for KeePass inner stream
+salsa20 = "0.10"
 
 [dev-dependencies]
 tempfile = "3"

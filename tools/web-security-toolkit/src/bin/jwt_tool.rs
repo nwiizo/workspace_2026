@@ -54,76 +54,75 @@ fn main() {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Decode { token } => {
-            match DecodedJwt::decode(&token) {
-                Ok(jwt) => {
-                    println!("=== JWT Decoded ===\n");
-                    println!("Header:");
-                    println!("{}\n", serde_json::to_string_pretty(&jwt.header).unwrap_or_default());
-                    println!("Payload:");
-                    println!("{}\n", serde_json::to_string_pretty(&jwt.payload).unwrap_or_default());
-                    println!("Algorithm: {}", jwt.algorithm().unwrap_or("unknown"));
-                    println!("Signature: {} bytes", jwt.signature.len());
+        Commands::Decode { token } => match DecodedJwt::decode(&token) {
+            Ok(jwt) => {
+                println!("=== JWT Decoded ===\n");
+                println!("Header:");
+                println!(
+                    "{}\n",
+                    serde_json::to_string_pretty(&jwt.header).unwrap_or_default()
+                );
+                println!("Payload:");
+                println!(
+                    "{}\n",
+                    serde_json::to_string_pretty(&jwt.payload).unwrap_or_default()
+                );
+                println!("Algorithm: {}", jwt.algorithm().unwrap_or("unknown"));
+                println!("Signature: {} bytes", jwt.signature.len());
+            }
+            Err(e) => {
+                eprintln!("Error decoding JWT: {}", e);
+                std::process::exit(1);
+            }
+        },
+        Commands::Unsigned { payload } => match serde_json::from_str::<Value>(&payload) {
+            Ok(json_payload) => {
+                let token = create_unsigned_jwt(&json_payload);
+                println!("=== Unsigned JWT (alg: none) ===\n");
+                println!("{}\n", token);
+                println!("Note: Some servers accept tokens ending with '.' or without signature.");
+                println!("Try variations:");
+                println!("  {}", token);
+                println!("  {}", token.trim_end_matches('.'));
+            }
+            Err(e) => {
+                eprintln!("Invalid JSON payload: {}", e);
+                std::process::exit(1);
+            }
+        },
+        Commands::Hs256 { payload, secret } => match serde_json::from_str::<Value>(&payload) {
+            Ok(json_payload) => {
+                let token = create_hs256_jwt(&json_payload, secret.as_bytes());
+                println!("=== HS256 Signed JWT ===\n");
+                println!("{}\n", token);
+                println!("Secret used: {}", secret);
+                println!("\nFor algorithm confusion attack:");
+                println!("  Use the server's public key as the secret");
+            }
+            Err(e) => {
+                eprintln!("Invalid JSON payload: {}", e);
+                std::process::exit(1);
+            }
+        },
+        Commands::Modify {
+            token,
+            modifications,
+        } => match serde_json::from_str::<Value>(&modifications) {
+            Ok(mods) => match modify_jwt_payload(&token, &mods) {
+                Ok(new_token) => {
+                    println!("=== Modified JWT (unsigned) ===\n");
+                    println!("{}\n", new_token);
                 }
                 Err(e) => {
-                    eprintln!("Error decoding JWT: {}", e);
+                    eprintln!("Error modifying JWT: {}", e);
                     std::process::exit(1);
                 }
+            },
+            Err(e) => {
+                eprintln!("Invalid JSON modifications: {}", e);
+                std::process::exit(1);
             }
-        }
-        Commands::Unsigned { payload } => {
-            match serde_json::from_str::<Value>(&payload) {
-                Ok(json_payload) => {
-                    let token = create_unsigned_jwt(&json_payload);
-                    println!("=== Unsigned JWT (alg: none) ===\n");
-                    println!("{}\n", token);
-                    println!("Note: Some servers accept tokens ending with '.' or without signature.");
-                    println!("Try variations:");
-                    println!("  {}", token);
-                    println!("  {}", token.trim_end_matches('.'));
-                }
-                Err(e) => {
-                    eprintln!("Invalid JSON payload: {}", e);
-                    std::process::exit(1);
-                }
-            }
-        }
-        Commands::Hs256 { payload, secret } => {
-            match serde_json::from_str::<Value>(&payload) {
-                Ok(json_payload) => {
-                    let token = create_hs256_jwt(&json_payload, secret.as_bytes());
-                    println!("=== HS256 Signed JWT ===\n");
-                    println!("{}\n", token);
-                    println!("Secret used: {}", secret);
-                    println!("\nFor algorithm confusion attack:");
-                    println!("  Use the server's public key as the secret");
-                }
-                Err(e) => {
-                    eprintln!("Invalid JSON payload: {}", e);
-                    std::process::exit(1);
-                }
-            }
-        }
-        Commands::Modify { token, modifications } => {
-            match serde_json::from_str::<Value>(&modifications) {
-                Ok(mods) => {
-                    match modify_jwt_payload(&token, &mods) {
-                        Ok(new_token) => {
-                            println!("=== Modified JWT (unsigned) ===\n");
-                            println!("{}\n", new_token);
-                        }
-                        Err(e) => {
-                            eprintln!("Error modifying JWT: {}", e);
-                            std::process::exit(1);
-                        }
-                    }
-                }
-                Err(e) => {
-                    eprintln!("Invalid JSON modifications: {}", e);
-                    std::process::exit(1);
-                }
-            }
-        }
+        },
         Commands::Algorithms => {
             println!("=== JWT Algorithm Variants ===\n");
             for alg in jwt_algorithm_variants() {

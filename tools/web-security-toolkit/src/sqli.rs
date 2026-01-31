@@ -344,6 +344,8 @@ mod tests {
     fn test_juice_shop_sqli() {
         let payloads = juice_shop_sqli();
         assert!(payloads.iter().any(|p| p.name.contains("Admin login")));
-        assert!(payloads.iter().any(|p| p.payload.contains("jim@juice-sh.op")));
+        assert!(payloads
+            .iter()
+            .any(|p| p.payload.contains("jim@juice-sh.op")));
     }
 }

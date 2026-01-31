@@ -36,7 +36,13 @@ impl HeaderCheck {
         }
     }
 
-    fn found(name: &str, value: &str, severity: Severity, description: &str, recommendation: &str) -> Self {
+    fn found(
+        name: &str,
+        value: &str,
+        severity: Severity,
+        description: &str,
+        recommendation: &str,
+    ) -> Self {
         Self {
             name: name.to_string(),
             present: true,
@@ -251,9 +257,7 @@ fn check_xss_protection(headers: &HashMap<String, String>) -> HeaderCheck {
             "X-XSS-Protection is deprecated - modern browsers don't need it",
             "Remove if present, rely on CSP instead",
         ),
-        Some(value) if value == "0" => {
-            HeaderCheck::ok("X-XSS-Protection", value)
-        }
+        Some(value) if value == "0" => HeaderCheck::ok("X-XSS-Protection", value),
         Some(value) => HeaderCheck::found(
             "X-XSS-Protection",
             value,
@@ -396,7 +400,11 @@ fn check_cors(headers: &HashMap<String, String>) -> Option<HeaderCheck> {
             "CORS allows any origin - may expose data to malicious sites",
             "Restrict to specific trusted origins",
         ))
-    } else if headers.get("access-control-allow-credentials").map(|v| v == "true").unwrap_or(false) {
+    } else if headers
+        .get("access-control-allow-credentials")
+        .map(|v| v == "true")
+        .unwrap_or(false)
+    {
         if acao == "*" || acao == "null" {
             Some(HeaderCheck::found(
                 "Access-Control-Allow-Origin",
@@ -509,15 +517,25 @@ mod tests {
         let results = analyze_headers(&headers);
 
         // Should have findings for missing security headers
-        assert!(results.iter().any(|r| r.name == "Strict-Transport-Security" && !r.present));
-        assert!(results.iter().any(|r| r.name == "Content-Security-Policy" && !r.present));
+        assert!(results
+            .iter()
+            .any(|r| r.name == "Strict-Transport-Security" && !r.present));
+        assert!(results
+            .iter()
+            .any(|r| r.name == "Content-Security-Policy" && !r.present));
     }
 
     #[test]
     fn test_analyze_good_headers() {
         let mut headers = HashMap::new();
-        headers.insert("strict-transport-security".to_string(), "max-age=31536000".to_string());
-        headers.insert("content-security-policy".to_string(), "default-src 'self'".to_string());
+        headers.insert(
+            "strict-transport-security".to_string(),
+            "max-age=31536000".to_string(),
+        );
+        headers.insert(
+            "content-security-policy".to_string(),
+            "default-src 'self'".to_string(),
+        );
         headers.insert("x-content-type-options".to_string(), "nosniff".to_string());
         headers.insert("x-frame-options".to_string(), "DENY".to_string());
 
@@ -539,7 +557,10 @@ mod tests {
         );
 
         let results = analyze_headers(&headers);
-        let csp_check = results.iter().find(|r| r.name == "Content-Security-Policy").unwrap();
+        let csp_check = results
+            .iter()
+            .find(|r| r.name == "Content-Security-Policy")
+            .unwrap();
 
         assert_eq!(csp_check.severity, Severity::Medium);
         assert!(csp_check.description.contains("unsafe-inline"));
@@ -551,7 +572,10 @@ mod tests {
         headers.insert("access-control-allow-origin".to_string(), "*".to_string());
 
         let results = analyze_headers(&headers);
-        let cors_check = results.iter().find(|r| r.name == "Access-Control-Allow-Origin").unwrap();
+        let cors_check = results
+            .iter()
+            .find(|r| r.name == "Access-Control-Allow-Origin")
+            .unwrap();
 
         assert_eq!(cors_check.severity, Severity::Medium);
     }
@@ -559,7 +583,13 @@ mod tests {
     #[test]
     fn test_extract_max_age() {
         assert_eq!(extract_max_age("max-age=31536000"), Some(31536000));
-        assert_eq!(extract_max_age("max-age=31536000; includeSubDomains"), Some(31536000));
-        assert_eq!(extract_max_age("includeSubDomains; max-age=86400"), Some(86400));
+        assert_eq!(
+            extract_max_age("max-age=31536000; includeSubDomains"),
+            Some(31536000)
+        );
+        assert_eq!(
+            extract_max_age("includeSubDomains; max-age=86400"),
+            Some(86400)
+        );
     }
 }

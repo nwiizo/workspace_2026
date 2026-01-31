@@ -133,28 +133,36 @@ impl SecurityClient {
 
         let response = self.client.get(&url).headers(headers).send()?;
 
-        Ok(SecurityResponse::from_response(response)?)
+        SecurityResponse::from_response(response)
     }
 
     /// Send a POST request with JSON body
-    pub fn post_json<T: Serialize>(&self, path: &str, body: &T) -> Result<SecurityResponse, HttpError> {
+    pub fn post_json<T: Serialize>(
+        &self,
+        path: &str,
+        body: &T,
+    ) -> Result<SecurityResponse, HttpError> {
         let url = self.build_url(path);
         let mut headers = self.build_headers();
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
 
         let response = self.client.post(&url).headers(headers).json(body).send()?;
 
-        Ok(SecurityResponse::from_response(response)?)
+        SecurityResponse::from_response(response)
     }
 
     /// Send a POST request with form data
-    pub fn post_form(&self, path: &str, form: &HashMap<String, String>) -> Result<SecurityResponse, HttpError> {
+    pub fn post_form(
+        &self,
+        path: &str,
+        form: &HashMap<String, String>,
+    ) -> Result<SecurityResponse, HttpError> {
         let url = self.build_url(path);
         let headers = self.build_headers();
 
         let response = self.client.post(&url).headers(headers).form(form).send()?;
 
-        Ok(SecurityResponse::from_response(response)?)
+        SecurityResponse::from_response(response)
     }
 
     /// Send a raw request with custom method and body
@@ -174,8 +182,7 @@ impl SecurityClient {
             }
         }
 
-        let method = reqwest::Method::from_bytes(method.as_bytes())
-            .unwrap_or(reqwest::Method::GET);
+        let method = reqwest::Method::from_bytes(method.as_bytes()).unwrap_or(reqwest::Method::GET);
 
         let mut request = self.client.request(method, &url).headers(headers);
 
@@ -184,7 +191,7 @@ impl SecurityClient {
         }
 
         let response = request.send()?;
-        Ok(SecurityResponse::from_response(response)?)
+        SecurityResponse::from_response(response)
     }
 }
 
@@ -219,9 +226,7 @@ impl SecurityResponse {
         }
 
         let content_type = headers.get("content-type").cloned();
-        let content_length = headers
-            .get("content-length")
-            .and_then(|v| v.parse().ok());
+        let content_length = headers.get("content-length").and_then(|v| v.parse().ok());
 
         let body = response.text()?;
 
@@ -357,13 +362,13 @@ impl CookieInfo {
         // Check for sensitive cookie names without proper protection
         let sensitive_names = ["session", "token", "auth", "jwt", "sid"];
         let name_lower = self.name.to_lowercase();
-        if sensitive_names.iter().any(|&s| name_lower.contains(s)) {
-            if !self.http_only || !self.secure {
-                issues.push(format!(
-                    "Sensitive cookie '{}' lacks proper security flags",
-                    self.name
-                ));
-            }
+        if sensitive_names.iter().any(|&s| name_lower.contains(s))
+            && (!self.http_only || !self.secure)
+        {
+            issues.push(format!(
+                "Sensitive cookie '{}' lacks proper security flags",
+                self.name
+            ));
         }
 
         issues
@@ -376,8 +381,8 @@ mod tests {
 
     #[test]
     fn test_cookie_parse() {
-        let cookie = CookieInfo::parse("session=abc123; Path=/; HttpOnly; Secure; SameSite=Strict")
-            .unwrap();
+        let cookie =
+            CookieInfo::parse("session=abc123; Path=/; HttpOnly; Secure; SameSite=Strict").unwrap();
         assert_eq!(cookie.name, "session");
         assert_eq!(cookie.value, "abc123");
         assert!(cookie.http_only);
@@ -404,7 +409,10 @@ mod tests {
     #[test]
     fn test_client_url_building() {
         let client = SecurityClient::new().with_base_url("http://localhost:3000");
-        assert_eq!(client.build_url("/api/users"), "http://localhost:3000/api/users");
+        assert_eq!(
+            client.build_url("/api/users"),
+            "http://localhost:3000/api/users"
+        );
         assert_eq!(
             client.build_url("http://other.com/path"),
             "http://other.com/path"

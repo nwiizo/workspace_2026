@@ -221,7 +221,8 @@ impl Scanner {
                     title: "Stack trace in response".to_string(),
                     description: "Application error details are exposed".to_string(),
                     evidence: Some(format!("Pattern found: {}", pattern)),
-                    recommendation: "Implement proper error handling, disable debug mode".to_string(),
+                    recommendation: "Implement proper error handling, disable debug mode"
+                        .to_string(),
                 });
                 break;
             }
@@ -244,9 +245,12 @@ impl Scanner {
                     category: "Information Disclosure".to_string(),
                     severity: "High".to_string(),
                     title: "Database error in response".to_string(),
-                    description: "Database error messages are exposed, indicating potential SQL injection".to_string(),
+                    description:
+                        "Database error messages are exposed, indicating potential SQL injection"
+                            .to_string(),
                     evidence: Some(format!("Pattern found: {}", pattern)),
-                    recommendation: "Implement proper error handling, use parameterized queries".to_string(),
+                    recommendation: "Implement proper error handling, use parameterized queries"
+                        .to_string(),
                 });
                 break;
             }
@@ -278,7 +282,8 @@ impl Scanner {
                 title: "Source code disclosure".to_string(),
                 description: "Server-side source code is visible in response".to_string(),
                 evidence: None,
-                recommendation: "Configure server to properly process server-side scripts".to_string(),
+                recommendation: "Configure server to properly process server-side scripts"
+                    .to_string(),
             });
         }
 
@@ -316,10 +321,7 @@ impl Scanner {
                                 ""
                             }
                         ),
-                        evidence: Some(format!(
-                            "Access-Control-Allow-Origin: {}",
-                            acao
-                        )),
+                        evidence: Some(format!("Access-Control-Allow-Origin: {}", acao)),
                         recommendation: "Implement strict origin whitelist".to_string(),
                     });
                 } else if acao == "*" {
@@ -387,8 +389,13 @@ impl Scanner {
                             severity: severity.to_string(),
                             title: format!("Sensitive file found: {}", path),
                             description: description.to_string(),
-                            evidence: Some(format!("Status: {}, Size: {} bytes", response.status, response.body.len())),
-                            recommendation: "Remove or restrict access to sensitive files".to_string(),
+                            evidence: Some(format!(
+                                "Status: {}, Size: {} bytes",
+                                response.status,
+                                response.body.len()
+                            )),
+                            recommendation: "Remove or restrict access to sensitive files"
+                                .to_string(),
                         });
                     }
                 }
@@ -422,7 +429,7 @@ fn chrono_lite_now() -> String {
 pub fn generate_report(result: &ScanResult) -> String {
     let mut report = String::new();
 
-    report.push_str(&format!("# Security Scan Report\n\n"));
+    report.push_str("# Security Scan Report\n\n");
     report.push_str(&format!("**Target:** {}\n", result.target));
     report.push_str(&format!("**Scan Duration:** {}ms\n\n", result.duration_ms));
 

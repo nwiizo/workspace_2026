@@ -145,22 +145,8 @@ pub fn modify_jwt_payload(token: &str, modifications: &Value) -> Result<String, 
 /// JWT algorithm variants for testing
 pub fn jwt_algorithm_variants() -> Vec<&'static str> {
     vec![
-        "none",
-        "None",
-        "NONE",
-        "nOnE",
-        "HS256",
-        "HS384",
-        "HS512",
-        "RS256",
-        "RS384",
-        "RS512",
-        "ES256",
-        "ES384",
-        "ES512",
-        "PS256",
-        "PS384",
-        "PS512",
+        "none", "None", "NONE", "nOnE", "HS256", "HS384", "HS512", "RS256", "RS384", "RS512",
+        "ES256", "ES384", "ES512", "PS256", "PS384", "PS512",
     ]
 }
 
@@ -244,7 +230,8 @@ mod tests {
 
     #[test]
     fn test_modify_jwt_payload() {
-        let token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ1c2VyIiwicm9sZSI6InVzZXIifQ.xxx";
+        let token =
+            "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ1c2VyIiwicm9sZSI6InVzZXIifQ.xxx";
 
         let modifications = json!({
             "role": "admin"

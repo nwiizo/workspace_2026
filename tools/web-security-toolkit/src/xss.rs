@@ -338,6 +338,8 @@ mod tests {
     fn test_juice_shop_xss() {
         let payloads = juice_shop_xss();
         assert!(payloads.iter().any(|p| p.name.contains("DOM XSS")));
-        assert!(payloads.iter().any(|p| p.name.contains("Sanitization bypass")));
+        assert!(payloads
+            .iter()
+            .any(|p| p.name.contains("Sanitization bypass")));
     }
 }

@@ -107,7 +107,10 @@ fn main() {
                 }
             }
         }
-        Commands::CheckHeaders { url, recommendations } => {
+        Commands::CheckHeaders {
+            url,
+            recommendations,
+        } => {
             println!("[*] Checking security headers for {}", url);
 
             let client = SecurityClient::new();
@@ -127,12 +130,7 @@ fn main() {
                             Severity::Info => "INFO",
                         };
 
-                        println!(
-                            "{} [{}] {}",
-                            status,
-                            severity,
-                            check.name
-                        );
+                        println!("{} [{}] {}", status, severity, check.name);
 
                         if let Some(value) = &check.value {
                             println!("       Value: {}", truncate(value, 60));
@@ -145,10 +143,9 @@ fn main() {
 
                     if recommendations {
                         println!("\n=== Recommendations ===\n");
-                        for check in checks
-                            .iter()
-                            .filter(|c| !c.recommendation.is_empty() && c.severity != Severity::Info)
-                        {
+                        for check in checks.iter().filter(|c| {
+                            !c.recommendation.is_empty() && c.severity != Severity::Info
+                        }) {
                             println!("• {}: {}", check.name, check.recommendation);
                         }
                     }
@@ -171,7 +168,10 @@ fn main() {
                             println!("Cookie: {}", cookie.name);
                             println!("  Value: {}", truncate(&cookie.value, 40));
                             println!("  Secure: {}", if cookie.secure { "Yes" } else { "No ⚠" });
-                            println!("  HttpOnly: {}", if cookie.http_only { "Yes" } else { "No ⚠" });
+                            println!(
+                                "  HttpOnly: {}",
+                                if cookie.http_only { "Yes" } else { "No ⚠" }
+                            );
                             println!(
                                 "  SameSite: {}",
                                 cookie.same_site.as_deref().unwrap_or("Not set ⚠")
@@ -207,10 +207,22 @@ fn main() {
                     let acam = response.headers.get("access-control-allow-methods");
                     let acah = response.headers.get("access-control-allow-headers");
 
-                    println!("Access-Control-Allow-Origin: {}", acao.unwrap_or(&"(not set)".to_string()));
-                    println!("Access-Control-Allow-Credentials: {}", acac.unwrap_or(&"(not set)".to_string()));
-                    println!("Access-Control-Allow-Methods: {}", acam.unwrap_or(&"(not set)".to_string()));
-                    println!("Access-Control-Allow-Headers: {}", acah.unwrap_or(&"(not set)".to_string()));
+                    println!(
+                        "Access-Control-Allow-Origin: {}",
+                        acao.unwrap_or(&"(not set)".to_string())
+                    );
+                    println!(
+                        "Access-Control-Allow-Credentials: {}",
+                        acac.unwrap_or(&"(not set)".to_string())
+                    );
+                    println!(
+                        "Access-Control-Allow-Methods: {}",
+                        acam.unwrap_or(&"(not set)".to_string())
+                    );
+                    println!(
+                        "Access-Control-Allow-Headers: {}",
+                        acah.unwrap_or(&"(not set)".to_string())
+                    );
 
                     println!("\n=== Assessment ===\n");
 
@@ -225,11 +237,15 @@ fn main() {
                         Some(v) if v == &origin => {
                             println!("[!!] Origin reflected - vulnerable to CORS bypass");
                             if acac.map(|c| c == "true").unwrap_or(false) {
-                                println!("[!!!] CRITICAL: Credentials allowed with reflected origin");
+                                println!(
+                                    "[!!!] CRITICAL: Credentials allowed with reflected origin"
+                                );
                             }
                         }
                         Some(v) if v == "null" => {
-                            println!("[!] Null origin allowed - can be exploited via sandboxed iframes");
+                            println!(
+                                "[!] Null origin allowed - can be exploited via sandboxed iframes"
+                            );
                         }
                         Some(_) => {
                             println!("[+] Origin not reflected - whitelist appears to be in place");

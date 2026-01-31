@@ -386,7 +386,10 @@ fn handle_nosql(cmd: NosqlCommands) {
             println!("=== Blind NoSQL Extraction ===\n");
             println!("Field: {}, Prefix: {}\n", field, prefix);
             let charset = "abcdefghijklmnopqrstuvwxyz0123456789";
-            for p in blind_char_extraction(&field, &prefix, charset).iter().take(10) {
+            for p in blind_char_extraction(&field, &prefix, charset)
+                .iter()
+                .take(10)
+            {
                 println!("{}", p.payload_string);
             }
             println!("... ({} total)", charset.len());
@@ -401,7 +404,10 @@ fn handle_nosql(cmd: NosqlCommands) {
 }
 
 fn handle_traversal(depth: usize, target: &str) {
-    println!("=== Path Traversal (depth: {}, target: {}) ===\n", depth, target);
+    println!(
+        "=== Path Traversal (depth: {}, target: {}) ===\n",
+        depth, target
+    );
 
     println!("Basic:");
     for p in basic_traversals(depth, target) {
@@ -510,7 +516,10 @@ fn handle_tampering(cmd: TamperingCommands) {
             }
         }
         TamperingCommands::Privilege { target_id } => {
-            println!("=== Privilege Escalation Tests (target: {}) ===\n", target_id);
+            println!(
+                "=== Privilege Escalation Tests (target: {}) ===\n",
+                target_id
+            );
             let base = json!({"data": "test"});
             for t in privilege_escalation_tests(&base, target_id) {
                 println!("{}", t.name);

@@ -12,7 +12,7 @@ pub enum EncodingError {
 
 /// Z85 encode a string (pads to 4-byte boundary)
 pub fn z85_encode(input: &str) -> String {
-    let padded_len = ((input.len() + 3) / 4) * 4;
+    let padded_len = input.len().div_ceil(4) * 4;
     let mut padded = input.as_bytes().to_vec();
     padded.resize(padded_len, 0);
     z85::encode(&padded)
@@ -21,26 +21,31 @@ pub fn z85_encode(input: &str) -> String {
 /// Z85 decode a string
 pub fn z85_decode(input: &str) -> Result<String, EncodingError> {
     z85::decode(input)
-        .map(|bytes| String::from_utf8_lossy(&bytes).trim_end_matches('\0').to_string())
+        .map(|bytes| {
+            String::from_utf8_lossy(&bytes)
+                .trim_end_matches('\0')
+                .to_string()
+        })
         .map_err(|e| EncodingError::DecodeFailed(e.to_string()))
 }
 
 /// Base64 encode
 pub fn base64_encode(input: &[u8]) -> String {
-    use base64::{Engine as _, engine::general_purpose::STANDARD};
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
     STANDARD.encode(input)
 }
 
 /// Base64 decode
 pub fn base64_decode(input: &str) -> Result<Vec<u8>, EncodingError> {
-    use base64::{Engine as _, engine::general_purpose::STANDARD};
-    STANDARD.decode(input)
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
+    STANDARD
+        .decode(input)
         .map_err(|e| EncodingError::DecodeFailed(e.to_string()))
 }
 
 /// URL-safe Base64 encode (for JWT)
 pub fn base64url_encode(input: &[u8]) -> String {
-    use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
     URL_SAFE_NO_PAD.encode(input)
 }
 
@@ -51,19 +56,19 @@ pub fn hex_encode(input: &[u8]) -> String {
 
 /// Hex decode
 pub fn hex_decode(input: &str) -> Result<Vec<u8>, EncodingError> {
-    hex::decode(input)
-        .map_err(|e| EncodingError::DecodeFailed(e.to_string()))
+    hex::decode(input).map_err(|e| EncodingError::DecodeFailed(e.to_string()))
 }
 
 /// ROT13 transformation
 pub fn rot13(input: &str) -> String {
-    input.chars().map(|c| {
-        match c {
+    input
+        .chars()
+        .map(|c| match c {
             'a'..='m' | 'A'..='M' => (c as u8 + 13) as char,
             'n'..='z' | 'N'..='Z' => (c as u8 - 13) as char,
             _ => c,
-        }
-    }).collect()
+        })
+        .collect()
 }
 
 #[cfg(test)]

@@ -66,7 +66,10 @@ fn main() {
                 "base64url" => base64url_encode(input.as_bytes()),
                 "hex" => hex_encode(input.as_bytes()),
                 _ => {
-                    eprintln!("Unknown format: {}. Use z85, base64, base64url, or hex", format);
+                    eprintln!(
+                        "Unknown format: {}. Use z85, base64, base64url, or hex",
+                        format
+                    );
                     std::process::exit(1);
                 }
             };
@@ -102,7 +105,11 @@ fn main() {
         Commands::Rot13 { input } => {
             println!("{}", rot13(&input));
         }
-        Commands::JuiceCoupon { month, year, discount } => {
+        Commands::JuiceCoupon {
+            month,
+            year,
+            discount,
+        } => {
             let coupon = format!("{}{}-{}", month.to_uppercase(), year, discount);
             let encoded = z85_encode(&coupon);
             println!("Coupon: {}", coupon);

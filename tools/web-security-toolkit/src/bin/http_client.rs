@@ -229,7 +229,10 @@ fn main() {
                         for cookie in &response.cookies {
                             println!("{}={}", cookie.name, cookie.value);
                             println!("  Path: {}", cookie.path.as_deref().unwrap_or("/"));
-                            println!("  Domain: {}", cookie.domain.as_deref().unwrap_or("(default)"));
+                            println!(
+                                "  Domain: {}",
+                                cookie.domain.as_deref().unwrap_or("(default)")
+                            );
                             println!("  Secure: {}", cookie.secure);
                             println!("  HttpOnly: {}", cookie.http_only);
                             println!(
@@ -251,7 +254,12 @@ fn main() {
                 Err(e) => eprintln!("[-] Request failed: {}", e),
             }
         }
-        Commands::JsonExtract { url, path, headers, jwt } => {
+        Commands::JsonExtract {
+            url,
+            path,
+            headers,
+            jwt,
+        } => {
             let client = build_client(&headers, jwt.as_deref(), &[]);
 
             match client.get(&url) {
@@ -294,7 +302,10 @@ fn build_client(headers: &[String], jwt: Option<&str>, cookies: &[String]) -> Se
     client
 }
 
-fn print_response(response: &web_security_toolkit::http_client::SecurityResponse, show_headers: bool) {
+fn print_response(
+    response: &web_security_toolkit::http_client::SecurityResponse,
+    show_headers: bool,
+) {
     println!("HTTP {}", response.status);
 
     if show_headers {

