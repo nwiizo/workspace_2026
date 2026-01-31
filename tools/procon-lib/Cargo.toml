@@ -1,0 +1,27 @@
+[package]
+name = "procon-lib"
+version = "0.1.0"
+edition = "2024"
+authors = ["nwiizo"]
+description = "Comprehensive competitive programming library for Rust - ACL compatible and beyond"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/nwiizo/workspace_2026"
+keywords = ["competitive-programming", "atcoder", "algorithms", "data-structures"]
+categories = ["algorithms", "data-structures"]
+
+[dependencies]
+# No external dependencies - standard library only
+
+[dev-dependencies]
+rand = "0.9"
+
+[features]
+default = []
+# Feature flags for optional heavy modules
+geometry = []
+dp-opt = []
+advanced-ds = []
+
+[lib]
+name = "procon_lib"
+path = "src/lib.rs"
