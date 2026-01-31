@@ -19,17 +19,13 @@ See [cp/README.md](cp/README.md) for details.
 
 ```
 cp/
-├── atcoder/
-│   ├── abc300/       # AtCoder Beginner Contest 300
-│   ├── arc180/       # AtCoder Regular Contest 180
-│   └── typical90/    # 競プロ典型90問
-├── codeforces/
-│   └── round900/
-├── leetcode/
-│   ├── daily/
-│   └── contests/
-├── aoj/
-└── yukicoder/
+├── abc300/       # AtCoder Beginner Contest 300
+├── arc180/       # AtCoder Regular Contest 180
+├── typical90/    # 競プロ典型90問
+├── edpc/         # Educational DP Contest
+├── round900/     # Codeforces Round 900
+├── weekly400/    # LeetCode Weekly 400
+└── cses/         # CSES Problem Set
 ```
 
 ### Tools
