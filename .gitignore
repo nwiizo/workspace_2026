@@ -349,3 +349,34 @@ blogs/contents/
 **/dump/
 **/extracted/
 **/leaked/
+
+# Competitive Programming
+# Input/output test files
+**/in*.txt
+**/out*.txt
+**/input*.txt
+**/output*.txt
+**/sample*.txt
+**/testcase*.txt
+
+# Judge output and diff
+**/judge_output.txt
+**/diff.txt
+**/result.txt
+
+# Compiled binaries (contest specific)
+contests/**/a.out
+contests/**/main
+contests/**/solution
+contests/**/*.exe
+
+# Contest tools cache
+**/.oj-api/
+**/.online-judge-tools/
+**/test/
+
+# AtCoder specific
+**/contest.acc.json
+
+# Codeforces specific
+**/cf_*_test/
