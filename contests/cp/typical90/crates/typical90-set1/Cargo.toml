@@ -1,0 +1,127 @@
+[package]
+name = "typical90-set1"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+proconio.workspace = true
+
+[[bin]]
+name = "001"
+path = "src/bin/001_yokan_party.rs"
+
+[[bin]]
+name = "002"
+path = "src/bin/002_encyclopedia_parentheses.rs"
+
+[[bin]]
+name = "003"
+path = "src/bin/003_longest_circular_road.rs"
+
+[[bin]]
+name = "004"
+path = "src/bin/004_cross_sum.rs"
+
+[[bin]]
+name = "005"
+path = "src/bin/005_restricted_digits.rs"
+
+[[bin]]
+name = "006"
+path = "src/bin/006_smallest_subsequence.rs"
+
+[[bin]]
+name = "007"
+path = "src/bin/007_cp_classes.rs"
+
+[[bin]]
+name = "008"
+path = "src/bin/008_atcounter.rs"
+
+[[bin]]
+name = "009"
+path = "src/bin/009_three_letters.rs"
+
+[[bin]]
+name = "010"
+path = "src/bin/010_score_sum_queries.rs"
+
+[[bin]]
+name = "011"
+path = "src/bin/011_gravy_jobs.rs"
+
+[[bin]]
+name = "012"
+path = "src/bin/012_red_painting.rs"
+
+[[bin]]
+name = "013"
+path = "src/bin/013_passing.rs"
+
+[[bin]]
+name = "014"
+path = "src/bin/014_we_used_to_sing.rs"
+
+[[bin]]
+name = "015"
+path = "src/bin/015_dont_be_too_close.rs"
+
+[[bin]]
+name = "016"
+path = "src/bin/016_minimum_coins.rs"
+
+[[bin]]
+name = "017"
+path = "src/bin/017_crossing_segments.rs"
+
+[[bin]]
+name = "018"
+path = "src/bin/018_statue_of_chokudai.rs"
+
+[[bin]]
+name = "019"
+path = "src/bin/019_pick_two.rs"
+
+[[bin]]
+name = "020"
+path = "src/bin/020_log_inequality.rs"
+
+[[bin]]
+name = "021"
+path = "src/bin/021_come_back_in_one_piece.rs"
+
+[[bin]]
+name = "022"
+path = "src/bin/022_cubic_cake.rs"
+
+[[bin]]
+name = "023"
+path = "src/bin/023_avoid_war.rs"
+
+[[bin]]
+name = "024"
+path = "src/bin/024_select_plus_minus_one.rs"
+
+[[bin]]
+name = "025"
+path = "src/bin/025_digit_product_equation.rs"
+
+[[bin]]
+name = "026"
+path = "src/bin/026_independent_set_on_tree.rs"
+
+[[bin]]
+name = "027"
+path = "src/bin/027_sign_up_requests.rs"
+
+[[bin]]
+name = "028"
+path = "src/bin/028_cluttered_paper.rs"
+
+[[bin]]
+name = "029"
+path = "src/bin/029_long_bricks.rs"
+
+[[bin]]
+name = "030"
+path = "src/bin/030_k_factors.rs"

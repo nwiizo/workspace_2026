@@ -1,0 +1,127 @@
+[package]
+name = "typical90-set3"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+proconio.workspace = true
+
+[[bin]]
+name = "061"
+path = "src/bin/061_deck.rs"
+
+[[bin]]
+name = "062"
+path = "src/bin/062_paint_all.rs"
+
+[[bin]]
+name = "063"
+path = "src/bin/063_monochromatic_subgrid.rs"
+
+[[bin]]
+name = "064"
+path = "src/bin/064_uplift.rs"
+
+[[bin]]
+name = "065"
+path = "src/bin/065_rgb_balls_2.rs"
+
+[[bin]]
+name = "066"
+path = "src/bin/066_various_arrays.rs"
+
+[[bin]]
+name = "067"
+path = "src/bin/067_base_8_to_9.rs"
+
+[[bin]]
+name = "068"
+path = "src/bin/068_paired_information.rs"
+
+[[bin]]
+name = "069"
+path = "src/bin/069_colorful_blocks_2.rs"
+
+[[bin]]
+name = "070"
+path = "src/bin/070_plant_planning.rs"
+
+[[bin]]
+name = "071"
+path = "src/bin/071_fuzzy_priority.rs"
+
+[[bin]]
+name = "072"
+path = "src/bin/072_loop_railway_plan.rs"
+
+[[bin]]
+name = "073"
+path = "src/bin/073_we_need_both.rs"
+
+[[bin]]
+name = "074"
+path = "src/bin/074_abc_string_2.rs"
+
+[[bin]]
+name = "075"
+path = "src/bin/075_magic_for_balls.rs"
+
+[[bin]]
+name = "076"
+path = "src/bin/076_cake_cut.rs"
+
+[[bin]]
+name = "077"
+path = "src/bin/077_planes_2d.rs"
+
+[[bin]]
+name = "078"
+path = "src/bin/078_easy_graph.rs"
+
+[[bin]]
+name = "079"
+path = "src/bin/079_two_by_two.rs"
+
+[[bin]]
+name = "080"
+path = "src/bin/080_lets_share_bit.rs"
+
+[[bin]]
+name = "081"
+path = "src/bin/081_friendly_group.rs"
+
+[[bin]]
+name = "082"
+path = "src/bin/082_counting_numbers.rs"
+
+[[bin]]
+name = "083"
+path = "src/bin/083_colorful_graph.rs"
+
+[[bin]]
+name = "084"
+path = "src/bin/084_there_are_two_types.rs"
+
+[[bin]]
+name = "085"
+path = "src/bin/085_multiplication.rs"
+
+[[bin]]
+name = "086"
+path = "src/bin/086_snukes_favorite_arrays.rs"
+
+[[bin]]
+name = "087"
+path = "src/bin/087_chokudais_demand.rs"
+
+[[bin]]
+name = "088"
+path = "src/bin/088_similar_but_different.rs"
+
+[[bin]]
+name = "089"
+path = "src/bin/089_partitions_and_inversions.rs"
+
+[[bin]]
+name = "090"
+path = "src/bin/090_tenkei90s_last_problem.rs"

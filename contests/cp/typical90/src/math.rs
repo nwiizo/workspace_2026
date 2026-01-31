@@ -72,6 +72,178 @@ pub const MOD: i64 = 998_244_353;
 pub const MOD2: i64 = 1_000_000_007;
 pub const INF: i64 = 1_000_000_000_000_000_000;
 
+/// 座標圧縮
+///
+/// # Example
+/// ```
+/// use typical90::math::compress;
+///
+/// let a = vec![100, 1, 50, 1, 100];
+/// let (compressed, mapping) = compress(&a);
+/// assert_eq!(compressed, vec![2, 0, 1, 0, 2]);
+/// assert_eq!(mapping, vec![1, 50, 100]);
+/// ```
+pub fn compress(a: &[i64]) -> (Vec<usize>, Vec<i64>) {
+    let mut sorted: Vec<i64> = a.to_vec();
+    sorted.sort();
+    sorted.dedup();
+
+    let compressed: Vec<usize> = a.iter().map(|x| sorted.binary_search(x).unwrap()).collect();
+
+    (compressed, sorted)
+}
+
+/// 次の順列を生成（C++ の next_permutation 相当）
+///
+/// # Returns
+/// 次の順列が存在すれば true、最後の順列なら false
+///
+/// # Example
+/// ```
+/// use typical90::math::next_permutation;
+///
+/// let mut a = vec![1, 2, 3];
+/// assert!(next_permutation(&mut a));
+/// assert_eq!(a, vec![1, 3, 2]);
+/// ```
+pub fn next_permutation<T: Ord>(arr: &mut [T]) -> bool {
+    let n = arr.len();
+    if n <= 1 {
+        return false;
+    }
+
+    let mut i = n - 1;
+    while i > 0 && arr[i - 1] >= arr[i] {
+        i -= 1;
+    }
+
+    if i == 0 {
+        return false;
+    }
+
+    let mut j = n - 1;
+    while arr[j] <= arr[i - 1] {
+        j -= 1;
+    }
+
+    arr.swap(i - 1, j);
+    arr[i..].reverse();
+    true
+}
+
+/// エラトステネスの篩で素数判定テーブルを生成
+///
+/// # Example
+/// ```
+/// use typical90::math::sieve;
+///
+/// let is_prime = sieve(10);
+/// assert!(!is_prime[0]);
+/// assert!(!is_prime[1]);
+/// assert!(is_prime[2]);
+/// assert!(is_prime[7]);
+/// assert!(!is_prime[9]);
+/// ```
+pub fn sieve(n: usize) -> Vec<bool> {
+    let mut is_prime = vec![true; n + 1];
+    is_prime[0] = false;
+    if n >= 1 {
+        is_prime[1] = false;
+    }
+
+    let mut i = 2;
+    while i * i <= n {
+        if is_prime[i] {
+            for j in (i * i..=n).step_by(i) {
+                is_prime[j] = false;
+            }
+        }
+        i += 1;
+    }
+
+    is_prime
+}
+
+/// 素因数分解
+///
+/// # Example
+/// ```
+/// use typical90::math::factorize;
+///
+/// let factors = factorize(12);
+/// assert_eq!(factors, vec![(2, 2), (3, 1)]); // 12 = 2^2 * 3^1
+/// ```
+pub fn factorize(mut n: i64) -> Vec<(i64, usize)> {
+    let mut factors = Vec::new();
+    let mut d = 2;
+
+    while d * d <= n {
+        if n % d == 0 {
+            let mut count = 0;
+            while n % d == 0 {
+                n /= d;
+                count += 1;
+            }
+            factors.push((d, count));
+        }
+        d += 1;
+    }
+
+    if n > 1 {
+        factors.push((n, 1));
+    }
+
+    factors
+}
+
+/// 約数列挙
+///
+/// # Example
+/// ```
+/// use typical90::math::divisors;
+///
+/// let mut divs = divisors(12);
+/// divs.sort();
+/// assert_eq!(divs, vec![1, 2, 3, 4, 6, 12]);
+/// ```
+pub fn divisors(n: i64) -> Vec<i64> {
+    let mut result = Vec::new();
+    let mut d = 1;
+
+    while d * d <= n {
+        if n % d == 0 {
+            result.push(d);
+            if d != n / d {
+                result.push(n / d);
+            }
+        }
+        d += 1;
+    }
+
+    result
+}
+
+/// 拡張ユークリッド互除法
+///
+/// ax + by = gcd(a, b) を満たす (gcd, x, y) を返す
+///
+/// # Example
+/// ```
+/// use typical90::math::ext_gcd;
+///
+/// let (g, x, y) = ext_gcd(12, 18);
+/// assert_eq!(g, 6);
+/// assert_eq!(12 * x + 18 * y, g);
+/// ```
+pub fn ext_gcd(a: i64, b: i64) -> (i64, i64, i64) {
+    if b == 0 {
+        (a, 1, 0)
+    } else {
+        let (g, x, y) = ext_gcd(b, a % b);
+        (g, y, x - (a / b) * y)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -110,5 +282,56 @@ mod tests {
         let result = matrix_pow(&fib_mat, 10, MOD2);
         // F(11) = 89
         assert_eq!(result[0][0], 89);
+    }
+
+    #[test]
+    fn test_compress() {
+        let a = vec![100, 1, 50, 1, 100];
+        let (compressed, mapping) = compress(&a);
+        assert_eq!(compressed, vec![2, 0, 1, 0, 2]);
+        assert_eq!(mapping, vec![1, 50, 100]);
+    }
+
+    #[test]
+    fn test_next_permutation() {
+        let mut a = vec![1, 2, 3];
+        assert!(next_permutation(&mut a));
+        assert_eq!(a, vec![1, 3, 2]);
+        assert!(next_permutation(&mut a));
+        assert_eq!(a, vec![2, 1, 3]);
+    }
+
+    #[test]
+    fn test_next_permutation_last() {
+        let mut a = vec![3, 2, 1];
+        assert!(!next_permutation(&mut a));
+    }
+
+    #[test]
+    fn test_sieve() {
+        let is_prime = sieve(20);
+        let primes: Vec<usize> = (0..=20).filter(|&i| is_prime[i]).collect();
+        assert_eq!(primes, vec![2, 3, 5, 7, 11, 13, 17, 19]);
+    }
+
+    #[test]
+    fn test_factorize() {
+        assert_eq!(factorize(12), vec![(2, 2), (3, 1)]);
+        assert_eq!(factorize(7), vec![(7, 1)]);
+        assert_eq!(factorize(1), vec![]);
+    }
+
+    #[test]
+    fn test_divisors() {
+        let mut divs = divisors(12);
+        divs.sort();
+        assert_eq!(divs, vec![1, 2, 3, 4, 6, 12]);
+    }
+
+    #[test]
+    fn test_ext_gcd() {
+        let (g, x, y) = ext_gcd(12, 18);
+        assert_eq!(g, 6);
+        assert_eq!(12 * x + 18 * y, g);
     }
 }

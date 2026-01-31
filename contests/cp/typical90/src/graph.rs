@@ -291,6 +291,199 @@ impl TwoSat {
     }
 }
 
+/// ベルマンフォード法（負辺対応）
+///
+/// 負閉路がある場合は None を返す
+///
+/// # Example
+/// ```
+/// use typical90::graph::bellman_ford;
+///
+/// let edges = vec![
+///     (0, 1, 1),
+///     (1, 2, -2),
+///     (0, 2, 3),
+/// ];
+/// let dist = bellman_ford(3, &edges, 0).unwrap();
+/// assert_eq!(dist, vec![0, 1, -1]);
+/// ```
+pub fn bellman_ford(n: usize, edges: &[(usize, usize, i64)], start: usize) -> Option<Vec<i64>> {
+    let mut dist = vec![i64::MAX; n];
+    dist[start] = 0;
+
+    for i in 0..n {
+        let mut updated = false;
+        for &(from, to, cost) in edges {
+            if dist[from] != i64::MAX && dist[from] + cost < dist[to] {
+                dist[to] = dist[from] + cost;
+                updated = true;
+            }
+        }
+        if !updated {
+            return Some(dist);
+        }
+        if i == n - 1 && updated {
+            return None; // 負閉路あり
+        }
+    }
+    Some(dist)
+}
+
+/// フロイドワーシャル法（全点対最短経路）
+///
+/// # Example
+/// ```
+/// use typical90::graph::floyd_warshall;
+///
+/// let mut dist = vec![
+///     vec![0, 1, i64::MAX],
+///     vec![i64::MAX, 0, 2],
+///     vec![i64::MAX, i64::MAX, 0],
+/// ];
+/// floyd_warshall(&mut dist);
+/// assert_eq!(dist[0][2], 3); // 0 -> 1 -> 2
+/// ```
+#[allow(clippy::needless_range_loop)]
+pub fn floyd_warshall(dist: &mut [Vec<i64>]) {
+    let n = dist.len();
+    for k in 0..n {
+        for i in 0..n {
+            for j in 0..n {
+                if dist[i][k] != i64::MAX && dist[k][j] != i64::MAX {
+                    dist[i][j] = dist[i][j].min(dist[i][k] + dist[k][j]);
+                }
+            }
+        }
+    }
+}
+
+/// トポロジカルソート（Kahn's algorithm）
+///
+/// DAGでない場合は None を返す
+///
+/// # Example
+/// ```
+/// use typical90::graph::topological_sort;
+///
+/// let graph = vec![
+///     vec![1, 2],  // 0 -> 1, 2
+///     vec![3],     // 1 -> 3
+///     vec![3],     // 2 -> 3
+///     vec![],      // 3
+/// ];
+/// let order = topological_sort(&graph).unwrap();
+/// // 0 が最初、3 が最後
+/// assert_eq!(order[0], 0);
+/// assert_eq!(order[3], 3);
+/// ```
+pub fn topological_sort(graph: &[Vec<usize>]) -> Option<Vec<usize>> {
+    let n = graph.len();
+    let mut in_degree = vec![0usize; n];
+    for edges in graph {
+        for &to in edges {
+            in_degree[to] += 1;
+        }
+    }
+
+    let mut queue: VecDeque<usize> = in_degree
+        .iter()
+        .enumerate()
+        .filter_map(|(i, &d)| if d == 0 { Some(i) } else { None })
+        .collect();
+
+    let mut result = Vec::with_capacity(n);
+    while let Some(v) = queue.pop_front() {
+        result.push(v);
+        for &next in &graph[v] {
+            in_degree[next] -= 1;
+            if in_degree[next] == 0 {
+                queue.push_back(next);
+            }
+        }
+    }
+
+    if result.len() == n {
+        Some(result)
+    } else {
+        None // 閉路あり
+    }
+}
+
+/// 0-1 BFS（辺の重みが0か1のみの最短経路）
+///
+/// # Example
+/// ```
+/// use typical90::graph::bfs_01;
+///
+/// let graph = vec![
+///     vec![(1, 0), (2, 1)],  // 0 -> 1(0), 0 -> 2(1)
+///     vec![(3, 1)],          // 1 -> 3(1)
+///     vec![(3, 0)],          // 2 -> 3(0)
+///     vec![],
+/// ];
+/// let dist = bfs_01(&graph, 0);
+/// assert_eq!(dist, vec![0, 0, 1, 1]);
+/// ```
+pub fn bfs_01(graph: &[Vec<(usize, i64)>], start: usize) -> Vec<i64> {
+    let n = graph.len();
+    let mut dist = vec![i64::MAX; n];
+    let mut deque = VecDeque::new();
+
+    dist[start] = 0;
+    deque.push_front(start);
+
+    while let Some(v) = deque.pop_front() {
+        for &(next, cost) in &graph[v] {
+            let new_dist = dist[v] + cost;
+            if new_dist < dist[next] {
+                dist[next] = new_dist;
+                if cost == 0 {
+                    deque.push_front(next);
+                } else {
+                    deque.push_back(next);
+                }
+            }
+        }
+    }
+    dist
+}
+
+/// 最小全域木（クラスカル法）
+///
+/// # Returns
+/// (最小コスト, 使用した辺のインデックス)
+///
+/// # Example
+/// ```
+/// use typical90::graph::kruskal;
+///
+/// let edges = vec![
+///     (0, 1, 1),
+///     (1, 2, 2),
+///     (0, 2, 3),
+/// ];
+/// let (cost, used) = kruskal(3, &edges);
+/// assert_eq!(cost, 3);
+/// assert_eq!(used.len(), 2);
+/// ```
+pub fn kruskal(n: usize, edges: &[(usize, usize, i64)]) -> (i64, Vec<usize>) {
+    let mut indexed_edges: Vec<_> = edges.iter().enumerate().collect();
+    indexed_edges.sort_by_key(|(_, (_, _, c))| *c);
+
+    let mut uf = UnionFind::new(n);
+    let mut total_cost = 0;
+    let mut used = Vec::new();
+
+    for (idx, &(u, v, cost)) in indexed_edges {
+        if uf.unite(u, v) {
+            total_cost += cost;
+            used.push(idx);
+        }
+    }
+
+    (total_cost, used)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -365,5 +558,60 @@ mod tests {
         sat.add_clause(0, false, 0, false); // NOT x0
 
         assert!(!sat.solve());
+    }
+
+    #[test]
+    fn test_bellman_ford() {
+        let edges = vec![(0, 1, 1), (1, 2, -2), (0, 2, 3)];
+        let dist = bellman_ford(3, &edges, 0).unwrap();
+        assert_eq!(dist, vec![0, 1, -1]);
+    }
+
+    #[test]
+    fn test_bellman_ford_negative_cycle() {
+        // 0 -> 1 -> 2 -> 0 で合計 -1 の負閉路
+        let edges = vec![(0, 1, 1), (1, 2, 1), (2, 0, -3)];
+        assert!(bellman_ford(3, &edges, 0).is_none());
+    }
+
+    #[test]
+    fn test_floyd_warshall() {
+        let mut dist = vec![
+            vec![0, 1, i64::MAX],
+            vec![i64::MAX, 0, 2],
+            vec![i64::MAX, i64::MAX, 0],
+        ];
+        floyd_warshall(&mut dist);
+        assert_eq!(dist[0][2], 3);
+    }
+
+    #[test]
+    fn test_topological_sort() {
+        let graph = vec![vec![1, 2], vec![3], vec![3], vec![]];
+        let order = topological_sort(&graph).unwrap();
+        assert_eq!(order[0], 0);
+        assert_eq!(order[3], 3);
+    }
+
+    #[test]
+    fn test_topological_sort_cycle() {
+        // 0 -> 1 -> 2 -> 0 の閉路
+        let graph = vec![vec![1], vec![2], vec![0]];
+        assert!(topological_sort(&graph).is_none());
+    }
+
+    #[test]
+    fn test_bfs_01() {
+        let graph = vec![vec![(1, 0), (2, 1)], vec![(3, 1)], vec![(3, 0)], vec![]];
+        let dist = bfs_01(&graph, 0);
+        assert_eq!(dist, vec![0, 0, 1, 1]);
+    }
+
+    #[test]
+    fn test_kruskal() {
+        let edges = vec![(0, 1, 1), (1, 2, 2), (0, 2, 3)];
+        let (cost, used) = kruskal(3, &edges);
+        assert_eq!(cost, 3);
+        assert_eq!(used.len(), 2);
     }
 }

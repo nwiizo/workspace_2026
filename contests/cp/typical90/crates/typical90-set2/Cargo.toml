@@ -1,0 +1,127 @@
+[package]
+name = "typical90-set2"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+proconio.workspace = true
+
+[[bin]]
+name = "031"
+path = "src/bin/031_vs_atcoder.rs"
+
+[[bin]]
+name = "032"
+path = "src/bin/032_atcoder_ekiden.rs"
+
+[[bin]]
+name = "033"
+path = "src/bin/033_not_too_bright.rs"
+
+[[bin]]
+name = "034"
+path = "src/bin/034_there_are_few_types.rs"
+
+[[bin]]
+name = "035"
+path = "src/bin/035_preserve_connectivity.rs"
+
+[[bin]]
+name = "036"
+path = "src/bin/036_max_manhattan.rs"
+
+[[bin]]
+name = "037"
+path = "src/bin/037_dont_leave_the_spice.rs"
+
+[[bin]]
+name = "038"
+path = "src/bin/038_large_lcs.rs"
+
+[[bin]]
+name = "039"
+path = "src/bin/039_tree_distance.rs"
+
+[[bin]]
+name = "040"
+path = "src/bin/040_get_more_money.rs"
+
+[[bin]]
+name = "041"
+path = "src/bin/041_piles_in_atcoder_farm.rs"
+
+[[bin]]
+name = "042"
+path = "src/bin/042_multiple_of_9.rs"
+
+[[bin]]
+name = "043"
+path = "src/bin/043_maze_challenge.rs"
+
+[[bin]]
+name = "044"
+path = "src/bin/044_shift_and_swapping.rs"
+
+[[bin]]
+name = "045"
+path = "src/bin/045_simple_grouping.rs"
+
+[[bin]]
+name = "046"
+path = "src/bin/046_i_love_46.rs"
+
+[[bin]]
+name = "047"
+path = "src/bin/047_monochromatic_diagonal.rs"
+
+[[bin]]
+name = "048"
+path = "src/bin/048_i_will_not_drop_out.rs"
+
+[[bin]]
+name = "049"
+path = "src/bin/049_flip_digits_2.rs"
+
+[[bin]]
+name = "050"
+path = "src/bin/050_stair_jump.rs"
+
+[[bin]]
+name = "051"
+path = "src/bin/051_typical_shop.rs"
+
+[[bin]]
+name = "052"
+path = "src/bin/052_dice_product.rs"
+
+[[bin]]
+name = "053"
+path = "src/bin/053_discrete_dowsing.rs"
+
+[[bin]]
+name = "054"
+path = "src/bin/054_takahashi_number.rs"
+
+[[bin]]
+name = "055"
+path = "src/bin/055_select_5.rs"
+
+[[bin]]
+name = "056"
+path = "src/bin/056_lucky_bag.rs"
+
+[[bin]]
+name = "057"
+path = "src/bin/057_flip_flap.rs"
+
+[[bin]]
+name = "058"
+path = "src/bin/058_original_calculator.rs"
+
+[[bin]]
+name = "059"
+path = "src/bin/059_many_graph_queries.rs"
+
+[[bin]]
+name = "060"
+path = "src/bin/060_chimera.rs"

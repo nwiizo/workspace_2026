@@ -4,44 +4,15 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+
+[workspace]
+members = [
+    ".",
+    "crates/typical90-set1",
+    "crates/typical90-set2",
+    "crates/typical90-set3",
+]
+resolver = "2"
+
+[workspace.dependencies]
 proconio = "0.4"
-
-[[bin]]
-name = "001"
-path = "src/001_yokan_party.rs"
-
-[[bin]]
-name = "002"
-path = "src/002_encyclopedia_parentheses.rs"
-
-[[bin]]
-name = "003"
-path = "src/003_longest_circular_road.rs"
-
-[[bin]]
-name = "004"
-path = "src/004_cross_sum.rs"
-
-[[bin]]
-name = "005"
-path = "src/005_restricted_digits.rs"
-
-[[bin]]
-name = "006"
-path = "src/006_smallest_subsequence.rs"
-
-[[bin]]
-name = "007"
-path = "src/007_cp_classes.rs"
-
-[[bin]]
-name = "008"
-path = "src/008_atcounter.rs"
-
-[[bin]]
-name = "009"
-path = "src/009_three_letters.rs"
-
-[[bin]]
-name = "010"
-path = "src/010_score_sum_queries.rs"
