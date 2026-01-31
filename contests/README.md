@@ -7,29 +7,29 @@ Programming contests and security challenges.
 | Directory | Description | Status |
 |-----------|-------------|--------|
 | `juice_shop/` | OWASP Juice Shop CTF - Web security challenges | Active |
-| `atcoder/` | AtCoder contests (ABC, ARC, AGC) | - |
-| `codeforces/` | Codeforces contests | - |
-| `leetcode/` | LeetCode problems | - |
+| `cp/` | Competitive Programming (AtCoder, Codeforces, etc.) | - |
 
 ---
 
 ## Competitive Programming
 
+See [cp/README.md](cp/README.md) for details.
+
 ### Directory Structure
 
 ```
-atcoder/
-├── abc300/           # Contest name
-│   ├── a.rs          # Problem A solution
-│   ├── b.rs
-│   └── README.md     # Contest notes
-└── typical90/        # Practice problems
-
-codeforces/
-└── round900/
-
-leetcode/
-└── daily/
+cp/
+├── atcoder/
+│   ├── abc300/       # AtCoder Beginner Contest 300
+│   ├── arc180/       # AtCoder Regular Contest 180
+│   └── typical90/    # 競プロ典型90問
+├── codeforces/
+│   └── round900/
+├── leetcode/
+│   ├── daily/
+│   └── contests/
+├── aoj/
+└── yukicoder/
 ```
 
 ### Tools

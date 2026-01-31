@@ -9,9 +9,12 @@ Programming contests and security challenges (CTF, competitive programming).
 ```
 contests/
 ├── juice_shop/     # CTF (Web security)
-├── atcoder/        # AtCoder contests
-├── codeforces/     # Codeforces rounds
-└── leetcode/       # LeetCode problems
+└── cp/             # Competitive Programming
+    ├── atcoder/    # AtCoder (ABC, ARC, AGC)
+    ├── codeforces/ # Codeforces rounds
+    ├── leetcode/   # LeetCode problems
+    ├── aoj/        # Aizu Online Judge
+    └── yukicoder/  # yukicoder
 ```
 
 ## Guidelines
@@ -27,7 +30,7 @@ contests/
 ### ディレクトリ構成
 
 ```
-atcoder/abc300/
+cp/atcoder/abc300/
 ├── a.rs            # 解答コード
 ├── b.rs
 └── README.md       # コンテストメモ（オプション）
@@ -36,7 +39,8 @@ atcoder/abc300/
 ### コマンド
 
 ```bash
-# Rust (cargo-compete)
+# Rust (cargo-compete) - cp/atcoder/ で実行
+cd contests/cp/atcoder
 cargo compete new abc300    # コンテスト取得
 cargo compete test a        # テスト
 cargo compete submit a      # 提出
