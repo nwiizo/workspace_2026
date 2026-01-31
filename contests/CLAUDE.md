@@ -2,20 +2,108 @@
 
 ## Overview
 
-Programming contests and security challenges (CTF, etc.).
+Programming contests and security challenges (CTF, competitive programming).
 
 ## Structure
 
-Each contest has its own subdirectory with:
-- `README.md` - Overview, setup, and tools
-- `CLAUDE.md` - Project-specific instructions (if needed)
-- Challenge files organized by difficulty or category
+```
+contests/
+├── juice_shop/     # CTF (Web security)
+├── atcoder/        # AtCoder contests
+├── codeforces/     # Codeforces rounds
+└── leetcode/       # LeetCode problems
+```
 
 ## Guidelines
 
 - Document solutions with thought process, not just answers
 - Include setup instructions for reproducibility
 - Keep sensitive data (flags, credentials) local only
+
+---
+
+## 競技プログラミング
+
+### ディレクトリ構成
+
+```
+atcoder/abc300/
+├── a.rs            # 解答コード
+├── b.rs
+└── README.md       # コンテストメモ（オプション）
+```
+
+### コマンド
+
+```bash
+# Rust (cargo-compete)
+cargo compete new abc300    # コンテスト取得
+cargo compete test a        # テスト
+cargo compete submit a      # 提出
+
+# Python (oj)
+oj download URL             # テストケース取得
+oj test -c "python main.py" # テスト
+oj submit URL main.py       # 提出
+```
+
+### 解法パターン
+
+| パターン | 典型問題 | 計算量 |
+|---------|---------|--------|
+| 全探索 | N ≤ 20 | O(2^N) |
+| 二分探索 | 単調性あり | O(log N) |
+| DP | 部分問題に分解可能 | 問題依存 |
+| Union-Find | グループ管理 | O(α(N)) |
+| セグメント木 | 区間クエリ | O(log N) |
+| BFS/DFS | グラフ探索 | O(V + E) |
+| ダイクストラ | 最短経路 | O(E log V) |
+
+### 計算量の目安
+
+| N | 許容計算量 |
+|---|-----------|
+| 10^6 | O(N), O(N log N) |
+| 10^5 | O(N log N), O(N√N) |
+| 10^4 | O(N²) |
+| 10^3 | O(N² log N) |
+| 10^2 | O(N³) |
+| 20 | O(2^N) |
+| 10 | O(N!) |
+
+### Rust Tips
+
+```rust
+// 高速入力
+use proconio::input;
+use proconio::marker::{Chars, Usize1};
+
+// よく使うマクロ
+macro_rules! chmin { ($a:expr, $b:expr) => { if $b < $a { $a = $b; true } else { false } } }
+macro_rules! chmax { ($a:expr, $b:expr) => { if $b > $a { $a = $b; true } else { false } } }
+
+// BinaryHeap (最小ヒープ)
+use std::collections::BinaryHeap;
+use std::cmp::Reverse;
+let mut heap = BinaryHeap::new();
+heap.push(Reverse(x));
+```
+
+### Python Tips
+
+```python
+# 高速化
+import sys
+input = sys.stdin.readline
+sys.setrecursionlimit(10**6)
+
+# よく使う
+from collections import defaultdict, deque, Counter
+from heapq import heappush, heappop
+from bisect import bisect_left, bisect_right
+from itertools import permutations, combinations
+from functools import lru_cache
+```
 
 ---
 
