@@ -314,3 +314,38 @@ blogs/contents/
 # Playwright MCP cache/screenshots
 .playwright-mcp/
 **/.playwright-mcp/
+
+# CTF / Security Testing
+# Flags and solutions (keep local only)
+**/flag.txt
+**/flags.txt
+**/solution.txt
+**/credentials.txt
+**/secrets.txt
+
+# Session files and tokens
+**/session_*.md
+**/*_session.json
+**/*.token
+
+# Malicious payloads (keep local only)
+**/shell.php
+**/shell.jsp
+**/shell.aspx
+**/webshell.*
+**/*.evil.*
+
+# XXE/XSS test files
+**/xxe_payload.xml
+**/xss_payload.html
+
+# Burp Suite / Security tools
+*.burp
+*.zap
+**/.burp/
+**/.zap/
+
+# Extracted/dumped data
+**/dump/
+**/extracted/
+**/leaked/
