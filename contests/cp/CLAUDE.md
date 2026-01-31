@@ -324,6 +324,174 @@ for i in 0..n {
 
 ---
 
+## 典型90問から学んだパターン
+
+### 001 - Yokan Party (★4) - 答えで二分探索
+
+```rust
+// 「最小値を最大化」「最大値を最小化」は二分探索
+// check(x) = 「条件xを満たせるか」を判定関数として二分探索
+fn binary_search_on_answer<F: Fn(i64) -> bool>(lo: i64, hi: i64, check: F) -> i64 {
+    let (mut lo, mut hi) = (lo, hi);
+    while hi - lo > 1 {
+        let mid = (lo + hi) / 2;
+        if check(mid) { lo = mid; } else { hi = mid; }
+    }
+    lo
+}
+```
+
+### 002 - Encyclopedia of Parentheses (★3) - bit全探索 + 検証
+
+- N≤20ならbit全探索 (2^20≈10^6)
+- カッコ列の妥当性: どの位置でも `'(' の数 >= ')' の数`
+
+### 003 - Longest Circular Road (★4) - 木の直径
+
+```rust
+// 木の直径 = 任意の点から最遠点を求め、そこから再度最遠点を求める
+let (u, _) = bfs(0);    // 任意の点から最遠点
+let (_, d) = bfs(u);    // 直径
+```
+
+### 004 - Cross Sum (★2) - 前計算で高速化
+
+```rust
+// 行和・列和を前計算 → O(1)で十字の和を計算
+// answer[i][j] = row_sum[i] + col_sum[j] - a[i][j]
+```
+
+### 005 - Restricted Digits (★7) - 行列累乗
+
+- DP遷移が線形 → 行列で表現可能 → N乗を O(B³ log N) で計算
+- 大きなNでも log N に落とせる
+
+### 006 - Smallest Subsequence (★5) - 貪欲 + 前計算
+
+```rust
+// next[i][c] = 位置i以降で文字cが最初に現れる位置
+// 貪欲に辞書順最小の文字を選んでいく
+```
+
+### 007 - CP Classes (★3) - 二分探索（partition_point）
+
+```rust
+// Rustのpartition_point = C++のlower_bound相当
+let pos = sorted.partition_point(|&x| x < target);
+// pos: target以上の最小のインデックス
+// pos-1: target未満の最大のインデックス
+```
+
+### 008 - AtCounter (★4) - 部分列カウントDP
+
+```rust
+// 特定文字列の部分列を数える
+// dp[i] = target の最初のi文字を作る方法の数
+// 後ろから更新して重複を防ぐ
+for &c in s {
+    for i in (0..target.len()).rev() {
+        if c == target[i] { dp[i+1] += dp[i]; }
+    }
+}
+```
+
+### 010 - Score Sum Queries (★2) - 条件別累積和
+
+```rust
+// 条件ごとに累積和を別々に持つ
+// → 区間クエリを O(1) で処理
+```
+
+---
+
+## 実装から得た重要な学び
+
+### 1. Edition 2024 の変更点
+
+```rust
+// Edition 2024 ではパターンマッチの挙動が変わる
+// ❌ 古い書き方
+.max_by_key(|(_, &d)| d)
+
+// ✅ 新しい書き方
+.max_by_key(|&(_, d)| d)
+```
+
+### 2. 問題の見極め方
+
+| キーワード | 典型アルゴリズム |
+|-----------|-----------------|
+| 「最小値を最大化」「最大値を最小化」 | 答えで二分探索 |
+| 「部分列」「何通り」 | DP（後ろから更新） |
+| 「木」「最長経路」 | 2回BFS/DFS（木の直径） |
+| 「区間の和」「クエリ」 | 累積和またはセグ木 |
+| N ≤ 20 | bit全探索 |
+| N ≤ 10^18、遷移が線形 | 行列累乗 |
+
+### 3. Rust競プロ Tips
+
+```rust
+// partition_point（二分探索）
+let pos = sorted.partition_point(|&x| x < target);
+// pos: target以上の最小index
+// pos-1: target未満の最大index（pos > 0 のとき）
+
+// 固定長配列の初期化（ヒープ確保不要）
+let mut dp = [0i64; 8];  // vec! より速い
+
+// clippy対策: 競プロでは範囲ループが必要なことが多い
+#[allow(clippy::needless_range_loop)]
+fn solve() { ... }
+```
+
+### 4. デバッグのコツ
+
+```rust
+// テストを必ず書く
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_example() {
+        // 問題の入力例をそのままテストに
+        assert_eq!(solve(input), expected);
+    }
+}
+```
+
+---
+
+## typical90 ライブラリ
+
+`typical90/src/` に再利用可能なアルゴリズムを整備：
+
+| モジュール | 内容 |
+|-----------|------|
+| `search` | 二分探索、カッコ列検証 |
+| `graph` | BFS、木の直径、Union-Find |
+| `math` | GCD/LCM、mod累乗、行列累乗 |
+| `dp` | 部分列カウント、1D/2D累積和 |
+
+### 使用例
+
+```rust
+use typical90::graph::UnionFind;
+use typical90::math::{mod_pow, MOD2};
+use typical90::dp::{prefix_sum, range_sum};
+
+// Union-Find
+let mut uf = UnionFind::new(n);
+uf.unite(0, 1);
+if uf.same(0, 2) { ... }
+
+// 累積和
+let prefix = prefix_sum(&a);
+let sum = range_sum(&prefix, l, r);  // a[l..r] の和
+```
+
+---
+
 ## 学習リソース
 
 - [競プロ典型90問](https://atcoder.jp/contests/typical90)

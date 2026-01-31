@@ -20,6 +20,7 @@ contests/
 - Document solutions with thought process, not just answers
 - Include setup instructions for reproducibility
 - Keep sensitive data (flags, credentials) local only
+- **`cp/` 配下は自動コミット禁止** - リアルタイム大会中の可能性があるため、ユーザーの明示的な指示がない限りコミットしない
 
 ---
 
