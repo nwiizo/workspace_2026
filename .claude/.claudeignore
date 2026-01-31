@@ -1,0 +1,175 @@
+# Global .claudeignore - applies to all projects
+# Build artifacts (Rust, Go, Node, Python)
+target/
+debug/
+release/
+build/
+dist/
+out/
+bin/
+pkg/
+
+# Dependencies
+node_modules/
+vendor/
+.venv/
+venv/
+__pycache__/
+.eggs/
+*.egg-info/
+
+# Lock files (large, not useful for context)
+Cargo.lock
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+uv.lock
+poetry.lock
+go.sum
+Gemfile.lock
+deno.lock
+bun.lockb
+
+# IDE / Editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS generated
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+ehthumbs.db
+
+# Test / Coverage
+coverage/
+.nyc_output/
+htmlcov/
+.pytest_cache/
+.tox/
+.coverage
+*.lcov
+
+# Logs and temp files
+*.log
+logs/
+*.tmp
+*.temp
+.cache/
+tmp/
+temp/
+
+# Large binary files
+*.zip
+*.tar.gz
+*.tgz
+*.rar
+*.7z
+*.dmg
+*.iso
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Docker
+.docker/
+
+# Kubernetes
+*.kubeconfig
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+
+# ===================
+# TypeScript / Deno / Frontend
+# ===================
+
+# TypeScript build output
+*.tsbuildinfo
+tsconfig.tsbuildinfo
+*.js.map
+*.d.ts.map
+
+# Deno
+.deno/
+deno_dir/
+
+# Next.js
+.next/
+.vercel/
+.output/
+
+# Nuxt
+.nuxt/
+.nitro/
+
+# Vite / Rollup / Webpack
+.vite/
+.rollup.cache/
+.parcel-cache/
+
+# SvelteKit
+.svelte-kit/
+
+# Astro
+.astro/
+
+# Remix
+.cache/
+
+# Storybook
+storybook-static/
+
+# Playwright / Testing
+playwright-report/
+test-results/
+.playwright-mcp/
+
+# ESLint / Prettier cache
+.eslintcache
+.prettiercache
+
+# Turbo
+.turbo/
+
+# Generated types
+*.generated.ts
+*.generated.tsx
+
+# Source maps (usually large)
+*.map
+
+# Minified files
+*.min.js
+*.min.css
+
+# Bundle analysis
+stats.html
+bundle-stats.json
+.webpack-stats.json
+
+# PWA / Service Worker generated
+sw.js
+workbox-*.js
+
+# Static assets (images, fonts - large binaries)
+*.woff
+*.woff2
+*.ttf
+*.eot
+*.otf
+public/assets/
+static/assets/
