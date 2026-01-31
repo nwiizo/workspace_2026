@@ -145,3 +145,103 @@ Strict-Transport-Security: max-age=31536000
 - [ ] エラーメッセージは情報を漏らしていないか
 - [ ] 依存関係に既知の脆弱性はないか
 - [ ] シークレットは環境変数で管理しているか
+
+---
+
+## 攻撃手法カタログ (Juice Shop CTF からの学び)
+
+### エンコーディング攻撃
+
+| 手法 | ペイロード例 | 対策 |
+|------|-------------|------|
+| Double URL encode | `%252F` (/) | 複数回デコードしない |
+| Null byte injection | `%00`, `%2500` | 拡張子検証前にnull除去 |
+| Z85 encoding | クーポンコード偽造 | サーバー側で生成・検証 |
+| Unicode normalization | `＜script＞` | 正規化後に検証 |
+
+### Allowlist バイパス
+
+```javascript
+// 脆弱なコード
+if (url.includes("github.com")) { redirect(url); }
+
+// 攻撃ペイロード
+https://evil.com?pwned=github.com  // includes() を騙す
+https://github.com@evil.com        // credential injection
+```
+
+**対策**: `URL` オブジェクトでパース、`hostname` を厳密に比較
+
+### JWT 攻撃
+
+| 攻撃 | 手法 | 対策 |
+|------|------|------|
+| alg: none | 署名検証バイパス | アルゴリズム固定 |
+| 弱い秘密鍵 | ブルートフォース | 強力な秘密鍵 (256bit+) |
+| kid injection | ファイルパス操作 | kid をホワイトリスト |
+
+### SSRF バイパス
+
+```
+127.0.0.1 の別表現:
+- 2130706433 (decimal)
+- 0x7f000001 (hex)
+- 0177.0.0.1 (octal)
+- localhost, [::1], 127.1
+
+DNS rebinding:
+- localtest.me → 127.0.0.1
+- 127.0.0.1.nip.io → 127.0.0.1
+```
+
+**対策**: IP アドレスを正規化してからブラックリスト比較
+
+### ファイルアップロード攻撃
+
+| 攻撃 | 手法 | 対策 |
+|------|------|------|
+| 拡張子バイパス | `shell.php.jpg`, `shell.php%00.jpg` | Magic bytes 検証 |
+| Zip Slip | `../../../tmp/evil.txt` | パス正規化、ディレクトリ制限 |
+| VTT XSS | 字幕ファイルに `<script>` | HTMLエスケープ |
+| XXE | DTD外部エンティティ | XML外部エンティティ無効化 |
+
+### NoSQL Injection
+
+```javascript
+// MongoDB
+{ "email": {"$ne": ""}, "password": {"$ne": ""} }
+
+// 対策
+- 入力型を検証 (文字列のみ許可)
+- $where, $regex 等の演算子をフィルタ
+```
+
+### Prototype Pollution
+
+```javascript
+// 攻撃
+{"__proto__": {"isAdmin": true}}
+
+// 対策
+- Object.create(null) を使用
+- 入力キーをホワイトリスト
+```
+
+### rectitude ライブラリの活用
+
+```rust
+use rectitude::payloads::{sqli, xss, ssrf, traversal, redirect};
+use rectitude::helpers::{coupon_helpers, osint_helpers};
+
+// SQLi ペイロード
+for payload in sqli::auth_bypass_payloads() { ... }
+
+// SSRF IP バイパス
+let variants = ssrf::ip_bypass_variants(127, 0, 0, 1);
+
+// Allowlist バイパス
+let bypass = redirect::allowlist_bypass("https://evil.com", "github.com");
+
+// クーポン偽造
+let coupon = coupon_helpers::generate_z85_coupon("JAN", 26, 90);
+```
