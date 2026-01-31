@@ -26,8 +26,10 @@ Health is not optional. Mind and body are the foundation everything else is buil
 
 - `blogs/` - Blog articles
 - `tools/` - Tools and verification code
+  - `rectitude/` - Security testing library (payloads, scenarios, helpers)
 - `infrastructure/` - Infrastructure experiments
 - `samples/` - Samples and experiments
+- `contests/` - Programming contests and security challenges (CTF, etc.)
 
 ---
 
