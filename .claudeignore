@@ -1,0 +1,48 @@
+# Build artifacts
+target/
+debug/
+release/
+build/
+dist/
+out/
+
+# Dependencies
+node_modules/
+vendor/
+.venv/
+venv/
+__pycache__/
+
+# Lock files (large, not useful for context)
+Cargo.lock
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+uv.lock
+poetry.lock
+
+# IDE / Editor
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test/Coverage
+coverage/
+.nyc_output/
+htmlcov/
+.pytest_cache/
+.tox/
+
+# Logs
+*.log
+logs/
+
+# Temporary
+*.tmp
+*.temp
+.cache/
