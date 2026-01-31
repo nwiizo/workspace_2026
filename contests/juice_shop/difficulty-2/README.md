@@ -6,8 +6,8 @@ SQLインジェクションやXSSなど、Webセキュリティの基本的な�
 
 | 状態 | 数 |
 |------|-----|
-| ✅ 解決済み | 13 |
-| ❌ 未解決 | 10 |
+| ✅ 解決済み | 14 |
+| ❌ 未解決 | 9 |
 
 ## チャレンジ一覧
 
@@ -26,7 +26,7 @@ SQLインジェクションやXSSなど、Webセキュリティの基本的な�
 | Visual Geo Stalking | OSINT | ✅ | [visual-geo-stalking.md](visual-geo-stalking.md) |
 | Empty User Registration | 入力検証 | ✅ | [empty-user-registration.md](empty-user-registration.md) |
 | Exposed Credentials | 機密データ | ✅ | [exposed-credentials.md](exposed-credentials.md) |
-| NFT Takeover | 機密データ | ❌ | [nft-takeover.md](nft-takeover.md) |
+| NFT Takeover | 機密データ | ✅ | [nft-takeover.md](nft-takeover.md) |
 
 ## 認証情報
 

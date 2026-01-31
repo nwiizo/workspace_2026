@@ -1,152 +1,156 @@
-# Forged Coupon ❌
+# Forged Coupon ✅
 
 **難易度:** ⭐⭐⭐⭐⭐⭐
-**カテゴリ:** 暗号
-**目標:** 有効なクーポンコードを偽造する
-
----
+**カテゴリ:** Cryptographic Issues
+**目標:** 有効なクーポンコードを偽造して80%以上の割引を得る
 
 ## 思考プロセス
 
-**ステップ1: 既存のクーポンを分析**
-```
-「Juice Shop で使えるクーポンを探す」
-    ↓
-「/ftp/coupons_2013.md.bak を Poison Null Byte で取得」
-    ↓
-「クーポン形式を分析」
-```
-
-**ステップ2: クーポン形式の発見**
-```
-「既存クーポン: n<Mibh.u" (Z85エンコード)」
-    ↓
-「デコードすると: OCT13-10」
-    ↓
-「形式: MMMYY-XX」
-    - MMM = 月 (OCT, JAN, FEB...)
-    - YY = 年 (13, 19, 26...)
-    - XX = 割引率 (10, 20, 50...)
-```
-
-**ステップ3: Z85 エンコーディングを理解**
-```
-「Z85 = ZeroMQ Base-85」
-    ↓
-「85種類の印刷可能文字を使用」
-    ↓
-「バイナリデータを ASCII に変換」
-    ↓
-「Base64 より効率的（4バイト→5文字 vs 3バイト→4文字）」
-```
-
-**ステップ4: 新しいクーポンを偽造**
-```
-「現在の日付に合うクーポンを作成」
-    ↓
-「例: JAN26-90（2026年1月、90%オフ）」
-    ↓
-「Z85 でエンコード」
-    ↓
-「チェックアウトで使用」
-```
-
-## 過去のクーポン取得
-
-```bash
-# Poison Null Byte でファイル取得
-curl "http://localhost:3000/ftp/coupons_2013.md.bak%2500.md"
-```
-
-## Z85 エンコーディング
-
-### 文字セット
-```
-0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.-:+=^!/*?&<>()[]{}@%$#
-```
-
-### Python での実装
-```python
-import z85  # pip install z85
-
-# エンコード
-coupon = "JAN26-90"
-encoded = z85.encode(coupon.encode())
-print(f"Encoded: {encoded}")
-
-# デコード
-decoded = z85.decode(encoded)
-print(f"Decoded: {decoded.decode()}")
-```
-
-### 手動計算（オンラインツール）
-```
-https://cryptii.com/pipes/z85-encoder
-```
+1. `/ftp/coupons_2013.md.bak` から過去のクーポンを取得
+2. クーポンコードが Z85 エンコードされていることを発見
+3. デコードすると `MMMYY-VV` 形式（月年-割引率）
+4. 現在の日付で80%以上の割引クーポンを Z85 エンコード
+5. チェックアウト時に適用
 
 ## 実行手順
 
-1. **過去のクーポンを取得して分析**
-   ```javascript
-   fetch('/ftp/coupons_2013.md.bak%2500.md')
-     .then(r => r.text())
-     .then(console.log);
-   ```
+### Step 1: 過去のクーポンを取得
 
-2. **クーポン形式を特定**
-   ```
-   既存: n<Mibh.u" → OCT13-10
-   形式: [月3文字][年2桁]-[割引率]
-   ```
+```bash
+curl "http://localhost:3000/ftp/coupons_2013.md.bak%2500.md"
+```
 
-3. **新しいクーポンを作成**
-   ```python
-   import z85
-   
-   # 90% オフのクーポン
-   coupons = [
-       "JAN26-90",
-       "FEB26-90",
-       "MAR26-90",
-       "APR26-90",
-   ]
-   
-   for c in coupons:
-       encoded = z85.encode(c.encode())
-       print(f"{c} → {encoded}")
-   ```
+**結果:**
+```
+n<MibgC7sn  → JAN13-10 (2013年1月、10%オフ)
+mNYS#gC7sn  → FEB13-10
+o*IVigC7sn  → MAR13-10
+k#pDlgC7sn  → APR13-10
+l}6D$gC7ss  → DEC13-15 (15%オフ)
+```
 
-4. **チェックアウトで使用**
-   - カートに商品を追加
-   - チェックアウトページでクーポン入力
-   - 偽造したクーポンを入力
+### Step 2: Z85 エンコード形式を理解
 
-## クーポン例
+```
+クーポン形式: MMMYY-VV
+- MMM = 月（JAN, FEB, MAR, ...）
+- YY = 年（13, 26, ...）
+- VV = 割引率（10, 50, 80, 90）
 
-| 平文 | Z85エンコード | 説明 |
-|-----|-------------|------|
-| OCT13-10 | n<Mibh.u" | 2013年10月、10%オフ |
-| JAN26-90 | (計算必要) | 2026年1月、90%オフ |
-| DEC25-50 | (計算必要) | 2025年12月、50%オフ |
+Z85 は 4バイト → 5文字 のエンコーディング
+8文字のクーポン → 10文字の Z85 コード
+```
 
-## 検証ポイント
+### Step 3: 偽造クーポンを生成
 
-- [ ] coupons_2013.md.bak を取得
-- [ ] 既存クーポンをデコードして形式を確認
-- [ ] 有効な日付のクーポンをエンコード
-- [ ] チェックアウトで受け入れられるか確認
+**実際に使用したコード:**
 
-## 対策
+```javascript
+// ブラウザコンソールで実行
+(() => {
+  const z85alphabet = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.-:+=^!/*?&<>()[]{}@%$#";
 
-- クーポンに署名（HMAC）を付与
-- サーバー側でクーポンの有効性を検証
-- データベースに登録済みのクーポンのみ許可
+  function z85encode(str) {
+    // 4の倍数になるようパディング
+    while (str.length % 4 !== 0) {
+      str += '\0';
+    }
 
-## 関連チャレンジ
+    let result = '';
+    for (let i = 0; i < str.length; i += 4) {
+      let value = 0;
+      for (let j = 0; j < 4; j++) {
+        value = value * 256 + str.charCodeAt(i + j);
+      }
 
-- [Poison Null Byte](../difficulty-4/poison-null-byte.md) - ファイル取得
-- [Expired Coupon](../difficulty-4/expired-coupon.md) - 期限切れクーポン
+      let encoded = '';
+      for (let j = 0; j < 5; j++) {
+        encoded = z85alphabet[value % 85] + encoded;
+        value = Math.floor(value / 85);
+      }
+      result += encoded;
+    }
+    return result;
+  }
+
+  // 2026年1月、80%オフ
+  const coupon = "JAN26-80";
+  const encoded = z85encode(coupon);
+  console.log(`Coupon: ${coupon} → Z85: ${encoded}`);
+  return encoded;
+})();
+// 結果: n<Michz3)x
+```
+
+**生成されたクーポン:** `n<Michz3)x` (JAN26-80 = 80%オフ)
+```
+
+### Step 4: クーポンを適用
+
+```javascript
+browser_evaluate(() => {
+  const token = localStorage.getItem('token');
+  const basketId = sessionStorage.getItem('bid');
+  const couponCode = 'ここにZ85エンコードされたコード';
+
+  return fetch(`/rest/basket/${basketId}/coupon/${couponCode}`, {
+    method: 'PUT',
+    headers: { 'Authorization': 'Bearer ' + token }
+  }).then(r => r.json());
+});
+```
 
 ## 解説
 
-[未着手]
+### Z85 エンコーディングとは
+
+- ZeroMQ で使用される Base85 の変種
+- バイナリデータを ASCII 文字に変換
+- 4バイト → 5文字（20%のオーバーヘッド）
+- 使用文字: `0-9`, `a-z`, `A-Z`, `.-:+=^!/*?&<>()[]{}@%$#`
+
+### なぜ脆弱か
+
+1. **弱い暗号化**: Z85 は暗号化ではなくエンコーディング
+2. **予測可能な形式**: クーポン形式が固定 (`MMMYY-VV`)
+3. **サーバー側検証の欠如**: 任意のクーポンが生成可能
+
+### 攻撃の成功条件
+
+- 過去のクーポンサンプルを入手（Poison Null Byte で FTP からアクセス）
+- エンコーディング形式を特定（Z85）
+- クーポンフォーマットを解読（`MMMYY-VV`）
+
+### 対策
+
+1. **暗号化署名**: クーポンに HMAC 署名を付与
+2. **サーバー側検証**: 発行済みクーポンのみをDBで管理
+3. **レート制限**: クーポン試行回数を制限
+4. **監査ログ**: 異常なクーポン使用を検知
+
+## Rust での実装
+
+```rust
+use z85;
+
+fn generate_coupon(month: &str, year: &str, discount: u8) -> String {
+    let coupon = format!("{}{}-{:02}", month, year, discount);
+    let padded = format!("{:\0<8}", coupon);
+    z85::encode(padded.as_bytes())
+}
+
+fn main() {
+    let code = generate_coupon("JAN", "26", 90);
+    println!("Forged coupon: {}", code);
+}
+```
+
+## 関連チャレンジ
+
+- [Poison Null Byte](../difficulty-4/poison-null-byte.md) - クーポンファイルの取得
+- [Expired Coupon](../difficulty-4/expired-coupon.md) - 期限切れクーポンの使用
+
+## 参考リンク
+
+- [Z85 Encoding](https://rfc.zeromq.org/spec/32/)
+- [OWASP Cryptographic Failures](https://owasp.org/Top10/A02_2021-Cryptographic_Failures/)
