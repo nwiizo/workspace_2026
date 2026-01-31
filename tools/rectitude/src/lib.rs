@@ -90,6 +90,7 @@ pub mod config;
 pub mod ctf;
 pub mod error;
 pub mod extractors;
+pub mod fuzzing;
 pub mod helpers;
 pub mod payloads;
 pub mod reporter;
@@ -133,8 +134,9 @@ pub use config::{RectitudeConfig, TagFilter};
 pub use ctf::{ChallengeProgress, ChallengeVerifier};
 pub use error::{Error, Result};
 pub use helpers::{
-    auth_helpers, captcha_helpers, file_disclosure, forgery_helpers, header_helpers, idor_helpers,
-    omission_helpers, osint_helpers, sqli_helpers, upload_helpers, validation_helpers,
+    auth_helpers, captcha_helpers, coupon_helpers, file_disclosure, forgery_helpers,
+    header_helpers, idor_helpers, omission_helpers, osint_helpers, sqli_helpers, upload_helpers,
+    validation_helpers,
 };
 pub use reporter::{ReportBuilder, ReportFormat, TestReport};
 
