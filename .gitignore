@@ -260,7 +260,6 @@ Temporary Items
 
 # Blog drafts and working files
 samples/**/blog.md
-blogs/**/blog.md
 
 # Node.js
 node_modules/
@@ -304,12 +303,9 @@ screenshot.sh
 screenshots/
 *.png.tmp
 
-# Claude Code local config
-blogs/.claude/
-blogs/CLAUDE.md
-
-# Blog contents (working drafts)
-blogs/contents/
+# Blog workspace (作業用 - READMEのみコミット)
+blogs/*
+!blogs/README.md
 
 # Playwright MCP cache/screenshots
 .playwright-mcp/
