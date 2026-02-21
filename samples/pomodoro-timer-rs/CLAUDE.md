@@ -34,6 +34,32 @@ Library modules (`src/lib.rs` re-exports):
 - macOS only (wgpu Metal backend, `afplay` for sounds, CJK fonts from `/System/Library/Fonts/`)
 - Japanese is the default language (`Lang::Ja`)
 
+## Lessons Learned
+
+### egui API
+- `CornerRadius::same()` takes `u8`, not `f32` — use `const CORNER_RADIUS: u8 = 14;`
+- `painter.rect_stroke()` requires 4th arg `egui::StrokeKind::Outside` (or `Inside`/`Middle`)
+- Unicode glyphs (`\u{2715}` ✕) may not render in default/CJK fonts — use `\u{00D7}` (×) for close, `\u{2713}` (✓) for checkmark
+
+### Clippy patterns
+- `hour >= 22 || hour < 5` → `!(5..22).contains(&hour)` (manual_range_contains)
+- Nested `if x { if let Some(y) = ... }` → `if x && let Some(y) = ...` (collapsible_if)
+- `.map(f).flatten()` → `.and_then(f)` (map_flatten)
+
+### IPC workflow
+- CLI binary can be updated independently, but if `Command` enum changes, GUI must be restarted (`yasume-ctl quit` → relaunch)
+- Always rebuild + restart GUI when adding new IPC commands
+
+### GUI design
+- Non-hovered state should be whisper-quiet (low alpha BG, muted colors, no glow, no border)
+- Hovered state restores full interactivity (opaque BG, glow, colored border, controls)
+- Use idle/hover color variants: `TEXT_COLOR` vs `TEXT_COLOR_IDLE`, `RING_BG_COLOR` vs `RING_BG_COLOR_IDLE`
+- Japanese text: use `chars().count()` / `chars().take(n)` for truncation, never byte slicing
+
+### i18n
+- Adding a field to `Strings` requires updating both `JA` and `EN` const blocks — compiler won't catch missing fields if you only add to the struct
+- `min_short` ("分"/"min") is useful as a standalone unit for history/log formatting
+
 ## Multi-Agent Strategy
 
 複数タスクは Subagents で並列化する:

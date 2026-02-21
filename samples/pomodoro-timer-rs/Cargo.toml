@@ -1,0 +1,28 @@
+[package]
+name = "yasume"
+version = "0.1.0"
+edition = "2024"
+description = "Transparent macOS Pomodoro timer overlay — おい、休め。"
+
+[[bin]]
+name = "yasume"
+path = "src/main.rs"
+
+[[bin]]
+name = "yasume-ctl"
+path = "src/ctl.rs"
+
+[dependencies]
+chrono = { version = "0.4", features = ["serde"] }
+clap = { version = "4", features = ["derive"] }
+dirs = "6"
+eframe = { version = "0.33", default-features = false, features = [
+    "default_fonts",
+    "wgpu",
+] }
+egui = "0.33"
+notify-rust = "4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+wgpu = { version = "27", features = ["metal"] }
