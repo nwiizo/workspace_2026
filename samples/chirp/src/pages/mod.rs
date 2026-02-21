@@ -1,0 +1,9 @@
+pub mod explore;
+pub mod home;
+pub mod login;
+pub mod notifications;
+pub mod post_detail;
+pub mod profile;
+pub mod search;
+pub mod settings;
+pub mod signup;

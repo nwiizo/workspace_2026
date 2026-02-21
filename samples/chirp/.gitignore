@@ -1,0 +1,7 @@
+/target
+.env
+.sqlx/
+node_modules/
+/dist/
+pkg/
+*.wasm
