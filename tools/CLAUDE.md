@@ -13,6 +13,7 @@
 | `rust-sql-anti-pattern/` | SQLアンチパターン検証コード（Rust） |
 | `vigil/` | セキュリティ監査ツールキット（Opus 4.6 セマンティック分析、OWASP Top 10、Web シェル検出） |
 | `wardley-quest/` | 戦略シミュレーションRPG（Wardley Mapping × DDD × Team Topologies、アドオン含む） |
+| `architecture-modernization-agents/` | Architecture Modernization 書籍ベースの Claude Code サブエージェント群（11体、戦略〜移行まで） |
 
 ## コマンド
 

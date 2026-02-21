@@ -1,135 +1,125 @@
 # Architecture Modernization Agents
 
-Nick Tune 著「[Architecture Modernization](https://www.manning.com/books/architecture-modernization)」の知識体系をベースとした Claude Code サブエージェント群。
+レガシーシステムのモダナイゼーションを支援する Claude Code サブエージェント群。コードベースを実際にスキャンし、専門フレームワークを適用して実務的な分析・提案を行う。
 
-レガシーシステムのモダナイゼーションにおける各フレームワーク・手法に特化した実務コンサルティング型エージェントを提供します。
+## 特徴
+
+- **コード分析起点**: Glob/Grep/Bash でコードを実際に読み、具体的なシグナルからフレームワークを適用
+- **Opus のセマンティック分析**: 静的解析ツールでは検出できないドメイン知識・暗黙の結合・ビジネス意図を推論
+- **フレームワーク駆動**: Modernization Strategy Selector（MSS）、Core Domain Chart、Independent Service Heuristics（ISH）、Bounded Context Canvas（BCC）、Pain 公式などで構造化されたアウトプット
+
+## コマンド
+
+分析対象のリポジトリにエージェントとコマンドをコピーしたうえで実行する。
+
+| コマンド | 説明 | 所要時間目安 |
+|---------|------|-----------|
+| `/modernize-assess` | クイック評価 — コード分析 → Core Domain Chart → MSS 戦略 | 短 |
+| `/modernize-domain` | ドメイン境界分析 — ドメイン発見 → ISH 評価 → Context 設計 | 中 |
+| `/modernize-migration` | 移行計画 — コード分析 → 25パターンから移行戦略選定 | 中 |
+| `/modernize-full` | フル分析 — 10エージェント5フェーズ統合実行 | 長 |
 
 ## エージェント一覧
 
-### 戦略・分析フェーズ
+### 戦略・分析
 
-| エージェント | 説明 |
-|------------|------|
-| **modernization-strategist** | 全体戦略策定。ビジネス目標との整合性評価、As-Is/To-Be 分析、段階的ロードマップ作成 |
-| **wardley-mapping-analyst** | Wardley Map による戦略分析。バリューチェーンの可視化、進化段階評価、ASCII Map 生成 |
-| **business-capability-mapper** | ビジネスケイパビリティの階層構造化。Core/Supporting/Generic 分類、投資判断支援 |
-| **technical-debt-assessor** | 技術的負債の定量評価。4象限分類、ポートフォリオ分析、優先順位付け |
+| エージェント | 主要フレームワーク | 説明 |
+|------------|-----------------|------|
+| **modernization-strategist** | MSS（2軸×9戦略） | As-Is 分析、サブドメイン別戦略、段階的ロードマップ |
+| **wardley-mapping-analyst** | 進化段階推定 | 依存関係からバリューチェーンを再構成、Build vs Buy 判断 |
+| **technical-debt-assessor** | Core Domain Chart（8パターン）、7種の複雑さ | サブドメイン別投資判断、ポートフォリオ分析 |
 
-### ドメイン発見・設計フェーズ
+### ドメイン発見・設計
 
-| エージェント | 説明 |
-|------------|------|
-| **domain-discovery-facilitator** | EventStorming ファシリテーション。ドメインイベント抽出、サブドメイン分類、ユビキタス言語策定 |
-| **bounded-context-designer** | Bounded Context 設計。コンテキスト境界定義、コンテキストマップ作成、統合パターン選定 |
-| **team-topologies-advisor** | Team Topologies ベースのチーム設計。4チームタイプ × 3インタラクションモード、AMET 設計 |
+| エージェント | 主要フレームワーク | 説明 |
+|------------|-----------------|------|
+| **domain-discovery-facilitator** | 6つの境界ヒューリスティック、ピボタルイベント | コードからドメインイベント抽出、サブドメイン境界提案 |
+| **business-capability-mapper** | ISH（10問）、Product Taxonomy | 独立サービス候補の定量評価 |
+| **bounded-context-designer** | BCC（11セクション）、Pain = S×V×D | Vlad Khononov の結合モデルで統合パターン設計 |
+| **team-topologies-advisor** | Independent Value Stream（IVS）、Architecture Modernization Enabling Team（AMET、6目的）、Inverse Conway | git log からチーム構造推定、認知負荷評価 |
 
-### 実行フェーズ
+### 実行
 
-| エージェント | 説明 |
-|------------|------|
-| **platform-engineering-consultant** | Internal Developer Platform 設計。ゴールデンパス、セルフサービス化、Data Mesh 戦略 |
-| **strangler-fig-migration-planner** | 段階的移行パターン設計。Strangler Fig、Branch by Abstraction、Parallel Run |
-| **legacy-code-analyzer** | レガシーコードの定量分析。複雑性ホットスポット、結合度、依存関係グラフ、分離候補特定 |
+| エージェント | 主要フレームワーク | 説明 |
+|------------|-----------------|------|
+| **platform-engineering-consultant** | 成熟度マトリックス、Thinnest Viable Platform（TVP） | インフラ自動スキャン、ゴールデンパス設計 |
+| **strangler-fig-migration-planner** | 25パターン（11移行+6データ同期+5課題+3組織） | Feature Parity Trap 検出、移行順序最適化 |
+| **legacy-code-analyzer** | ホットスポット × 複雑性マトリックス | 行動コード分析、God Module 検出、分離候補特定 |
 
 ### 統合
 
 | エージェント | 説明 |
 |------------|------|
-| **modernization-orchestrator** | マルチエージェント統合。全エージェントの呼び出し順序制御と結果統合 |
+| **modernization-orchestrator** | 3実行モード（フル/クイック/コード分析特化）、エージェント間の整合性検証 |
 
 ## インストール
 
 ### プロジェクトローカル
 
 ```bash
-# プロジェクトの .claude/agents/ にコピー
-mkdir -p .claude/agents
+# 分析対象のプロジェクトにコピー
+mkdir -p .claude/agents .claude/commands
 cp agents/*.md .claude/agents/
+cp .claude/commands/*.md .claude/commands/
 ```
 
 ### グローバル
 
 ```bash
-# ~/.claude/agents/ にコピー（全プロジェクトで利用可能）
 cp agents/*.md ~/.claude/agents/
 ```
 
 ## 使用例
 
-### 単体エージェントの利用
-
-Claude Code で特定のエージェントを呼び出して、専門的な分析を依頼します。
+### コマンド経由（推奨）
 
 ```
-# 全体戦略の策定
+# クイック評価
+/modernize-assess
+
+# ドメイン境界分析（特定ディレクトリにスコープ）
+/modernize-domain src/
+
+# フル分析
+/modernize-full
+```
+
+### 単体エージェント
+
+```
 「modernization-strategist として、このシステムのモダナイゼーション戦略を策定してください」
 
-# コードベースの分析
 「legacy-code-analyzer として、このリポジトリの複雑性を分析してください」
-
-# Wardley Map の作成
-「wardley-mapping-analyst として、ECサイトのバリューチェーンを Wardley Map で可視化してください」
 ```
-
-### オーケストレーターによる統合分析
-
-```
-「modernization-orchestrator として、このシステムの包括的なモダナイゼーション評価を行ってください」
-```
-
-オーケストレーターは以下のフェーズで各エージェントを順次呼び出します:
-
-1. **Phase 1**: 戦略評価（strategist + wardley + debt assessor）
-2. **Phase 2**: ドメイン発見（domain discovery + capability mapper + code analyzer）
-3. **Phase 3**: 設計（bounded context + team topologies）
-4. **Phase 4**: 実行計画（platform + migration planner）
 
 ## エージェント間の連携
 
 ```
-modernization-strategist ──→ wardley-mapping-analyst
-         │                          │
-         ▼                          ▼
-technical-debt-assessor    business-capability-mapper
-         │                          │
-         ▼                          ▼
-legacy-code-analyzer ──→ domain-discovery-facilitator
-                                    │
-                                    ▼
-                          bounded-context-designer
-                           │                │
-                           ▼                ▼
-               team-topologies-advisor    strangler-fig-migration-planner
-                           │                │
-                           ▼                ▼
-              platform-engineering-consultant
-                           │
-                           ▼
-               modernization-orchestrator（統合）
+Phase 1: 戦略とコンテキスト（並行実行可能）
+  ├── modernization-strategist → MSS
+  ├── wardley-mapping-analyst → 進化段階
+  └── technical-debt-assessor → Core Domain Chart
+
+Phase 2: ドメイン発見
+  ├── domain-discovery-facilitator → サブドメイン境界
+  ├── business-capability-mapper → ISH 評価
+  └── legacy-code-analyzer → ホットスポット
+
+Phase 3: 設計
+  ├── bounded-context-designer → BCC + Pain 分析
+  └── team-topologies-advisor → IVS + AMET
+
+Phase 4: 実行計画
+  ├── platform-engineering-consultant → 成熟度 + TVP
+  └── strangler-fig-migration-planner → 移行パターン
+
+Phase 5: 統合
+  └── modernization-orchestrator → 整合性検証 + 総合レポート
 ```
-
-## 対応する書籍の章
-
-| 章 | 内容 | 対応エージェント |
-|----|------|----------------|
-| Ch.1-3 | モダナイゼーション概要、準備、ビジネス目標 | modernization-strategist |
-| Ch.4 | リスニングツアー | domain-discovery-facilitator |
-| Ch.5 | Wardley Mapping | wardley-mapping-analyst |
-| Ch.6 | プロダクト分類・ケイパビリティ | technical-debt-assessor, business-capability-mapper |
-| Ch.7 | EventStorming | domain-discovery-facilitator |
-| Ch.8 | ドメインモダナイゼーション | bounded-context-designer |
-| Ch.9 | サブドメイン・Bounded Context | bounded-context-designer, domain-discovery-facilitator |
-| Ch.10 | 戦略的 IT ポートフォリオ・移行パターン | technical-debt-assessor, strangler-fig-migration-planner |
-| Ch.11 | Team Topologies | team-topologies-advisor |
-| Ch.12 | 疎結合アーキテクチャ | bounded-context-designer |
-| Ch.13 | Internal Developer Platform | platform-engineering-consultant |
-| Ch.14 | Data Mesh | platform-engineering-consultant |
-| Ch.15 | AMET | team-topologies-advisor |
-| Ch.16 | 戦略とロードマップ | modernization-strategist |
 
 ## フォーマット
 
-各エージェントファイルは [awesome-claude-code-subagents](https://github.com/anthropics/awesome-claude-code-subagents) のフォーマットに準拠しています:
+各エージェントファイルは [awesome-claude-code-subagents](https://github.com/anthropics/awesome-claude-code-subagents) のフォーマットに準拠:
 
 ```markdown
 ---
@@ -144,16 +134,6 @@ tools:
 
 [System Prompt]
 ```
-
-## 参考文献
-
-- Nick Tune, Jean-Georges Perrin. "Architecture Modernization". Manning Publications, 2024.
-- Matthew Skelton, Manuel Pais. "Team Topologies". IT Revolution Press, 2019.
-- Simon Wardley. "Wardley Maps". 2018.
-- Eric Evans. "Domain-Driven Design". Addison-Wesley, 2003.
-- Alberto Brandolini. "Introducing EventStorming". Leanpub, 2021.
-- Zhamak Dehghani. "Data Mesh". O'Reilly Media, 2022.
-- Sam Newman. "Monolith to Microservices". O'Reilly Media, 2019.
 
 ## License
 
