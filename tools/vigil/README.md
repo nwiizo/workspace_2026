@@ -46,7 +46,19 @@ cp -r vigil/.claude/commands/* YOUR_PROJECT/.claude/commands/
 
 | スキル | 概要 |
 |--------|------|
-| `owasp-assessment` | OWASP Top 10 全カテゴリに対する検査・マッピング |
+| `owasp-assessment` | OWASP Top 10:2021 + API Security Top 10:2023 の全20カテゴリに対する検査・マッピング |
+
+## OWASP 準拠
+
+2つの OWASP 標準に完全対応:
+
+### OWASP Top 10:2021（Web アプリケーション）
+A01 Broken Access Control / A02 Cryptographic Failures / A03 Injection / A04 Insecure Design / A05 Security Misconfiguration / A06 Vulnerable Components / A07 Auth Failures / A08 Software & Data Integrity / A09 Logging & Monitoring / A10 SSRF
+
+### OWASP API Security Top 10:2023
+API1 BOLA / API2 Broken Authentication / API3 Broken Object Property Level Authorization / API4 Unrestricted Resource Consumption / API5 BFLA / API6 Unrestricted Access to Sensitive Business Flows / API7 SSRF / API8 Security Misconfiguration / API9 Improper Inventory Management / API10 Unsafe Consumption of APIs
+
+各カテゴリの検査項目、CWE マッピング、grep パターン、Opus 4.6 深掘りポイントは [skills/owasp-assessment/SKILL.md](skills/owasp-assessment/SKILL.md) に定義。
 
 ## SAST との使い分け
 

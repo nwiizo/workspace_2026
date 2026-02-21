@@ -19,6 +19,9 @@
 - `Grep("require|import|include|use ")` で依存関係
 - `Grep("mysql|postgres|sqlite|mongo|redis")` でデータストア
 - `Grep("session|cookie|jwt|token|oauth")` で認証方式
+- `Glob("**/swagger*", "**/openapi*", "**/api-docs*")` で API 仕様
+- `Grep("/api/|/v[0-9]+/")` で API エンドポイント
+- API が存在する場合、OWASP API Security Top 10:2023 の検査も実施対象とする
 
 ### Phase 2: 脆弱性評価
 
@@ -35,10 +38,17 @@ Task ツールで `vulnerability-assessor` エージェントを起動:
 6. ファイルアップロード・パストラバーサルの検証
 7. セカンドオーダー攻撃の可能性（DB保存→取得→引用符なし使用）
 8. デシリアライズ、SSRF、XXE の検証
+9. API 固有: BOLA/BFLA（オブジェクト/関数レベル認可不備）
+10. API 固有: Mass Assignment（プロパティレベル認可不備）
+11. API 固有: リソース消費制限、ビジネスフロー保護
+12. API 固有: サードパーティ API の安全でない利用
 
 出力形式:
-- 脆弱性ごとに OWASP ID（例: A03-SQL-01）を付与
+- OWASP Top 10:2021 の ID（例: A03-SQL-01）を付与
+- API の場合は API Security Top 10:2023 の ID も併記（例: API1-BOLA-01）
+- 両方に該当する場合: A01-IDOR-01 / API1-BOLA-01
 - 深刻度: Critical / High / Medium / Low
+- CWE 番号を記載
 - 攻撃シナリオを具体的に記述
 - 該当コードを引用し `// ← なぜ危険か` コメントを付記
 ```
@@ -68,9 +78,12 @@ Task ツールで `compromise-investigator` エージェントを起動:
 Phase 2-3 の結果を統合し、以下のレポートを生成:
 
 1. **エグゼクティブサマリー**: 脆弱性の総数、深刻度分布、最重要リスク上位5件
-2. **脆弱性一覧**: OWASP ID、深刻度、ファイル:行番号、攻撃シナリオ
-3. **修正優先度**: Phase 1（即時対応）→ Phase 5（モダナイゼーション）に分類
-4. **修正案**: 上位 Critical 脆弱性の Before/After コード
+2. **OWASP マッピング**:
+   - OWASP Top 10:2021 サマリーテーブル（カテゴリ別の検出数）
+   - OWASP API Security Top 10:2023 サマリーテーブル（API がある場合）
+3. **脆弱性一覧**: OWASP ID（+ API ID）、CWE、深刻度、ファイル:行番号、攻撃シナリオ
+4. **修正優先度**: Phase 1（即時対応）→ Phase 5（モダナイゼーション）に分類
+5. **修正案**: 上位 Critical 脆弱性の Before/After コード
 
 レポートは `docs/SECURITY_AUDIT_REPORT.md` に出力する。
 
