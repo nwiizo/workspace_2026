@@ -57,16 +57,14 @@
 ### プロジェクトローカル
 
 ```bash
-# 分析対象のプロジェクトにコピー
-mkdir -p .claude/agents .claude/commands
-cp agents/*.md .claude/agents/
-cp .claude/commands/*.md .claude/commands/
+# 分析対象のプロジェクトに .claude/ ごとコピー
+cp -r .claude/ <対象プロジェクト>/.claude/
 ```
 
 ### グローバル
 
 ```bash
-cp agents/*.md ~/.claude/agents/
+cp .claude/agents/*.md ~/.claude/agents/
 ```
 
 ## 使用例

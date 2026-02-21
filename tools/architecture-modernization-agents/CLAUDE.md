@@ -38,12 +38,11 @@
 ## 使用方法
 
 ```bash
-# プロジェクトローカルで利用
-cp agents/*.md .claude/agents/
-cp -r .claude/commands/ .claude/commands/
+# プロジェクトローカルで利用（.claude/ ごとコピー）
+cp -r .claude/ <対象プロジェクト>/.claude/
 
 # グローバルで利用
-cp agents/*.md ~/.claude/agents/
+cp .claude/agents/*.md ~/.claude/agents/
 ```
 
 ## コンテンツのみ
