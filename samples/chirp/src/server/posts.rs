@@ -19,7 +19,8 @@ pub async fn create_post(
         .map_err(|e| ServerFnError::new(format!("Session error: {e}")))?
         .ok_or_else(|| ServerFnError::new("Not authenticated"))?;
 
-    if content.trim().is_empty() || content.len() > 280 {
+    let char_count = content.chars().count();
+    if content.trim().is_empty() || char_count > 280 {
         return Err(ServerFnError::new(
             "Post must be between 1 and 280 characters",
         ));

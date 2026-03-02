@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO audit_logs (id, entity_type, entity_id, action)\n         VALUES ($1, 'subnet', $2, 'delete')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "7884cc4bf18da53d6a71c89e18c96cc284cdd55a24674f2c529d15384c53ee0e"
+}

@@ -1,0 +1,52 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id, record_type::TEXT as \"record_type!\", hostname,\n               ip_address_id, created_at, updated_at\n               FROM dns_records WHERE ip_address_id = $1\n               ORDER BY hostname",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "record_type!",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "hostname",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "ip_address_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 4,
+        "name": "created_at",
+        "type_info": "Timestamp"
+      },
+      {
+        "ordinal": 5,
+        "name": "updated_at",
+        "type_info": "Timestamp"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      null,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "15bd08609fa6854c6ed98a8ca3a107671d56b1b54ceb49008327fe6727f38bc2"
+}

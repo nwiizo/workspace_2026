@@ -1,0 +1,70 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT s.id, s.cidr::TEXT as \"cidr!\", s.name, s.description, s.parent_id,\n           s.used_count, s.total_addresses, s.created_at, s.updated_at\n           FROM subnets s\n           JOIN vlan_subnet_links vsl ON s.id = vsl.subnet_id\n           WHERE vsl.vlan_id = $1\n           ORDER BY s.cidr",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "cidr!",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "name",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "description",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "parent_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 5,
+        "name": "used_count",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 6,
+        "name": "total_addresses",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 7,
+        "name": "created_at",
+        "type_info": "Timestamp"
+      },
+      {
+        "ordinal": 8,
+        "name": "updated_at",
+        "type_info": "Timestamp"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      null,
+      false,
+      true,
+      true,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "68147eb192d36dc1d866f3f68a7afd3e13957c62a61c6810e229776576478cd9"
+}

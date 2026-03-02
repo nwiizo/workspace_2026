@@ -1,0 +1,78 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id, address::TEXT as \"address!\", subnet_id,\n                   status::TEXT as \"status!\", hostname, assigned_to,\n                   description, mac_address, created_at, updated_at\n                   FROM ip_addresses\n                   WHERE subnet_id = $1 AND id < $2\n                   ORDER BY address, id DESC LIMIT $3",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "address!",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "subnet_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 3,
+        "name": "status!",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "hostname",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 5,
+        "name": "assigned_to",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 6,
+        "name": "description",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "mac_address",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 8,
+        "name": "created_at",
+        "type_info": "Timestamp"
+      },
+      {
+        "ordinal": 9,
+        "name": "updated_at",
+        "type_info": "Timestamp"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      null,
+      false,
+      null,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "c2ebeeaf70f90256cc7eb94286729a51ab73728730efe055b74ef912fa39f240"
+}

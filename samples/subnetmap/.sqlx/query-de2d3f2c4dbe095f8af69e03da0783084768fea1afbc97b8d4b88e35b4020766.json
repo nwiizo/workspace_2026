@@ -1,0 +1,40 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id, name, cidr::TEXT as \"cidr!\",\n           similarity(name, $1) as \"sim!\"\n           FROM subnets\n           WHERE name % $1 OR cidr::TEXT LIKE '%' || $1 || '%'\n           ORDER BY similarity(name, $1) DESC\n           LIMIT 10",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "cidr!",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "sim!",
+        "type_info": "Float4"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      null,
+      null
+    ]
+  },
+  "hash": "de2d3f2c4dbe095f8af69e03da0783084768fea1afbc97b8d4b88e35b4020766"
+}

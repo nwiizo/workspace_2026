@@ -1,0 +1,50 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id, alert_type::TEXT as \"alert_type!\", subnet_id,\n               message, is_acknowledged, created_at\n               FROM alerts\n               WHERE NOT is_acknowledged\n               ORDER BY created_at DESC",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "alert_type!",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "subnet_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 3,
+        "name": "message",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "is_acknowledged",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 5,
+        "name": "created_at",
+        "type_info": "Timestamp"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      null,
+      true,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "f98d3edfb01572b6c71e786309970c68579b39e3601869a1c2f8d1a91f13dbb7"
+}
