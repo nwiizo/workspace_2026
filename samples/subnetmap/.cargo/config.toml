@@ -1,6 +1,10 @@
 [target.wasm32-unknown-unknown]
-rustflags = [
-    "-C", "link-arg=--export=__externref_table_alloc",
-    "-C", "link-arg=--export=__externref_table_dealloc",
-    "-C", "link-arg=--export=__externref_drop_slice",
-]
+# Workaround: global RUSTFLAGS="-C target-cpu=native" clears wasm32's
+# default `reference-types` target feature.  Without it, wasm-bindgen's
+# externref intrinsics are omitted and the CLI fails with:
+#   "failed to find the `__wbindgen_externref_table_alloc` function"
+#
+# When RUSTFLAGS env is set, Cargo ignores [target.*.rustflags] in config.
+# Run `cargo leptos build` / `cargo leptos serve` with RUSTFLAGS="" if you
+# have a global RUSTFLAGS that sets target-cpu=native.
+rustflags = ["-C", "target-cpu=generic"]
