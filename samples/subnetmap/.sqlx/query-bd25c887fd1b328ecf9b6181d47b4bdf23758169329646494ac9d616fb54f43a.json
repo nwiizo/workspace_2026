@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT COUNT(*) as \"count!\" FROM alerts\n               WHERE subnet_id = $1 AND NOT is_acknowledged\n               AND alert_type::TEXT = $2",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "count!",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "bd25c887fd1b328ecf9b6181d47b4bdf23758169329646494ac9d616fb54f43a"
+}

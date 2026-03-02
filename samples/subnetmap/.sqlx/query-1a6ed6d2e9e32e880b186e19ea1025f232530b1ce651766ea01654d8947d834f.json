@@ -1,0 +1,20 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT COALESCE(AVG(\n               CASE WHEN total_addresses > 0\n               THEN (used_count::float / total_addresses::float) * 100\n               ELSE 0 END\n           ), 0) as \"avg!\" FROM subnets",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "avg!",
+        "type_info": "Float8"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "1a6ed6d2e9e32e880b186e19ea1025f232530b1ce651766ea01654d8947d834f"
+}

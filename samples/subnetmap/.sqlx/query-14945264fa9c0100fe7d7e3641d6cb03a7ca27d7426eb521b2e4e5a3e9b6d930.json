@@ -1,0 +1,46 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id, address::TEXT as \"address!\",\n           hostname, assigned_to,\n           GREATEST(\n               COALESCE(similarity(hostname, $1), 0),\n               COALESCE(similarity(assigned_to, $1), 0)\n           ) as \"sim!\"\n           FROM ip_addresses\n           WHERE hostname % $1\n              OR assigned_to % $1\n              OR address::TEXT LIKE '%' || $1 || '%'\n           ORDER BY \"sim!\" DESC\n           LIMIT 10",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "address!",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "hostname",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "assigned_to",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 4,
+        "name": "sim!",
+        "type_info": "Float4"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      null,
+      true,
+      true,
+      null
+    ]
+  },
+  "hash": "14945264fa9c0100fe7d7e3641d6cb03a7ca27d7426eb521b2e4e5a3e9b6d930"
+}

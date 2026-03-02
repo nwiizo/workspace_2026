@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM vlan_subnet_links WHERE vlan_id = $1 AND subnet_id = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "c37d8765bc1e774fc962024073e970daa8898b4a02092179857b461b145573cf"
+}

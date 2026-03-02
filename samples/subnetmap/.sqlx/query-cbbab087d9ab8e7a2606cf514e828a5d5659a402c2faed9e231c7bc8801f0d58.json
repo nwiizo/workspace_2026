@@ -1,0 +1,44 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id, cidr::TEXT as \"cidr!\", name, used_count, total_addresses\n           FROM subnets\n           WHERE total_addresses > 0\n           AND (used_count::float / total_addresses::float) > 0.8",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "cidr!",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "name",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "used_count",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 4,
+        "name": "total_addresses",
+        "type_info": "Int4"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      null,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "cbbab087d9ab8e7a2606cf514e828a5d5659a402c2faed9e231c7bc8801f0d58"
+}

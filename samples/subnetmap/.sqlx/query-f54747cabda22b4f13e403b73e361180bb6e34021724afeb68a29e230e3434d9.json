@@ -1,0 +1,40 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id, hostname, record_type::TEXT as \"record_type!\",\n           similarity(hostname, $1) as \"sim!\"\n           FROM dns_records\n           WHERE hostname % $1\n           ORDER BY similarity(hostname, $1) DESC\n           LIMIT 10",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "hostname",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "record_type!",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "sim!",
+        "type_info": "Float4"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      null,
+      null
+    ]
+  },
+  "hash": "f54747cabda22b4f13e403b73e361180bb6e34021724afeb68a29e230e3434d9"
+}
