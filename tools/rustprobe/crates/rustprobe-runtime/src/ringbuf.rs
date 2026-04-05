@@ -67,6 +67,8 @@ impl RingBuffer {
         }
 
         let index = head & self.mask;
+        // SAFETY: SPSC invariant — only the single producer calls push().
+        // head has not been advanced yet, so the consumer cannot read this slot.
         unsafe {
             *self.buffer[index].get() = event;
         }
@@ -84,6 +86,8 @@ impl RingBuffer {
         }
 
         let index = tail & self.mask;
+        // SAFETY: SPSC invariant — only the single consumer calls pop().
+        // head > tail (checked above with Acquire), so the producer has written this slot.
         let event = unsafe { *self.buffer[index].get() };
 
         self.tail.store(tail.wrapping_add(1), Ordering::Release);

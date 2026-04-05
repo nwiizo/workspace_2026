@@ -9,18 +9,19 @@ use rustprobe_analysis::ProbeData;
 
 use crate::mir_visitor::MirAnalyzer;
 
+// Required by rustc_interface::Config::using_internal_features
 static USING_INTERNAL_FEATURES: AtomicBool = AtomicBool::new(true);
 
-pub struct PassthroughCallback;
+pub(crate) struct PassthroughCallback;
 
 impl rustc_driver::Callbacks for PassthroughCallback {}
 
-pub struct ProbeCallback {
+pub(crate) struct ProbeCallback {
     output_dir: String,
 }
 
 impl ProbeCallback {
-    pub fn new(output_dir: String) -> Self {
+    pub(crate) fn new(output_dir: String) -> Self {
         Self { output_dir }
     }
 }
@@ -62,18 +63,9 @@ impl rustc_driver::Callbacks for ProbeCallback {
             functions.push(probe);
         }
 
-        functions.sort_by(|a, b| {
-            b.complexity_score
-                .partial_cmp(&a.complexity_score)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
+        functions.sort_by(|a, b| b.complexity_score.total_cmp(&a.complexity_score));
 
-        let data = ProbeData {
-            crate_name: crate_name.clone(),
-            functions,
-        };
-
-        if let Err(e) = write_probe_data(&self.output_dir, &crate_name, &data) {
+        if let Err(e) = write_probe_data(&self.output_dir, &crate_name, &functions) {
             eprintln!("rustprobe: failed to write probe data: {e}");
         }
 
@@ -94,11 +86,15 @@ fn resolve_span(
 fn write_probe_data(
     output_dir: &str,
     crate_name: &str,
-    data: &ProbeData,
+    functions: &[rustprobe_analysis::FunctionProbe],
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let data = ProbeData {
+        crate_name: crate_name.to_string(),
+        functions: functions.to_vec(),
+    };
     std::fs::create_dir_all(output_dir)?;
     let path = std::path::PathBuf::from(output_dir).join(format!("{crate_name}.json"));
-    let json = serde_json::to_string_pretty(data)?;
+    let json = serde_json::to_string_pretty(&data)?;
     std::fs::write(path, json)?;
     Ok(())
 }

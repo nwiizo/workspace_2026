@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use rustc_hir::def_id::DefId;
 use rustc_hir::intravisit::{self, Visitor};
 use rustc_hir::{self as hir, BlockCheckMode, UnsafeSource};
@@ -22,9 +24,43 @@ impl<'tcx> Visitor<'tcx> for UnsafeBlockVisitor {
     }
 }
 
+/// Collect DefIds of all functions that contain unsafe code (unsafe fn or unsafe blocks).
+pub(crate) fn collect_unsafe_def_ids(tcx: TyCtxt<'_>) -> HashSet<DefId> {
+    let mut result = HashSet::new();
+
+    for local_def_id in tcx.hir_body_owners() {
+        let def_id = local_def_id.to_def_id();
+        let hir_id = tcx.local_def_id_to_hir_id(local_def_id);
+
+        let is_unsafe_fn = tcx
+            .hir_fn_sig_by_hir_id(hir_id)
+            .is_some_and(|sig| sig.header.is_unsafe());
+
+        let has_unsafe_block = tcx
+            .hir_maybe_body_owned_by(local_def_id)
+            .is_some_and(|body| {
+                let mut visitor = UnsafeBlockVisitor {
+                    unsafe_spans: Vec::new(),
+                };
+                visitor.visit_body(body);
+                !visitor.unsafe_spans.is_empty()
+            });
+
+        if is_unsafe_fn || has_unsafe_block {
+            result.insert(def_id);
+        }
+    }
+
+    result
+}
+
 /// Analyze a single crate for unsafe blocks and unsafe functions.
-/// Returns findings paired with their original spans (for suppression checking).
-pub fn analyze_crate<'tcx>(tcx: TyCtxt<'tcx>, config: &UnsafeRulesConfig) -> Vec<(Finding, Span)> {
+/// Returns findings paired with their original spans (for suppression checking),
+/// plus the set of DefIds containing unsafe code (for reuse in reach analysis).
+pub(crate) fn analyze_crate<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    config: &UnsafeRulesConfig,
+) -> Vec<(Finding, Span)> {
     let mut findings = Vec::new();
 
     for local_def_id in tcx.hir_body_owners() {
@@ -39,7 +75,7 @@ pub fn analyze_crate<'tcx>(tcx: TyCtxt<'tcx>, config: &UnsafeRulesConfig) -> Vec
             let fn_name = tcx.def_path_str(def_id);
             findings.push((
                 Finding {
-                    rule_id: "RG001".to_string(),
+                    rule_id: "RG001",
                     severity: Severity::Info,
                     category: Category::UnsafeFunction,
                     message: format!("function `{fn_name}` is declared as `unsafe`"),
@@ -47,6 +83,7 @@ pub fn analyze_crate<'tcx>(tcx: TyCtxt<'tcx>, config: &UnsafeRulesConfig) -> Vec
                     related_locations: vec![],
                     suggestion: None,
                     unsafe_reach: None,
+                    has_safety_comment: false,
                 },
                 span,
             ));
@@ -73,62 +110,39 @@ pub fn analyze_crate<'tcx>(tcx: TyCtxt<'tcx>, config: &UnsafeRulesConfig) -> Vec
                 (Severity::Info, None)
             };
 
-            let finding = Finding {
-                rule_id: "RG002".to_string(),
-                severity,
-                category: Category::UnsafeBlock,
-                message: format!("unsafe block in function `{fn_name}`"),
-                location: span_to_location(tcx, span),
-                related_locations: vec![],
-                suggestion,
-                unsafe_reach: None,
-            };
-
-            findings.push((finding, span));
+            findings.push((
+                Finding {
+                    rule_id: "RG002",
+                    severity,
+                    category: Category::UnsafeBlock,
+                    message: format!("unsafe block in function `{fn_name}`"),
+                    location: span_to_location(tcx, span),
+                    related_locations: vec![],
+                    suggestion,
+                    unsafe_reach: None,
+                    has_safety_comment: has_comment,
+                },
+                span,
+            ));
         }
     }
 
     findings
 }
 
-/// Analyze unsafe reach: which public functions transitively call unsafe code.
-pub fn analyze_unsafe_reach<'tcx>(
+/// Analyze unsafe reach: trace which functions transitively call unsafe code
+/// via the intra-crate call graph.
+pub(crate) fn analyze_unsafe_reach<'tcx>(
     tcx: TyCtxt<'tcx>,
     config: &UnsafeRulesConfig,
     call_graph: &CallGraph,
+    unsafe_def_ids: &HashSet<DefId>,
 ) -> Vec<(Finding, Span)> {
     let mut findings = Vec::new();
     let max_depth = config.max_unsafe_reach.unwrap_or(10);
+    let warn_threshold = config.warn_unsafe_reach.unwrap_or(5);
 
-    // Collect all functions that directly contain unsafe blocks
-    let mut unsafe_fns: Vec<DefId> = Vec::new();
-    for local_def_id in tcx.hir_body_owners() {
-        let def_id = local_def_id.to_def_id();
-        let hir_id = tcx.local_def_id_to_hir_id(local_def_id);
-
-        let is_unsafe_fn = tcx
-            .hir_fn_sig_by_hir_id(hir_id)
-            .is_some_and(|sig| sig.header.is_unsafe());
-
-        let has_unsafe_block = {
-            if let Some(body) = tcx.hir_maybe_body_owned_by(local_def_id) {
-                let mut visitor = UnsafeBlockVisitor {
-                    unsafe_spans: Vec::new(),
-                };
-                visitor.visit_body(body);
-                !visitor.unsafe_spans.is_empty()
-            } else {
-                false
-            }
-        };
-
-        if is_unsafe_fn || has_unsafe_block {
-            unsafe_fns.push(def_id);
-        }
-    }
-
-    // For each unsafe function, trace callers
-    for &unsafe_def_id in &unsafe_fns {
+    for &unsafe_def_id in unsafe_def_ids {
         let reachable = call_graph.callers_within_depth(unsafe_def_id, max_depth);
         if reachable.is_empty() {
             continue;
@@ -142,24 +156,20 @@ pub fn analyze_unsafe_reach<'tcx>(
             .map(|(def_id, _)| tcx.def_path_str(*def_id))
             .collect();
 
-        let call_chain: Vec<String> = {
-            let mut chain = vec![unsafe_name.clone()];
-            // Show first few callers for the chain visualization
-            for (def_id, _) in reachable.iter().take(5) {
-                chain.push(tcx.def_path_str(*def_id));
-            }
-            chain
-        };
+        let mut call_chain = vec![unsafe_name.clone()];
+        for (def_id, _) in reachable.iter().take(5) {
+            call_chain.push(tcx.def_path_str(*def_id));
+        }
 
         let severity = match config.max_unsafe_reach {
             Some(max) if reachable.len() > max => Severity::Error,
-            _ if reachable.len() > 5 => Severity::Warning,
+            _ if reachable.len() > warn_threshold => Severity::Warning,
             _ => Severity::Info,
         };
 
         findings.push((
             Finding {
-                rule_id: "RG003".to_string(),
+                rule_id: "RG003",
                 severity,
                 category: Category::UnsafeReach,
                 message: format!(
@@ -178,6 +188,7 @@ pub fn analyze_unsafe_reach<'tcx>(
                     affected_functions: affected,
                     call_chain,
                 }),
+                has_safety_comment: false,
             },
             unsafe_span,
         ));
@@ -196,7 +207,9 @@ pub(crate) fn span_to_location(tcx: TyCtxt<'_>, span: Span) -> SourceLocation {
         if trimmed.len() <= 200 {
             trimmed.to_string()
         } else {
-            format!("{}...", &trimmed[..200])
+            // Use floor_char_boundary to avoid panicking on multi-byte UTF-8
+            let boundary = trimmed.floor_char_boundary(200);
+            format!("{}...", &trimmed[..boundary])
         }
     });
 
@@ -218,46 +231,46 @@ pub(crate) fn span_to_location(tcx: TyCtxt<'_>, span: Span) -> SourceLocation {
 fn get_preceding_source(tcx: TyCtxt<'_>, span: Span, bytes_back: u32) -> Option<String> {
     let source_map = tcx.sess.source_map();
     let lo = span.lo();
-    let search_start = lo - rustc_span::BytePos(bytes_back.min(lo.0));
+    let search_start = rustc_span::BytePos(lo.0.saturating_sub(bytes_back));
     let search_span = span.with_lo(search_start).with_hi(lo);
     source_map.span_to_snippet(search_span).ok()
 }
 
+/// Iterate preceding lines in reverse, stopping at the first blank line.
+fn preceding_lines_until_blank(source: &str) -> impl Iterator<Item = &str> {
+    source
+        .lines()
+        .rev()
+        .take_while(|line| !line.trim().is_empty())
+        .map(|line| line.trim())
+}
+
 fn has_safety_comment(tcx: TyCtxt<'_>, span: Span) -> bool {
-    if let Some(source) = get_preceding_source(tcx, span, 300) {
-        // Iterate lines in reverse, stopping at the first blank line
-        // to avoid matching SAFETY comments from unrelated functions
-        for line in source.lines().rev() {
-            let trimmed = line.trim();
-            if trimmed.is_empty() {
-                break;
-            }
-            let upper = trimmed.to_uppercase();
-            if upper.contains("// SAFETY:") || upper.contains("/// SAFETY") {
-                return true;
-            }
+    let Some(source) = get_preceding_source(tcx, span, 300) else {
+        return false;
+    };
+    for trimmed in preceding_lines_until_blank(&source) {
+        let upper = trimmed.to_uppercase();
+        if upper.contains("// SAFETY:") || upper.contains("/// SAFETY") {
+            return true;
         }
-        false
-    } else {
-        false
     }
+    false
 }
 
 /// Check if a span is preceded by a `// rustguard::allow(RULE_ID)` comment.
+/// Stops at blank lines to avoid cross-function suppression.
 pub(crate) fn is_suppressed(tcx: TyCtxt<'_>, span: Span, rule_id: &str) -> bool {
-    if let Some(source) = get_preceding_source(tcx, span, 300) {
-        // Match patterns like:
-        //   // rustguard::allow(RG001)
-        //   // rustguard::allow(RG001, RG002)
-        for line in source.lines().rev() {
-            let trimmed = line.trim();
-            if let Some(rest) = trimmed.strip_prefix("// rustguard::allow(")
-                && let Some(rules_str) = rest.strip_suffix(')')
-            {
-                let rules: Vec<&str> = rules_str.split(',').map(|s| s.trim()).collect();
-                if rules.iter().any(|r| *r == rule_id || *r == "*") {
-                    return true;
-                }
+    let Some(source) = get_preceding_source(tcx, span, 300) else {
+        return false;
+    };
+    for trimmed in preceding_lines_until_blank(&source) {
+        if let Some(rest) = trimmed.strip_prefix("// rustguard::allow(")
+            && let Some(rules_str) = rest.strip_suffix(')')
+        {
+            let rules: Vec<&str> = rules_str.split(',').map(|s| s.trim()).collect();
+            if rules.iter().any(|r| *r == rule_id || *r == "*") {
+                return true;
             }
         }
     }

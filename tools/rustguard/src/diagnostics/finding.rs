@@ -2,7 +2,7 @@ use serde::Serialize;
 
 use super::location::SourceLocation;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Severity {
     Info,
@@ -20,7 +20,7 @@ impl std::fmt::Display for Severity {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Category {
     UnsafeBlock,
@@ -55,7 +55,7 @@ pub struct UnsafeReachInfo {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Finding {
-    pub rule_id: String,
+    pub rule_id: &'static str,
     pub severity: Severity,
     pub category: Category,
     pub message: String,
@@ -66,4 +66,7 @@ pub struct Finding {
     pub suggestion: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub unsafe_reach: Option<UnsafeReachInfo>,
+    /// Whether a SAFETY comment was found for this finding (for coverage stats).
+    #[serde(skip)]
+    pub has_safety_comment: bool,
 }

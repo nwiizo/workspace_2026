@@ -188,7 +188,7 @@ pub fn render(findings: &[Finding], _summary: &AnalysisSummary) -> Result<String
                 .collect();
 
             SarifResult {
-                rule_id: f.rule_id.clone(),
+                rule_id: f.rule_id.to_string(),
                 level: severity_to_sarif_level(f.severity),
                 message: SarifMessage {
                     text: f.message.clone(),

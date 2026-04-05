@@ -56,9 +56,9 @@ pub fn render(findings: &[Finding], summary: &AnalysisSummary) -> String {
     // Enhanced summary
     output.push_str(&format!("{}\n", "=== Summary ===".bold()));
 
-    let errors = summary.by_severity.get("error").copied().unwrap_or(0);
-    let warnings = summary.by_severity.get("warning").copied().unwrap_or(0);
-    let infos = summary.by_severity.get("info").copied().unwrap_or(0);
+    let errors = summary.error_count();
+    let warnings = summary.warning_count();
+    let infos = summary.info_count();
 
     output.push_str(&format!(
         "  Findings: {} total ({} error, {} warning, {} info)\n",

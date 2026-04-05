@@ -14,8 +14,8 @@ use crate::diagnostics::{Category, Finding, Severity};
 pub struct AnalysisSummary {
     pub total_findings: usize,
     pub suppressed_count: usize,
-    pub by_severity: HashMap<String, usize>,
-    pub by_category: HashMap<String, usize>,
+    pub by_severity: HashMap<Severity, usize>,
+    pub by_category: HashMap<Category, usize>,
     pub unsafe_fn_count: usize,
     pub unsafe_block_count: usize,
     pub unsafe_reach_max_depth: usize,
@@ -34,7 +34,22 @@ impl AnalysisSummary {
     }
 
     pub fn has_errors(&self) -> bool {
-        self.by_severity.get("error").copied().unwrap_or(0) > 0
+        self.error_count() > 0
+    }
+
+    pub fn error_count(&self) -> usize {
+        self.by_severity.get(&Severity::Error).copied().unwrap_or(0)
+    }
+
+    pub fn warning_count(&self) -> usize {
+        self.by_severity
+            .get(&Severity::Warning)
+            .copied()
+            .unwrap_or(0)
+    }
+
+    pub fn info_count(&self) -> usize {
+        self.by_severity.get(&Severity::Info).copied().unwrap_or(0)
     }
 }
 
@@ -43,7 +58,6 @@ pub struct AnalysisResult {
     pub summary: AnalysisSummary,
 }
 
-/// A finding with its original span preserved for suppression checking.
 struct SpannedFinding {
     finding: Finding,
     span: Span,
@@ -54,6 +68,9 @@ pub fn run_analysis<'tcx>(tcx: TyCtxt<'tcx>, config: &RustGuardConfig) -> Analys
     let mut spanned: Vec<SpannedFinding> = Vec::new();
 
     if config.rules.r#unsafe.enabled {
+        // Collect unsafe DefIds once, reuse in both analyze_crate and analyze_unsafe_reach
+        let unsafe_def_ids = unsafe_impact::collect_unsafe_def_ids(tcx);
+
         spanned.extend(
             unsafe_impact::analyze_crate(tcx, &config.rules.r#unsafe)
                 .into_iter()
@@ -65,7 +82,7 @@ pub fn run_analysis<'tcx>(tcx: TyCtxt<'tcx>, config: &RustGuardConfig) -> Analys
 
         let cg = call_graph::CallGraph::build(tcx);
         spanned.extend(
-            unsafe_impact::analyze_unsafe_reach(tcx, &config.rules.r#unsafe, &cg)
+            unsafe_impact::analyze_unsafe_reach(tcx, &config.rules.r#unsafe, &cg, &unsafe_def_ids)
                 .into_iter()
                 .map(|(f, s)| SpannedFinding {
                     finding: f,
@@ -76,7 +93,7 @@ pub fn run_analysis<'tcx>(tcx: TyCtxt<'tcx>, config: &RustGuardConfig) -> Analys
 
     // Filter out suppressed findings
     let pre_filter_count = spanned.len();
-    spanned.retain(|sf| !unsafe_impact::is_suppressed(tcx, sf.span, &sf.finding.rule_id));
+    spanned.retain(|sf| !unsafe_impact::is_suppressed(tcx, sf.span, sf.finding.rule_id));
     let suppressed_count = pre_filter_count - spanned.len();
 
     let mut findings: Vec<Finding> = spanned.into_iter().map(|sf| sf.finding).collect();
@@ -97,21 +114,14 @@ pub fn run_analysis<'tcx>(tcx: TyCtxt<'tcx>, config: &RustGuardConfig) -> Analys
     };
 
     for f in &findings {
-        *summary
-            .by_severity
-            .entry(f.severity.to_string())
-            .or_default() += 1;
-        *summary
-            .by_category
-            .entry(f.category.to_string())
-            .or_default() += 1;
+        *summary.by_severity.entry(f.severity).or_default() += 1;
+        *summary.by_category.entry(f.category).or_default() += 1;
 
         match f.category {
             Category::UnsafeFunction => summary.unsafe_fn_count += 1,
             Category::UnsafeBlock => {
                 summary.unsafe_block_count += 1;
-                // After severity fix: Info = has SAFETY comment, Warning = missing
-                if f.severity == Severity::Info {
+                if f.has_safety_comment {
                     summary.safety_comment_present += 1;
                 } else {
                     summary.safety_comment_missing += 1;

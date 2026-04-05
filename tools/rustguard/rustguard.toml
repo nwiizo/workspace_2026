@@ -5,7 +5,8 @@ exclude_paths = []
 
 [rules.unsafe]
 enabled = true
-max_unsafe_reach = 10
+max_unsafe_reach = 10      # reach above this → Error (CI gate)
+warn_unsafe_reach = 5      # reach above this → Warning
 require_safety_comment = true
 flag_unsafe_trait_impls = true
 

@@ -66,18 +66,23 @@ impl Collector {
             let path =
                 std::path::PathBuf::from(&dir).join(format!("events_thread_{thread_id}.bin"));
 
-            if let Ok(mut file) = std::fs::OpenOptions::new()
+            match std::fs::OpenOptions::new()
                 .create(true)
                 .append(true)
                 .open(&path)
             {
-                for event in &events {
-                    // Write fields individually to avoid reading padding bytes (UB).
-                    let _ = file.write_all(&event.timestamp_ns.to_le_bytes());
-                    let _ = file.write_all(&event.probe_id.to_le_bytes());
-                    let _ = file.write_all(&[event.event_kind as u8]);
-                    let _ = file.write_all(&event.thread_id.to_le_bytes());
-                    let _ = file.write_all(&event.payload.to_le_bytes());
+                Ok(mut file) => {
+                    for event in &events {
+                        // Write fields individually to avoid reading padding bytes (UB).
+                        let _ = file.write_all(&event.timestamp_ns.to_le_bytes());
+                        let _ = file.write_all(&event.probe_id.to_le_bytes());
+                        let _ = file.write_all(&[event.event_kind as u8]);
+                        let _ = file.write_all(&event.thread_id.to_le_bytes());
+                        let _ = file.write_all(&event.payload.to_le_bytes());
+                    }
+                }
+                Err(e) => {
+                    eprintln!("rustprobe: failed to open {}: {e}", path.display());
                 }
             }
         });

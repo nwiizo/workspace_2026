@@ -4,10 +4,6 @@ use crate::error::{Error, Result};
 use crate::probe_data::ProbeData;
 
 pub fn read_probe_data(output_dir: &Path) -> Result<Vec<ProbeData>> {
-    if !output_dir.exists() {
-        return Err(Error::NoData(output_dir.to_path_buf()));
-    }
-
     let mut results = Vec::new();
 
     for entry in std::fs::read_dir(output_dir)? {
@@ -28,7 +24,8 @@ pub fn read_probe_data(output_dir: &Path) -> Result<Vec<ProbeData>> {
     Ok(results)
 }
 
-pub fn read_probe_file(path: &Path) -> Result<ProbeData> {
+#[allow(dead_code)] // Will be used by future CLI file argument support
+pub(crate) fn read_probe_file(path: &Path) -> Result<ProbeData> {
     let content = std::fs::read_to_string(path)?;
     let data: ProbeData = serde_json::from_str(&content)?;
     Ok(data)

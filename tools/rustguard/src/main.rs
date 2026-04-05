@@ -59,7 +59,7 @@ fn main() {
 /// When cargo uses us as RUSTC_WORKSPACE_WRAPPER, args[1] is the path to rustc.
 fn is_wrapper_mode(args: &[String]) -> bool {
     args.get(1)
-        .is_some_and(|arg| arg.ends_with("rustc") || arg == "rustc")
+        .is_some_and(|arg| arg == "rustc" || arg.ends_with("/rustc"))
 }
 
 /// User-facing mode: `cargo rustguard [args]`

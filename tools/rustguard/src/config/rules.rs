@@ -7,6 +7,7 @@ use crate::diagnostics::Severity;
 pub struct UnsafeRulesConfig {
     pub enabled: bool,
     pub max_unsafe_reach: Option<usize>,
+    pub warn_unsafe_reach: Option<usize>,
     pub require_safety_comment: bool,
     pub flag_unsafe_trait_impls: bool,
 }
@@ -16,6 +17,7 @@ impl Default for UnsafeRulesConfig {
         Self {
             enabled: true,
             max_unsafe_reach: None,
+            warn_unsafe_reach: Some(5),
             require_safety_comment: true,
             flag_unsafe_trait_impls: true,
         }

@@ -51,9 +51,10 @@ impl FunctionProbe {
             .sum::<usize>();
 
         let loop_bonus = if self.has_loops { 5.0 } else { 0.0 };
+        // Weights: moves are cheap (0.5), clones are expensive (2.0), drops are moderate (1.0)
         let ownership_weight = (self.move_count as f64 * 0.5)
             + (self.clone_count as f64 * 2.0)
-            + (self.drop_count as f64 * 1.0);
+            + self.drop_count as f64;
 
         self.complexity_score = self.basic_block_count as f64
             + branch_count as f64 * 1.5

@@ -17,16 +17,16 @@ fn write_crate_summary(out: &mut String, data: &ProbeData) {
     writeln!(out, "{}", "─".repeat(60.min(10 + data.crate_name.len()))).expect("write");
     writeln!(out).expect("write");
 
-    let has_ownership_cost: Vec<_> = data
+    let hotspot_funcs: Vec<_> = data
         .functions
         .iter()
         .filter(|f| f.clone_count > 0 || f.drop_count > 3 || (f.move_count > 5 && f.has_loops))
         .collect();
 
-    if !has_ownership_cost.is_empty() {
+    if !hotspot_funcs.is_empty() {
         writeln!(out, "Ownership Cost Hotspots:").expect("write");
         writeln!(out).expect("write");
-        for func in has_ownership_cost.iter().take(TOP_N) {
+        for func in hotspot_funcs.iter().take(TOP_N) {
             write_hotspot(out, func);
         }
     }
