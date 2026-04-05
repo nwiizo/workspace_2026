@@ -1,0 +1,15 @@
+[package]
+name = "cargo-rustprobe"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "cargo-rustprobe"
+path = "src/main.rs"
+
+[dependencies]
+clap = { workspace = true }
+anyhow = { workspace = true }
+serde_json = { workspace = true }
+rustprobe-analysis = { path = "../rustprobe-analysis" }
