@@ -1,0 +1,21 @@
+# RustGuard configuration example
+
+[general]
+exclude_paths = []
+
+[rules.unsafe]
+enabled = true
+max_unsafe_reach = 10      # reach above this → Error (CI gate)
+warn_unsafe_reach = 5      # reach above this → Warning
+require_safety_comment = true
+flag_unsafe_trait_impls = true
+
+[rules.ownership]
+enabled = false            # Phase 2
+detect_unnecessary_clone = true
+max_borrow_depth = 3
+detect_unintended_moves = true
+
+[output]
+format = "text"
+include_source_snippets = true

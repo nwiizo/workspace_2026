@@ -1,0 +1,17 @@
+[package]
+name = "rustprobe-driver"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "rustprobe-driver"
+path = "src/main.rs"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+rustprobe-analysis = { path = "../rustprobe-analysis" }
+
+[package.metadata.rust-analyzer]
+rustc_private = true
