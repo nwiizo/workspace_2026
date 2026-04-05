@@ -1,0 +1,25 @@
+# RustLean Configuration
+# Place as `rustlean.toml` or `.rustlean.toml` in your project root.
+
+# Output format: "text" or "json"
+output = "text"
+
+# Paths to ignore (glob patterns)
+ignore_paths = ["tests/**", "benches/**"]
+
+[cost_weights]
+clone_heap = 10.0
+clone_stack = 2.0
+heap_alloc = 8.0
+vec_push = 3.0
+string_alloc = 7.0
+format_macro = 8.0
+loop_multiplier = 10.0
+large_struct_move = 5.0
+padding_waste_per_byte = 1.0
+
+[thresholds]
+large_struct_bytes = 128
+padding_waste_percent = 25.0
+fn_score_warning = 50.0
+fn_score_critical = 100.0
