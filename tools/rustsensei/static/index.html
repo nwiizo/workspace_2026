@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RustSensei - Rust Ownership Visualizer</title>
+  <link rel="stylesheet" href="/style.css">
+  <!-- CodeMirror CDN deduplication is unreliable; use textarea with syntax-highlight styling -->
+</head>
+<body>
+  <header>
+    <h1>RustSensei</h1>
+    <p class="subtitle">Rust Ownership Step-by-Step Visualizer</p>
+    <nav class="mode-tabs">
+      <button class="tab active" data-mode="editor">Editor</button>
+      <button class="tab" data-mode="quiz">Quiz</button>
+      <button class="tab" data-mode="diff">Diff</button>
+    </nav>
+    <div id="progress-badge" class="progress-badge" title="Challenges completed">0/0</div>
+    <button id="btn-lang" class="btn btn-lang" title="Switch language">EN</button>
+  </header>
+
+  <main>
+    <!-- ===== EDITOR MODE ===== -->
+    <div id="mode-editor" class="mode-content active">
+      <div class="panel-container">
+        <div class="panel editor-panel">
+          <div class="panel-header">
+            <span class="panel-title">Code Editor</span>
+            <div class="panel-actions">
+              <select id="challenge-select">
+                <option value="">-- Free Mode --</option>
+              </select>
+              <button id="btn-analyze" class="btn btn-primary">Analyze</button>
+              <button id="btn-compile" class="btn btn-secondary">Compile Check</button>
+              <button id="btn-suggest" class="btn btn-accent">Fix Suggest</button>
+            </div>
+          </div>
+          <div id="editor"></div>
+          <div id="compile-status" class="compile-status hidden"></div>
+        </div>
+
+        <div class="panel viz-panel">
+          <div class="panel-header">
+            <span class="panel-title">Ownership Visualization</span>
+            <div class="step-controls">
+              <button id="btn-first" class="btn btn-sm" title="First step">|&lt;</button>
+              <button id="btn-prev" class="btn btn-sm" title="Previous step">&lt;</button>
+              <span id="step-indicator">Step 0 / 0</span>
+              <button id="btn-next" class="btn btn-sm" title="Next step">&gt;</button>
+              <button id="btn-last" class="btn btn-sm" title="Last step">&gt;|</button>
+              <button id="btn-play" class="btn btn-sm btn-play" title="Auto-play">Play</button>
+            </div>
+          </div>
+
+          <!-- Step Timeline -->
+          <div id="step-timeline" class="step-timeline">
+            <div id="step-timeline-bar" class="step-timeline-bar" style="width:0%"></div>
+            <div id="step-timeline-dots" class="step-timeline-dots"></div>
+          </div>
+
+          <div id="step-description" class="step-description">
+            <span id="step-event-icon" class="step-event-icon"></span>
+            <div class="step-desc-body">
+              <span id="step-desc-text" class="step-desc-text">Press "Analyze" to start</span>
+              <div id="step-concept" class="step-concept hidden"></div>
+            </div>
+            <span id="step-desc-line" class="step-desc-line"></span>
+          </div>
+
+          <!-- Legend -->
+          <div class="legend">
+            <span class="legend-item"><span class="legend-dot" style="background:#9ece6a"></span>Owned</span>
+            <span class="legend-item"><span class="legend-dot" style="background:#ff9e64"></span>Moved</span>
+            <span class="legend-item"><span class="legend-dot" style="background:#7aa2f7"></span>Borrowed</span>
+            <span class="legend-item"><span class="legend-dot" style="background:#bb9af7"></span>&amp;mut</span>
+            <span class="legend-item"><span class="legend-dot" style="background:#7dcfff"></span>&amp;ref</span>
+            <span class="legend-item"><span class="legend-dot" style="background:#f7768e"></span>Dropped</span>
+            <span class="legend-sep">|</span>
+            <span class="legend-item">--- = owns heap data</span>
+          </div>
+
+          <div class="memory-container">
+            <div class="memory-section">
+              <h3>Stack</h3>
+              <div id="stack-view" class="memory-view"></div>
+            </div>
+            <div class="memory-arrows" id="memory-arrows">
+              <svg id="arrow-svg" xmlns="http://www.w3.org/2000/svg"></svg>
+            </div>
+            <div class="memory-section">
+              <h3>Heap</h3>
+              <div id="heap-view" class="memory-view"></div>
+            </div>
+          </div>
+
+          <!-- Suggestions Panel -->
+          <div id="suggestions-panel" class="suggestions-panel hidden">
+            <h3>Fix Suggestions</h3>
+            <div id="suggestions-list"></div>
+          </div>
+
+          <div class="event-log">
+            <h3>Event Log</h3>
+            <div id="event-log" class="log-entries"></div>
+          </div>
+        </div>
+      </div>
+
+      <div id="challenge-info" class="challenge-info hidden">
+        <div class="challenge-header">
+          <h3 id="challenge-title"></h3>
+          <span id="challenge-level" class="level-badge"></span>
+          <span id="challenge-complete-badge" class="complete-badge hidden">Completed</span>
+        </div>
+        <p id="challenge-description"></p>
+        <div class="challenge-actions">
+          <button id="btn-hint" class="btn btn-sm">Show Hint</button>
+          <button id="btn-solution" class="btn btn-sm">Show Solution</button>
+          <button id="btn-mark-done" class="btn btn-sm btn-success">Mark Complete</button>
+        </div>
+        <div id="hints-container" class="hints hidden"></div>
+      </div>
+    </div>
+
+    <!-- ===== QUIZ MODE ===== -->
+    <div id="mode-quiz" class="mode-content">
+      <div class="quiz-container">
+        <div class="quiz-header">
+          <h2>Error Prediction Quiz</h2>
+          <p>This code compiles... or does it?</p>
+          <div class="quiz-score">
+            Score: <span id="quiz-score">0</span> / <span id="quiz-total">0</span>
+            (<span id="quiz-streak">0</span> streak)
+          </div>
+        </div>
+        <div id="quiz-code" class="quiz-code"></div>
+        <div id="quiz-buttons" class="quiz-buttons">
+          <button id="btn-quiz-ok" class="btn btn-quiz-ok">Compiles OK</button>
+          <button id="btn-quiz-error" class="btn btn-quiz-error">Compile Error</button>
+        </div>
+        <div id="quiz-result" class="quiz-result hidden"></div>
+        <div id="quiz-explanation" class="quiz-explanation hidden"></div>
+        <button id="btn-quiz-next" class="btn btn-primary hidden">Next Question</button>
+      </div>
+    </div>
+
+    <!-- ===== DIFF MODE ===== -->
+    <div id="mode-diff" class="mode-content">
+      <div class="diff-container">
+        <div class="diff-header">
+          <h2>Before / After Comparison</h2>
+          <button id="btn-diff-analyze" class="btn btn-primary">Compare</button>
+        </div>
+        <div class="diff-editors">
+          <div class="diff-editor-wrap">
+            <h3>Before</h3>
+            <div id="diff-editor-before"></div>
+          </div>
+          <div class="diff-editor-wrap">
+            <h3>After</h3>
+            <div id="diff-editor-after"></div>
+          </div>
+        </div>
+        <div id="diff-changes" class="diff-changes hidden"></div>
+        <div class="diff-results">
+          <div class="diff-result-panel">
+            <h3>Before: Ownership Flow</h3>
+            <div id="diff-log-before" class="log-entries"></div>
+          </div>
+          <div class="diff-result-panel">
+            <h3>After: Ownership Flow</h3>
+            <div id="diff-log-after" class="log-entries"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <script src="/app.js" type="module"></script>
+</body>
+</html>

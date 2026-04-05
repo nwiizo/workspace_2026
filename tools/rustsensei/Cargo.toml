@@ -1,0 +1,38 @@
+[package]
+name = "rustsensei"
+version = "0.1.0"
+edition = "2024"
+description = "Educational step-execution environment for Rust ownership visualization"
+license = "MIT"
+authors = ["nwiizo"]
+
+[dependencies]
+# Web framework
+axum = { version = "0.8", features = ["macros"] }
+tokio = { version = "1", features = ["full"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors", "trace", "fs"] }
+
+# AST parsing
+syn = { version = "2", features = ["full", "visit", "extra-traits"] }
+quote = "1"
+proc-macro2 = { version = "1", features = ["span-locations"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+
+# Error handling
+thiserror = "2"
+anyhow = "1"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Utilities
+tempfile = "3"
+
+[dev-dependencies]
+pretty_assertions = "1"

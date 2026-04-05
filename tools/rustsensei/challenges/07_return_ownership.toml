@@ -1,0 +1,47 @@
+id = "07_return_ownership"
+title = "関数からの所有権の返却"
+level = 2
+description = """
+関数は戻り値として所有権を返すことができます。
+これにより、関数内で作成した値を呼び出し元に渡すことができます。
+
+このコードをステップ実行して、所有権の流れを追ってみましょう。
+"""
+
+initial_code = """
+fn main() {
+    let s1 = gives_ownership();
+    let s2 = String::from("hello");
+    let s3 = takes_and_gives_back(s2);
+}
+
+fn gives_ownership() -> String {
+    String::from("yours")
+}
+
+fn takes_and_gives_back(a_string: String) -> String {
+    a_string
+}
+"""
+
+solution_code = """
+fn main() {
+    let s1 = gives_ownership();
+    let s2 = String::from("hello");
+    let s3 = takes_and_gives_back(s2);
+}
+
+fn gives_ownership() -> String {
+    String::from("yours")
+}
+
+fn takes_and_gives_back(a_string: String) -> String {
+    a_string
+}
+"""
+
+hints = [
+    "`gives_ownership()` は新しい `String` を作り、呼び出し元に所有権を移動します",
+    "`takes_and_gives_back(s2)` は `s2` の所有権を受け取り、そのまま返します",
+    "`s2` は関数に渡した後は使えませんが、`s3` に所有権が移動しています",
+]

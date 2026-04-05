@@ -1,0 +1,44 @@
+[package]
+name = "rustmorph"
+version = "0.1.0"
+edition = "2021"
+description = "MIR-based refactoring support tool for Rust — ownership-aware impact analysis"
+license = "MPL-2.0"
+
+[[bin]]
+name = "cargo-rustmorph"
+path = "src/main.rs"
+
+[lib]
+name = "rustmorph"
+path = "src/lib.rs"
+
+[dependencies]
+# AST parsing
+syn = { version = "2", features = ["full", "visit", "extra-traits"] }
+quote = "1"
+proc-macro2 = { version = "1", features = ["span-locations"] }
+
+# Graph
+petgraph = "0.7"
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# File traversal
+walkdir = "2"
+
+# Error handling
+thiserror = "2"
+anyhow = "1"
+
+# Terminal output
+colored = "3"
+
+[dev-dependencies]
+tempfile = "3"
+pretty_assertions = "1"

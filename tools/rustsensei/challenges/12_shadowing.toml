@@ -1,0 +1,31 @@
+id = "12_shadowing"
+title = "シャドーイングと所有権"
+level = 3
+description = """
+同じ名前の変数を再宣言（シャドーイング）できます。
+シャドーイングは新しい変数を作り、古い変数は隠されます。
+
+このコードで、シャドーイングによる所有権の変化を観察してみましょう。
+"""
+
+initial_code = """
+fn main() {
+    let s = String::from("hello");
+    let s = s.clone();
+    let s = String::from("world");
+}
+"""
+
+solution_code = """
+fn main() {
+    let s = String::from("hello");
+    let s = s.clone();
+    let s = String::from("world");
+}
+"""
+
+hints = [
+    "各 `let s = ...` は新しい変数を作成します",
+    "古い `s` はシャドーイングされますが、スコープ終了時にドロップされます",
+    "ドロップ順序は宣言の逆順です",
+]

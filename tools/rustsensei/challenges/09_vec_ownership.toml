@@ -1,0 +1,33 @@
+id = "09_vec_ownership"
+title = "Vec と所有権"
+level = 3
+description = """
+`Vec<T>` はヒープにデータを持つコレクションです。
+要素への参照を保持している間に Vec を変更すると危険です。
+
+このコードにはコンパイルエラーがあります。修正してみましょう。
+"""
+
+initial_code = """
+fn main() {
+    let mut v = vec![1, 2, 3, 4, 5];
+    let first = &v[0];
+    v.push(6);
+    println!("first: {}", first);
+}
+"""
+
+solution_code = """
+fn main() {
+    let mut v = vec![1, 2, 3, 4, 5];
+    let first = v[0];
+    v.push(6);
+    println!("first: {}", first);
+}
+"""
+
+hints = [
+    "`&v[0]` は Vec への共有参照を作ります",
+    "`v.push(6)` はメモリの再割り当てが起こる可能性があり、参照を無効にします",
+    "`i32` は Copy なので、`v[0]` で値をコピーすれば参照は不要になります",
+]

@@ -1,0 +1,31 @@
+id = "13_move_in_loop"
+title = "ループ内での所有権移動"
+level = 4
+description = """
+ループ内で所有権を消費する操作を行うと、2回目のイテレーションでエラーになります。
+借用やクローンを使って解決しましょう。
+
+このコードにはコンパイルエラーがあります。修正してみましょう。
+"""
+
+initial_code = """
+fn main() {
+    let message = String::from("hello");
+    let names = vec![String::from("Alice"), String::from("Bob")];
+    let greeting = format!("{}, {}", message, names[0]);
+}
+"""
+
+solution_code = """
+fn main() {
+    let message = String::from("hello");
+    let names = vec![String::from("Alice"), String::from("Bob")];
+    let greeting = format!("{}, {}", message, &names[0]);
+}
+"""
+
+hints = [
+    "各イテレーションで `message` の所有権が移動してしまいます",
+    "`&message` を使えば借用のみで所有権は移動しません",
+    "もしくは `.clone()` で各イテレーションにコピーを渡します",
+]

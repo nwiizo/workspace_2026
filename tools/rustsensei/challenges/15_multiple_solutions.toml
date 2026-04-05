@@ -1,0 +1,35 @@
+id = "15_multiple_solutions"
+title = "3通りの解決策"
+level = 5
+description = """
+総合問題: 以下のコードの所有権エラーを3通りの方法で解決してください。
+
+1. `.clone()` を使う方法
+2. 借用 `&` を使う方法
+3. スコープを変更する方法
+
+それぞれの方法でAnalyzeして、所有権フローの違いを比較してみましょう。
+「Diff」タブで修正前後の比較もできます。
+"""
+
+initial_code = """
+fn main() {
+    let data = String::from("important data");
+    let backup = data;
+    let processed = data;
+}
+"""
+
+solution_code = """
+fn main() {
+    let data = String::from("important data");
+    let backup = data.clone();
+    let processed = data;
+}
+"""
+
+hints = [
+    "方法1: `data.clone()` で複製してから移動",
+    "方法2: `let backup = &data;` で借用にする",
+    "方法3: `backup` の使用を完了させてから `data` を別の変数に移動する",
+]

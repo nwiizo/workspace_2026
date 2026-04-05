@@ -1,0 +1,32 @@
+id = "05_scope_drop"
+title = "スコープと Drop"
+level = 3
+description = """
+Rust の値はスコープを抜けると自動的に Drop（破棄）されます。
+Drop の順番は変数宣言の逆順（LIFO）です。
+
+このコードのステップ実行で、変数がどの順番で破棄されるか観察してみましょう。
+「Analyze」ボタンを押してステップ実行してください。
+"""
+
+initial_code = """
+fn main() {
+    let first = String::from("I was created first");
+    let second = String::from("I was created second");
+    let third = String::from("I was created third");
+}
+"""
+
+solution_code = """
+fn main() {
+    let first = String::from("I was created first");
+    let second = String::from("I was created second");
+    let third = String::from("I was created third");
+}
+"""
+
+hints = [
+    "Rust では変数は宣言の逆順で破棄されます",
+    "third → second → first の順番で Drop されます",
+    "これはスタックのLIFO（後入れ先出し）の性質と一致します",
+]

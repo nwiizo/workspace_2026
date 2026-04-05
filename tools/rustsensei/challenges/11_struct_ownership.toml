@@ -1,0 +1,31 @@
+id = "11_struct_ownership"
+title = "構造体と所有権"
+level = 3
+description = """
+構造体がStringなどの非Copy型フィールドを持つ場合、
+構造体自体の移動はフィールドの所有権も移動させます。
+
+このコードで構造体の所有権移動を観察してみましょう。
+"""
+
+initial_code = """
+fn main() {
+    let name = String::from("Alice");
+    let greeting = String::from("Hello");
+    let combined = format!("{}, {}!", greeting, name);
+}
+"""
+
+solution_code = """
+fn main() {
+    let name = String::from("Alice");
+    let greeting = String::from("Hello");
+    let combined = format!("{}, {}!", greeting, name);
+}
+"""
+
+hints = [
+    "構造体の各フィールドが独立して所有権を持ちます",
+    "構造体を移動すると、全フィールドの所有権が一緒に移動します",
+    "特定のフィールドだけ移動させることも可能です（部分移動）",
+]

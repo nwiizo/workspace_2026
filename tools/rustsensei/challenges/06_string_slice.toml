@@ -1,0 +1,31 @@
+id = "06_string_slice"
+title = "文字列スライスと所有権"
+level = 2
+description = """
+`&str` は `String` への参照（スライス）です。
+`String` から `&str` を取得するのは借用であり、元の `String` が有効な間だけ使えます。
+
+このコードでステップ実行して、`&str` と `String` の関係を観察してみましょう。
+"""
+
+initial_code = """
+fn main() {
+    let s = String::from("hello world");
+    let hello = &s[0..5];
+    let world = &s[6..11];
+}
+"""
+
+solution_code = """
+fn main() {
+    let s = String::from("hello world");
+    let hello = &s[0..5];
+    let world = &s[6..11];
+}
+"""
+
+hints = [
+    "`hello` と `world` は `s` からの共有参照（スライス）です",
+    "参照はスコープ終了時に自動的に破棄されます",
+    "`s` が先にドロップされると参照は無効になるため、Rustは逆順でドロップします",
+]

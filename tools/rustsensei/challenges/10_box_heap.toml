@@ -1,0 +1,31 @@
+id = "10_box_heap"
+title = "Box とヒープ割り当て"
+level = 3
+description = """
+`Box<T>` はヒープにデータを確保するスマートポインタです。
+所有権のルールは通常の変数と同じです。
+
+このコードで Box の所有権の移動を観察してみましょう。
+"""
+
+initial_code = """
+fn main() {
+    let b1 = Box::new(42);
+    let b2 = b1;
+    println!("{}", b2);
+}
+"""
+
+solution_code = """
+fn main() {
+    let b1 = Box::new(42);
+    let b2 = b1;
+    println!("{}", b2);
+}
+"""
+
+hints = [
+    "`Box<T>` は Copy を実装していないため、代入は移動になります",
+    "`b1` は移動後に使えなくなります",
+    "ヒープ上のデータの所有者が `b1` から `b2` に変わります",
+]

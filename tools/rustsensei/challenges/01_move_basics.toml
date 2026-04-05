@@ -1,0 +1,31 @@
+id = "01_move_basics"
+title = "Move の基本"
+level = 1
+description = """
+Rust では、非Copyな型（String, Vec など）の値を別の変数に代入すると、
+所有権が「移動（move）」します。移動後の変数は使えなくなります。
+
+このコードにはuse-after-moveのバグがあります。修正してみましょう。
+"""
+
+initial_code = """
+fn main() {
+    let s = String::from("hello");
+    let t = s;
+    println!("{}", s);
+}
+"""
+
+solution_code = """
+fn main() {
+    let s = String::from("hello");
+    let t = s.clone();
+    println!("{}", s);
+}
+"""
+
+hints = [
+    "変数 `s` は `let t = s;` の時点で所有権を失っています",
+    "`s` の値をコピーしたい場合は `.clone()` を使います",
+    "`let t = s.clone();` とすると、`s` も `t` も独立した String を持ちます",
+]

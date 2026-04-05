@@ -1,0 +1,34 @@
+id = "03_mut_borrow"
+title = "可変借用のルール"
+level = 2
+description = """
+`&mut x` で可変参照（書き込み可能な借用）を作れます。
+ただし、同時に存在できる可変参照は1つだけです。
+
+このコードには2つの `&mut` が同時に存在するバグがあります。修正してみましょう。
+"""
+
+initial_code = """
+fn main() {
+    let mut s = String::from("hello");
+    let r1 = &mut s;
+    let r2 = &mut s;
+    println!("{}, {}", r1, r2);
+}
+"""
+
+solution_code = """
+fn main() {
+    let mut s = String::from("hello");
+    let r1 = &mut s;
+    println!("{}", r1);
+    let r2 = &mut s;
+    println!("{}", r2);
+}
+"""
+
+hints = [
+    "Rust では同じ変数への `&mut` 参照は1つしか同時に存在できません",
+    "`r1` のスコープが終わってから `r2` を作ると解決します",
+    "NLL（Non-Lexical Lifetimes）により、最後の使用箇所でライフタイムが終了します",
+]

@@ -1,0 +1,36 @@
+id = "08_multiple_refs"
+title = "複数の共有参照"
+level = 2
+description = """
+共有参照（`&T`）は同時に何個でも作れます。
+ただし、共有参照が存在する間は可変参照（`&mut T`）を作れません。
+
+このコードにはバグがあります。修正してみましょう。
+"""
+
+initial_code = """
+fn main() {
+    let mut s = String::from("hello");
+    let r1 = &s;
+    let r2 = &s;
+    let r3 = &mut s;
+    println!("{} {} {}", r1, r2, r3);
+}
+"""
+
+solution_code = """
+fn main() {
+    let mut s = String::from("hello");
+    let r1 = &s;
+    let r2 = &s;
+    println!("{} {}", r1, r2);
+    let r3 = &mut s;
+    println!("{}", r3);
+}
+"""
+
+hints = [
+    "共有参照と可変参照は同時に存在できません",
+    "NLLにより、`r1` と `r2` の最後の使用箇所の後であれば `&mut` を作れます",
+    "`println!` の呼び出しを分けて、共有参照の使用を先に完了させましょう",
+]

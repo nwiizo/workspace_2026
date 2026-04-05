@@ -1,0 +1,40 @@
+id = "02_borrow_ref"
+title = "借用（共有参照）の基本"
+level = 1
+description = """
+所有権を移動させずに値を参照するには、借用（borrow）を使います。
+`&x` で共有参照（読み取り専用）を作成できます。
+
+このコードでは関数に値を渡す際にmoveしてしまっています。
+借用を使って修正してみましょう。
+"""
+
+initial_code = """
+fn main() {
+    let s = String::from("hello");
+    let len = calculate_length(s);
+    println!("'{}' の長さは {} です", s, len);
+}
+
+fn calculate_length(s: String) -> usize {
+    s.len()
+}
+"""
+
+solution_code = """
+fn main() {
+    let s = String::from("hello");
+    let len = calculate_length(&s);
+    println!("'{}' の長さは {} です", s, len);
+}
+
+fn calculate_length(s: &String) -> usize {
+    s.len()
+}
+"""
+
+hints = [
+    "`calculate_length(s)` は `s` の所有権を奪ってしまいます",
+    "関数に所有権を渡さず参照だけ渡すには `&s` と書きます",
+    "関数の引数型も `String` から `&String` に変更が必要です",
+]

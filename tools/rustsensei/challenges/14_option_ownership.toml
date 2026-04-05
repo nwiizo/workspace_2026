@@ -1,0 +1,32 @@
+id = "14_option_ownership"
+title = "Option と所有権"
+level = 4
+description = """
+`Option<T>` は `Some(T)` または `None` を持ちます。
+`.unwrap()` や `match` で中の値を取り出すと所有権が移動します。
+`.as_ref()` を使えば参照を取得できます。
+
+このコードで Option からの所有権取得を観察してみましょう。
+"""
+
+initial_code = """
+fn main() {
+    let name = Some(String::from("Alice"));
+    let greeting = String::from("Hello");
+    let combined = format!("{}, {:?}", greeting, name);
+}
+"""
+
+solution_code = """
+fn main() {
+    let name = Some(String::from("Alice"));
+    let greeting = String::from("Hello");
+    let combined = format!("{}, {:?}", greeting, name);
+}
+"""
+
+hints = [
+    "`Option<String>` は `String` の所有権を持ちます",
+    "`.unwrap()` は `Option` から値の所有権を取り出します（moveが発生）",
+    "`.as_ref()` で `Option<&String>` に変換すれば借用だけで済みます",
+]

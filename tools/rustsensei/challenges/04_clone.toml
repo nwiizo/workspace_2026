@@ -1,0 +1,52 @@
+id = "04_clone"
+title = "Clone の使いどころ"
+level = 2
+description = """
+`.clone()` は値の深いコピーを作ります。moveを避けたいが参照では不十分な場合に使います。
+
+ただし clone にはコストがあります。本当に必要な場合にだけ使いましょう。
+
+このコードでは関数に値を渡した後も使いたい場面です。修正してみましょう。
+"""
+
+initial_code = """
+fn main() {
+    let name = String::from("Rust");
+    let greeting = make_greeting(name);
+    let farewell = make_farewell(name);
+    println!("{}", greeting);
+    println!("{}", farewell);
+}
+
+fn make_greeting(name: String) -> String {
+    String::from("Hello, ") + &name
+}
+
+fn make_farewell(name: String) -> String {
+    String::from("Goodbye, ") + &name
+}
+"""
+
+solution_code = """
+fn main() {
+    let name = String::from("Rust");
+    let greeting = make_greeting(name.clone());
+    let farewell = make_farewell(name);
+    println!("{}", greeting);
+    println!("{}", farewell);
+}
+
+fn make_greeting(name: String) -> String {
+    String::from("Hello, ") + &name
+}
+
+fn make_farewell(name: String) -> String {
+    String::from("Goodbye, ") + &name
+}
+"""
+
+hints = [
+    "`make_greeting(name)` の呼び出しで `name` の所有権が移動してしまいます",
+    "最初の呼び出しで `.clone()` を使えば、2回目の呼び出しにも `name` を使えます",
+    "最後の使用箇所では clone は不要です（moveで十分）",
+]
