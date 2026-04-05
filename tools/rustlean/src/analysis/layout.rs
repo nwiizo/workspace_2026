@@ -5,17 +5,19 @@ use rustc_middle::mir::{BasicBlock, Body};
 use rustc_middle::ty::{self, TyCtxt};
 use rustc_span::def_id::DefId;
 
-use crate::analysis::{AnalysisPass, Diagnostic, DiagnosticKind, Location, Severity};
-use crate::config::Thresholds;
+use crate::analysis::{AnalysisPass, Diagnostic, DiagnosticKind, Severity, location_from_span};
+use crate::config::{CostWeights, Thresholds};
 
 pub struct LayoutAnalysis {
     thresholds: Thresholds,
+    weights: CostWeights,
 }
 
 impl LayoutAnalysis {
-    pub fn new(thresholds: &Thresholds) -> Self {
+    pub fn new(thresholds: &Thresholds, weights: &CostWeights) -> Self {
         Self {
             thresholds: thresholds.clone(),
+            weights: weights.clone(),
         }
     }
 }
@@ -53,13 +55,10 @@ impl<'tcx> AnalysisPass<'tcx> for LayoutAnalysis {
                 };
 
                 let size = layout.size.bytes() as usize;
+                let span = local_decl.source_info.span;
 
                 // Large struct warning
                 if size > self.thresholds.large_struct_bytes {
-                    let span = local_decl.source_info.span;
-                    let source_map = tcx.sess.source_map();
-                    let lo = source_map.lookup_char_pos(span.lo());
-
                     diagnostics.push(Diagnostic {
                         kind: DiagnosticKind::LargeStructMove,
                         severity: Severity::Warning,
@@ -71,13 +70,9 @@ impl<'tcx> AnalysisPass<'tcx> for LayoutAnalysis {
                             "Wrap in `Box<{}>` to avoid large stack moves",
                             tcx.def_path_str(adt_def.did())
                         )),
-                        location: Location {
-                            file: lo.file.name.prefer_local_unconditionally().to_string(),
-                            line: lo.line as u32,
-                            column: lo.col_display as u32,
-                            function: fn_name.clone(),
-                        },
-                        base_cost: size as f64 / self.thresholds.large_struct_bytes as f64 * 5.0,
+                        location: location_from_span(tcx, span, &fn_name),
+                        base_cost: self.weights.large_struct_move
+                            * (size as f64 / self.thresholds.large_struct_bytes as f64),
                         in_loop: false,
                     });
                 }
@@ -104,10 +99,6 @@ impl<'tcx> AnalysisPass<'tcx> for LayoutAnalysis {
                         let waste_pct = (waste as f64 / actual_size as f64) * 100.0;
 
                         if waste_pct > self.thresholds.padding_waste_percent {
-                            let span = local_decl.source_info.span;
-                            let source_map = tcx.sess.source_map();
-                            let lo = source_map.lookup_char_pos(span.lo());
-
                             diagnostics.push(Diagnostic {
                                 kind: DiagnosticKind::PaddingWaste,
                                 severity: Severity::Info,
@@ -118,13 +109,8 @@ impl<'tcx> AnalysisPass<'tcx> for LayoutAnalysis {
                                 suggestion: Some(
                                     "Consider reordering fields by descending alignment to reduce padding".into()
                                 ),
-                                location: Location {
-                                    file: lo.file.name.prefer_local_unconditionally().to_string(),
-                                    line: lo.line as u32,
-                                    column: lo.col_display as u32,
-                                    function: fn_name.clone(),
-                                },
-                                base_cost: waste as f64,
+                                location: location_from_span(tcx, span, &fn_name),
+                                base_cost: waste as f64 * self.weights.padding_waste_per_byte,
                                 in_loop: false,
                             });
                         }

@@ -48,7 +48,7 @@ fn main() -> ExitCode {
     if args.len() > 1 {
         let second_arg = &args[1];
         if second_arg.ends_with("rustc")
-            || second_arg.contains("rustc") && !second_arg.starts_with("-")
+            || (second_arg.contains("rustc") && !second_arg.starts_with("-"))
         {
             args.remove(1);
         }

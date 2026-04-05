@@ -9,6 +9,7 @@ use std::collections::HashSet;
 use rustc_hir::def_id::LocalDefId;
 use rustc_middle::mir::{BasicBlock, Body};
 use rustc_middle::ty::TyCtxt;
+use rustc_span::Span;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Diagnostic {
@@ -24,7 +25,6 @@ pub struct Diagnostic {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 pub enum DiagnosticKind {
     UnnecessaryClone,
-    CloneToBorrow,
     HeapAllocation,
     AllocationInLoop,
     VecReallocRisk,
@@ -68,6 +68,20 @@ pub fn resolve_location(
     }
 }
 
+/// Resolve a source location from a span and function name.
+/// Used by layout analysis where BasicBlock is not available.
+pub fn location_from_span(tcx: TyCtxt<'_>, span: Span, function: &str) -> Location {
+    let source_map = tcx.sess.source_map();
+    let lo = source_map.lookup_char_pos(span.lo());
+
+    Location {
+        file: lo.file.name.prefer_local_unconditionally().to_string(),
+        line: lo.line as u32,
+        column: lo.col_display as u32,
+        function: function.to_string(),
+    }
+}
+
 pub trait AnalysisPass<'tcx> {
     fn name(&self) -> &'static str;
 
@@ -84,7 +98,6 @@ impl std::fmt::Display for DiagnosticKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::UnnecessaryClone => write!(f, "unnecessary-clone"),
-            Self::CloneToBorrow => write!(f, "clone-to-borrow"),
             Self::HeapAllocation => write!(f, "heap-alloc"),
             Self::AllocationInLoop => write!(f, "alloc-in-loop"),
             Self::VecReallocRisk => write!(f, "vec-realloc"),

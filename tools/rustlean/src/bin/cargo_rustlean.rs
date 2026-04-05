@@ -56,23 +56,18 @@ fn main() -> ExitCode {
     cmd.env("RUSTC_WRAPPER", &driver);
 
     // Set dynamic library path for rustc_private linking
-    if cfg!(target_os = "macos") {
-        let existing = env::var("DYLD_LIBRARY_PATH").unwrap_or_default();
-        let new_path = if existing.is_empty() {
-            lib_dir.display().to_string()
-        } else {
-            format!("{}:{existing}", lib_dir.display())
-        };
-        cmd.env("DYLD_LIBRARY_PATH", new_path);
+    let lib_path_var = if cfg!(target_os = "macos") {
+        "DYLD_LIBRARY_PATH"
     } else {
-        let existing = env::var("LD_LIBRARY_PATH").unwrap_or_default();
-        let new_path = if existing.is_empty() {
-            lib_dir.display().to_string()
-        } else {
-            format!("{}:{existing}", lib_dir.display())
-        };
-        cmd.env("LD_LIBRARY_PATH", new_path);
-    }
+        "LD_LIBRARY_PATH"
+    };
+    let existing = env::var(lib_path_var).unwrap_or_default();
+    let new_path = if existing.is_empty() {
+        lib_dir.display().to_string()
+    } else {
+        format!("{}:{existing}", lib_dir.display())
+    };
+    cmd.env(lib_path_var, new_path);
 
     // Pass config path if provided
     if let Some(config_path) = &args.config {

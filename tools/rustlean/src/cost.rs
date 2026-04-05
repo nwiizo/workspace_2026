@@ -78,10 +78,8 @@ pub fn compute_scores(diagnostics: &[Diagnostic], weights: &CostWeights) -> Proj
         *by_kind.entry(diag.kind.to_string()).or_default() += 1;
     }
 
-    let functions_with_diagnostics = function_scores
-        .iter()
-        .filter(|f| f.diagnostic_count > 0)
-        .count();
+    // All entries in function_scores have at least 1 diagnostic by construction
+    let functions_with_diagnostics = function_scores.len();
 
     ProjectScore {
         total_score,

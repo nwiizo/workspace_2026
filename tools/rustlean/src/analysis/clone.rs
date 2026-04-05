@@ -70,12 +70,12 @@ impl CloneAnalysis {
                     };
 
                     // Visit statements
-                    for stmt in &block.statements {
+                    for (stmt_idx, stmt) in block.statements.iter().enumerate() {
                         finder.visit_statement(
                             stmt,
                             rustc_middle::mir::Location {
                                 block: next_bb,
-                                statement_index: 0,
+                                statement_index: stmt_idx,
                             },
                         );
                         if finder.found_use {

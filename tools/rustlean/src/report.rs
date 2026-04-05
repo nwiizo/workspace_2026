@@ -3,6 +3,7 @@ use crate::config::OutputFormat;
 use crate::cost::ProjectScore;
 use crate::error::Result;
 
+#[derive(serde::Serialize)]
 pub struct AnalysisReport {
     pub crate_name: String,
     pub diagnostics: Vec<Diagnostic>,
@@ -76,20 +77,5 @@ impl AnalysisReport {
 
     fn render_json(&self) -> Result<String> {
         Ok(serde_json::to_string_pretty(self)?)
-    }
-}
-
-// Manual Serialize for AnalysisReport since it contains the full data
-impl serde::Serialize for AnalysisReport {
-    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        use serde::ser::SerializeStruct;
-        let mut state = serializer.serialize_struct("AnalysisReport", 3)?;
-        state.serialize_field("crate_name", &self.crate_name)?;
-        state.serialize_field("diagnostics", &self.diagnostics)?;
-        state.serialize_field("score", &self.score)?;
-        state.end()
     }
 }

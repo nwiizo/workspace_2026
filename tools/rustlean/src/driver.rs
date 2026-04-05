@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
 use rustc_driver::Compilation;
@@ -9,7 +10,7 @@ use crate::analysis::alloc::AllocAnalysis;
 use crate::analysis::clone::CloneAnalysis;
 use crate::analysis::layout::LayoutAnalysis;
 use crate::analysis::loops::detect_loop_blocks;
-use crate::analysis::{AnalysisPass, Diagnostic};
+use crate::analysis::{AnalysisPass, Diagnostic, DiagnosticKind};
 use crate::config::RustLeanConfig;
 
 pub struct RustLeanCallbacks {
@@ -38,9 +39,13 @@ impl rustc_driver::Callbacks for RustLeanCallbacks {
         let passes: Vec<Box<dyn AnalysisPass<'tcx>>> = vec![
             Box::new(CloneAnalysis::new(&self.config.cost_weights)),
             Box::new(AllocAnalysis::new(&self.config.cost_weights)),
-            Box::new(LayoutAnalysis::new(&self.config.thresholds)),
+            Box::new(LayoutAnalysis::new(
+                &self.config.thresholds,
+                &self.config.cost_weights,
+            )),
         ];
 
+        let ignore_patterns = &self.config.ignore_paths;
         let mut all_diagnostics = Vec::new();
 
         for local_def_id in tcx.hir_body_owners() {
@@ -57,7 +62,6 @@ impl rustc_driver::Callbacks for RustLeanCallbacks {
                 continue;
             }
 
-            // Check if MIR is available for this item
             if !tcx.is_mir_available(local_def_id) {
                 continue;
             }
@@ -70,6 +74,28 @@ impl rustc_driver::Callbacks for RustLeanCallbacks {
                 all_diagnostics.append(&mut diags);
             }
         }
+
+        // Filter by ignore_paths
+        if !ignore_patterns.is_empty() {
+            all_diagnostics.retain(|d| {
+                !ignore_patterns
+                    .iter()
+                    .any(|pat| d.location.file.contains(pat.trim_matches('*')))
+            });
+        }
+
+        // Deduplicate layout diagnostics (same kind + same message across functions)
+        let mut seen_layout: HashSet<(DiagnosticKind, String)> = HashSet::new();
+        all_diagnostics.retain(|d| {
+            if matches!(
+                d.kind,
+                DiagnosticKind::LargeStructMove | DiagnosticKind::PaddingWaste
+            ) {
+                seen_layout.insert((d.kind, d.message.clone()))
+            } else {
+                true
+            }
+        });
 
         if let Ok(mut locked) = self.diagnostics.lock() {
             locked.append(&mut all_diagnostics);

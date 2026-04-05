@@ -86,7 +86,8 @@ impl AllocAnalysis {
                 return Some(AllocKind::BoxNew);
             }
             if path.contains("Vec") {
-                if path.contains("new") || path.contains("with_capacity") {
+                // Skip with_capacity — it's a best practice, not a problem
+                if path.contains("new") && !path.contains("with_capacity") {
                     return Some(AllocKind::VecNew);
                 }
                 if path.contains("push") {
