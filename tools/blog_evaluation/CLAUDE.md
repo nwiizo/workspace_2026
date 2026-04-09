@@ -4,10 +4,10 @@
 
 ブログ記事評価プロンプト v2.3
 
-## コマンド
+## 使い方
 
 ```
-/evaluate [ファイルパス]
+/blog-evaluate [ファイルパス]
 ```
 
 ## 評価観点（7つ）
@@ -32,3 +32,5 @@
 ## ファイル
 
 - `evaluation-prompt.md` - 詳細な評価基準
+- `.claude/skills/blog-evaluate/SKILL.md` - Skill定義
+- `.claude/commands/evaluate.md` - Command定義（レガシー）

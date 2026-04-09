@@ -8,7 +8,7 @@
 
 | ディレクトリ | 内容 |
 |-------------|------|
-| `blog_evaluation/` | ブログ記事評価プロンプト v2.2 |
+| `blog_evaluation/` | ブログ記事評価プロンプト v2.3 |
 | `memory_optimizer/` | CLAUDE.md 最適化ツール |
 | `rust-sql-anti-pattern/` | SQLアンチパターン検証コード（Rust） |
 | `vigil/` | セキュリティ監査ツールキット（Opus 4.6 セマンティック分析、OWASP Top 10、Web シェル検出） |
@@ -22,7 +22,7 @@
 
 ```
 # blog_evaluation/
-/evaluate [ファイルパス]
+/blog-evaluate [ファイルパス]
 
 # memory_optimizer/
 /optimize [ファイルパス]
