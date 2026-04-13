@@ -1,0 +1,103 @@
+name: "E-Commerce Platform"
+version: "1.0"
+
+components:
+  - id: api-gateway
+    name: "API Gateway"
+    type: gateway
+    redundancy: 2
+    failure_probability: 0.001
+    recovery_time_seconds: 30
+
+  - id: user-service
+    name: "User Service"
+    type: service
+    redundancy: 3
+    failure_probability: 0.005
+    recovery_time_seconds: 60
+
+  - id: order-service
+    name: "Order Service"
+    type: service
+    redundancy: 2
+    failure_probability: 0.005
+    recovery_time_seconds: 90
+
+  - id: payment-gateway
+    name: "Payment Gateway"
+    type: external
+    redundancy: 1
+    failure_probability: 0.01
+    recovery_time_seconds: 600
+
+  - id: postgres-primary
+    name: "PostgreSQL Primary"
+    type: database
+    redundancy: 1
+    failure_probability: 0.002
+    recovery_time_seconds: 300
+
+  - id: redis-cache
+    name: "Redis Cache"
+    type: cache
+    redundancy: 2
+    failure_probability: 0.003
+    recovery_time_seconds: 30
+
+  - id: rabbitmq
+    name: "RabbitMQ"
+    type: queue
+    redundancy: 3
+    failure_probability: 0.002
+    recovery_time_seconds: 120
+
+  - id: notification-service
+    name: "Notification Service"
+    type: service
+    redundancy: 2
+    failure_probability: 0.005
+    recovery_time_seconds: 60
+
+dependencies:
+  - from: api-gateway
+    to: user-service
+    type: sync
+    criticality: critical
+
+  - from: api-gateway
+    to: order-service
+    type: sync
+    criticality: critical
+
+  - from: user-service
+    to: postgres-primary
+    type: sync
+    criticality: critical
+
+  - from: order-service
+    to: postgres-primary
+    type: sync
+    criticality: critical
+
+  - from: order-service
+    to: payment-gateway
+    type: sync
+    criticality: critical
+    has_retry: true
+    timeout_seconds: 5.0
+
+  - from: user-service
+    to: redis-cache
+    type: sync
+    criticality: low
+    has_fallback: true
+
+  - from: order-service
+    to: rabbitmq
+    type: async
+    criticality: medium
+
+  - from: notification-service
+    to: rabbitmq
+    type: event_driven
+    criticality: medium

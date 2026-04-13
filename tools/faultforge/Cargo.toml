@@ -1,0 +1,28 @@
+[package]
+name = "faultforge"
+version = "0.1.0"
+edition = "2021"
+description = "Simulation-based infrastructure resilience analysis — cascade failure modeling, SPOF detection, blast radius analysis"
+license = "MIT"
+
+[lib]
+name = "faultforge"
+path = "src/lib.rs"
+
+[[bin]]
+name = "faultforge"
+path = "src/main.rs"
+
+[dependencies]
+petgraph = "0.7"
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yml = "0.0.12"
+thiserror = "2"
+anyhow = "1"
+colored = "3"
+
+[dev-dependencies]
+tempfile = "3"
+pretty_assertions = "1"
