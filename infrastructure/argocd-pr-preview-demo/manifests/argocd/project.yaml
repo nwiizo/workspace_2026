@@ -1,0 +1,25 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: previews
+  namespace: argocd
+spec:
+  description: Pull request preview environments on Kind
+  sourceRepos:
+    - git://git-mirror.git-mirror.svc.cluster.local/argocd-pr-preview-demo-mirror.git
+    - https://github.com/your-org/your-gitops-mirror.git
+  destinations:
+    - namespace: "pr-*"
+      server: https://kubernetes.default.svc
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
+  namespaceResourceWhitelist:
+    - group: ""
+      kind: ConfigMap
+    - group: ""
+      kind: Service
+    - group: apps
+      kind: Deployment
+    - group: networking.k8s.io
+      kind: Ingress

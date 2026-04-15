@@ -1,0 +1,45 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: git-mirror
+  namespace: git-mirror
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: git-mirror
+  template:
+    metadata:
+      labels:
+        app: git-mirror
+    spec:
+      containers:
+        - name: git-daemon
+          image: alpine:3.21
+          command:
+            - sh
+            - -ec
+            - |
+              apk add --no-cache git git-daemon >/dev/null
+              git config --global --add safe.directory '*'
+              exec git daemon \
+                --reuseaddr \
+                --base-path=/git \
+                --export-all \
+                --verbose \
+                --informative-errors \
+                --listen=0.0.0.0 \
+                --port=9418 \
+                /git
+          ports:
+            - containerPort: 9418
+              name: git
+          volumeMounts:
+            - name: git-data
+              mountPath: /git
+              readOnly: true
+      volumes:
+        - name: git-data
+          hostPath:
+            path: /var/local/git-mirror
+            type: DirectoryOrCreate

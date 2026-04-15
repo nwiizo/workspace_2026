@@ -1,0 +1,82 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: pr-previews
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions:
+    - missingkey=error
+  generators:
+    - git:
+        repoURL: git://git-mirror.git-mirror.svc.cluster.local/argocd-pr-preview-demo-mirror.git
+        revision: main
+        requeueAfterSeconds: 20
+        files:
+          - path: preview-metadata/*.yaml
+        values:
+          previewId: 'pr-{{ .prNumber }}'
+          host: 'pr-{{ .prNumber }}.preview.localtest.me'
+          frontendImage: 'nginx:1.29-alpine'
+          backendImage: 'hashicorp/http-echo:1.0.0'
+  template:
+    metadata:
+      name: '{{ .values.previewId }}'
+      finalizers:
+        - resources-finalizer.argocd.argoproj.io
+      labels:
+        argocd-preview-demo/type: pr-preview
+        argocd-preview-demo/id: '{{ .values.previewId }}'
+    spec:
+      project: previews
+      source:
+        repoURL: git://git-mirror.git-mirror.svc.cluster.local/argocd-pr-preview-demo-mirror.git
+        targetRevision: main
+        path: base/app
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: '{{ .values.previewId }}'
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - ApplyOutOfSyncOnly=true
+  templatePatch: |
+    spec:
+      source:
+        kustomize:
+          namespace: '{{ .values.previewId }}'
+          commonLabels:
+            argocd-preview-demo/id: '{{ .values.previewId }}'
+            argocd-preview-demo/commit-sha: '{{ .commitSha }}'
+          images:
+            - 'nginx={{ .values.frontendImage }}'
+            - 'hashicorp/http-echo={{ .values.backendImage }}'
+          patches:
+            - target:
+                kind: Namespace
+                name: preview
+              patch: |-
+                - op: replace
+                  path: /metadata/name
+                  value: {{ .values.previewId | quote }}
+                - op: add
+                  path: /metadata/labels
+                  value:
+                    argocd-preview-demo/id: {{ .values.previewId | quote }}
+                    argocd-preview-demo/pr-number: {{ .prNumber | quote }}
+            - target:
+                kind: Ingress
+                name: preview
+              patch: |-
+                - op: replace
+                  path: /spec/rules/0/host
+                  value: {{ .values.host | quote }}
+            - target:
+                kind: Deployment
+                name: backend
+              patch: |-
+                - op: replace
+                  path: /spec/template/spec/containers/0/args/1
+                  value: {{ printf "-text=preview=%s commit=%s" .values.previewId .commitSha | quote }}
