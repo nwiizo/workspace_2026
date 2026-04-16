@@ -380,8 +380,16 @@ contests/**/*.exe
 # Codeforces specific
 **/cf_*_test/
 
+# Claude Code local state
+.claude/settings.local.json
+**/.claude/settings.local.json
+.claude/agents/
+**/.claude/agents/
+.claude/logs/
+**/.claude/logs/
+
 # Codex local state
-.codex/
-**/.codex/
-.agents/
-**/.agents/
+.codex/*
+**/.codex/*
+.agents/*
+**/.agents/*
