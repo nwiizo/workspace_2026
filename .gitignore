@@ -393,3 +393,8 @@ contests/**/*.exe
 **/.codex/*
 .agents/*
 **/.agents/*
+
+# Conference CFP drafts (private until submitted)
+**/cfp/*.md
+!**/cfp/README.md
+!**/cfp/CLAUDE.md
