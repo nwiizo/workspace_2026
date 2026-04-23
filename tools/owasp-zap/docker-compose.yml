@@ -1,0 +1,50 @@
+name: owasp-zap-lab
+
+services:
+  vulnerable-app:
+    build:
+      context: ./vulnerable-app
+    ports:
+      - "127.0.0.1:${APP_PORT:-18080}:5000"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "curl",
+          "-fsS",
+          "http://127.0.0.1:5000/health",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+
+  fixed-app:
+    build:
+      context: ./fixed-app
+    ports:
+      - "127.0.0.1:${FIXED_APP_PORT:-18081}:5000"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "curl",
+          "-fsS",
+          "http://127.0.0.1:5000/health",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+
+  zap:
+    image: ghcr.io/zaproxy/zaproxy:stable
+    profiles:
+      - scan
+    depends_on:
+      vulnerable-app:
+        condition: service_healthy
+    working_dir: /zap/wrk
+    volumes:
+      - ./zap:/zap/conf:ro
+      - ./reports:/zap/wrk:rw

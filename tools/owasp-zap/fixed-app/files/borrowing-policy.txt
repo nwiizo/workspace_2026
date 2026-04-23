@@ -1,0 +1,3 @@
+Books are loaned for 14 days.
+Renewals are allowed when no other patron has placed a hold.
+
