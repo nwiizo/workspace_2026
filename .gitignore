@@ -310,6 +310,9 @@ blogs/*
 # Blog companion code (ブログ記事のサンプルコード - 作業用)
 samples/hotreload-rs/
 
+# Third-party book companion code (作業用ローカル検証スペース・公開不可)
+samples/infra-snippets/
+
 # Playwright MCP cache/screenshots
 .playwright-mcp/
 **/.playwright-mcp/
@@ -393,6 +396,8 @@ contests/**/*.exe
 **/.codex/*
 .agents/*
 **/.agents/*
+!.agents/skills/
+!.agents/skills/**
 
 # Conference CFP drafts (private until submitted)
 **/cfp/*.md
