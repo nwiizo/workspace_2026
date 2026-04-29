@@ -1,7 +1,7 @@
 ---
 name: self-review
 description: 手元のコード変更をセルフレビューし、指摘を批判的に評価した上で自動修正するループ。diff/staged/branch/PRを対象に複数レビューアを並列実行。
-argument-hint: [レビュー対象] [reviewer名]
+argument-hint: "[レビュー対象] [reviewer名]"
 ---
 
 以下の手順を順番に実行してください。
