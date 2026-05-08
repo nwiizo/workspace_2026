@@ -15,6 +15,7 @@
 | `wardley-quest/` | 戦略シミュレーションRPG（Wardley Mapping × DDD × Team Topologies、アドオン含む） |
 | `architecture-modernization-agents/` | アーキテクチャモダナイゼーション Claude Code サブエージェント群（11体、戦略〜移行まで） |
 | `rustlean/` | MIRベース最適化支援ツール（Clone/Copy削減、アロケーション検出、構造体レイアウト分析） |
+| `rbp-lint/` | rust-best-practices ルールを rowan/ra_ap_syntax で検査する Rust リンター（unwrap/expect/panic/dead_code/Arc::clone/tracing/SAFETY/秘密鍵を検出） |
 
 ## コマンド
 
