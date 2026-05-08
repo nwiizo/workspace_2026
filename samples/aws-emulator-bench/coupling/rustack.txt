@@ -1,0 +1,30 @@
+Analyzing project at '.'...
+Analysis complete: 512 files, 186 modules
+
+Balanced Coupling Analysis: ruststack
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Grade: C (Room for improvement) | Score: 0.83/1.00 | Modules: 186
+
+3-Dimensional Analysis:
+  Strength:   Contract 2% / Model 46% / Functional 39% / Intrusive 13%
+  Distance:   Same 13% / Different 35% / External 52%
+  Volatility: Low 100% / Medium 0% / High 0%
+
+Balance State:
+  ✅ High Cohesion (strong+close): 1302 (13%)
+  ✅ Loose Coupling (weak+far): 196 (2%)
+  🤔 Acceptable (strong+far+stable): 8269 (85%)
+
+Detected Issues:
+  🟠 High: 53 (should fix)
+  🟡 Medium: 949
+
+Top Priorities:
+  - [High] rustack-cli::main → 119 dependencies
+  - [High] rustack-s3-core::ops::multipart → 54 dependencies
+  - [High] rustack-events-core::provider → 88 dependencies
+
+Rust Patterns: Newtype usage: 6/395 (2%) - ⚠️ Low usage
+
+⚠️ Circular Dependencies: 5 cycles (7 modules)

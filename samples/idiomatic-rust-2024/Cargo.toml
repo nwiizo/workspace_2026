@@ -1,0 +1,49 @@
+[package]
+name = "idiomatic-rust-2024"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+publish = false
+description = "Idiomatic Rust (Manning, Brenden Matthews) のパターンを Rust 2024 edition で再構成した検証プロジェクト"
+
+[dependencies]
+thiserror = "2"
+itertools = "0.14"
+
+[lints.rust]
+unused_must_use = "deny"
+unsafe_op_in_unsafe_fn = "deny"
+elided_lifetimes_in_paths = "warn"
+missing_debug_implementations = "warn"
+unreachable_pub = "warn"
+
+[lints.clippy]
+all = { level = "warn", priority = -2 }
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+
+# 教科書サンプル特有の許容
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+must_use_candidate = "allow"
+module_name_repetitions = "allow"
+needless_doctest_main = "allow"
+
+# 2024 で特に効かせたいルール (idiomatic 寄り)
+unwrap_used = "deny"
+expect_used = "warn"
+panic = "warn"
+todo = "warn"
+unimplemented = "warn"
+dbg_macro = "warn"
+print_stderr = "warn"
+mem_forget = "warn"
+needless_pass_by_value = "warn"
+redundant_clone = "warn"
+inefficient_to_string = "warn"
+manual_let_else = "warn"
+match_wildcard_for_single_variants = "warn"
+single_match_else = "warn"
+explicit_iter_loop = "warn"
+items_after_statements = "warn"
+return_self_not_must_use = "warn"

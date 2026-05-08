@@ -1,0 +1,59 @@
+[package]
+name = "rust-types-as-walls"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "関数型まつり2026 公募セッション『型は壁、Rustでもバグを直すな、表現できなくせよ』のサンプルコード検証プロジェクト"
+
+[dependencies]
+thiserror = "2"
+chrono = { version = "0.4", features = ["serde"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+axum = "0.8.8"
+tokio = { version = "1.51.1", features = ["macros", "net", "rt-multi-thread", "sync"] }
+sqlx = { version = "0.8.6", default-features = false, features = ["runtime-tokio", "sqlite"] }
+tower = { version = "0.5.2", features = ["util"] }
+derive_more = { version = "2.1.1", features = ["as_ref", "display", "from"] }
+
+[dev-dependencies]
+proptest = "1.10.0"
+im-rc = "15.1.0"
+itertools = "0.14.0"
+rayon = "1.12.0"
+tap = "1.0.1"
+
+[lints.rust]
+unused_must_use = "deny"
+
+[lints.clippy]
+all = { level = "warn", priority = -3 }
+pedantic = { level = "warn", priority = -2 }
+nursery = { level = "warn", priority = -2 }
+missing_const_for_fn = "allow"
+missing_errors_doc = "allow"
+must_use_candidate = "allow"
+needless_pass_by_value = "allow"
+struct_field_names = "allow"
+too_many_lines = "allow"
+doc_markdown = "allow"
+unused_self = "allow"
+use_self = "allow"
+unwrap_used = "warn"
+expect_used = "warn"
+panic = "warn"
+shadow_reuse = "warn"
+shadow_same = "warn"
+shadow_unrelated = "warn"
+integer_division = "warn"
+float_arithmetic = "warn"
+as_conversions = "warn"
+exit = "warn"
+print_stderr = "warn"
+print_stdout = "warn"
+option_if_let_else = "warn"
+redundant_closure_for_method_calls = "warn"
+manual_map = "warn"
+map_unwrap_or = "warn"
+needless_collect = "warn"
+filter_map_next = "warn"

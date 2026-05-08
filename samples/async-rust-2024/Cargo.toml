@@ -1,0 +1,61 @@
+[package]
+name = "async-rust-2024"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+publish = false
+description = "Async Rust (O'Reilly, 2024) のサンプルコードを Rust 2024 edition で動かすための検証プロジェクト"
+
+# edition = "2024" は resolver = "3" を暗黙に有効化するが、
+# workspace 化したときの事故を避けるため明示しておく。
+[package.metadata]
+resolver-note = "edition 2024 implies resolver = \"3\""
+
+[dependencies]
+tokio = { version = "1.40", features = ["macros", "rt-multi-thread", "sync", "time"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+thiserror = "2"
+async-task = "4.7"
+flume = { version = "0.11", default-features = false, features = ["async"] }
+futures-lite = "2"
+
+[dev-dependencies]
+tokio = { version = "1.40", features = ["macros", "rt-multi-thread", "sync", "time", "test-util"] }
+
+[lints.rust]
+unused_must_use = "deny"
+unsafe_op_in_unsafe_fn = "deny"
+elided_lifetimes_in_paths = "warn"
+missing_debug_implementations = "warn"
+unreachable_pub = "warn"
+non_local_definitions = "warn"
+
+[lints.clippy]
+all = { level = "warn", priority = -2 }
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+
+# 教科書サンプル特有の許容
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+must_use_candidate = "allow"
+module_name_repetitions = "allow"
+
+# async / 2024 で特に効かせたいルール
+unwrap_used = "deny"
+expect_used = "warn"
+panic = "warn"
+todo = "warn"
+unimplemented = "warn"
+dbg_macro = "warn"
+print_stderr = "warn"
+mem_forget = "warn"
+mutex_atomic = "warn"
+await_holding_lock = "deny"
+await_holding_refcell_ref = "deny"
+unused_async = "warn"
+needless_pass_by_value = "warn"
+redundant_clone = "warn"
+inefficient_to_string = "warn"
+manual_async_fn = "warn"
+non_send_fields_in_send_ty = "warn"

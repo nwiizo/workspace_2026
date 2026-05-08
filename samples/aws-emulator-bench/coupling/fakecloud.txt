@@ -1,0 +1,30 @@
+Analyzing project at '.'...
+Analysis complete: 279 files, 175 modules
+
+Balanced Coupling Analysis: fakecloud
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Grade: C (Room for improvement) | Score: 0.87/1.00 | Modules: 175
+
+3-Dimensional Analysis:
+  Strength:   Contract 1% / Model 31% / Functional 59% / Intrusive 10%
+  Distance:   Same 16% / Different 18% / External 66%
+  Volatility: Low 100% / Medium 0% / High 0%
+
+Balance State:
+  ✅ High Cohesion (strong+close): 1419 (16%)
+  ✅ Loose Coupling (weak+far): 100 (1%)
+  🤔 Acceptable (strong+far+stable): 7487 (83%)
+
+Detected Issues:
+  🟠 High: 36 (should fix)
+  🟡 Medium: 194
+
+Top Priorities:
+  - [High] fakecloud::main → 76 dependencies
+  - [High] fakecloud-eventbridge::service → 53 dependencies
+  - [High] fakecloud-bedrock::service → 124 dependencies
+
+Rust Patterns: Newtype usage: 5/290 (2%) - ⚠️ Low usage
+
+⚠️ Circular Dependencies: 1 cycles (2 modules)

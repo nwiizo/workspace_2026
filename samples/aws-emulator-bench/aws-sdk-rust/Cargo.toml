@@ -1,0 +1,12 @@
+[package]
+name = "sdk-check"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+aws-config = "1"
+aws-sdk-s3 = "1"
+aws-sdk-sqs = "1"
+aws-credential-types = "1"
+tokio = { version = "1", features = ["full"] }
+anyhow = "1"
