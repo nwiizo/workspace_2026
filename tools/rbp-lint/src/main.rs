@@ -3,7 +3,7 @@ use std::process::ExitCode;
 
 use anyhow::Result;
 use clap::Parser;
-use rbp_lint::{lint_file, Diagnostic, Severity};
+use rbp_lint::{Config, Diagnostic, Severity, lint_file_with_config};
 use walkdir::WalkDir;
 
 #[derive(Parser, Debug)]
@@ -24,6 +24,10 @@ struct Cli {
     /// Treat warnings as errors (exit non-zero on any diagnostic).
     #[arg(long)]
     deny_warnings: bool,
+
+    /// Explicit path to a `.rbp-lint.toml` (overrides discovery).
+    #[arg(long)]
+    config: Option<PathBuf>,
 }
 
 #[derive(Copy, Clone, Debug, clap::ValueEnum)]
@@ -44,6 +48,22 @@ fn main() -> ExitCode {
 }
 
 fn run(cli: Cli) -> Result<ExitCode> {
+    let config = match &cli.config {
+        Some(p) => Config::from_file(p)?,
+        None => {
+            // Discover starting from the first target.
+            let start = cli
+                .paths
+                .first()
+                .map(PathBuf::as_path)
+                .unwrap_or_else(|| std::path::Path::new("."));
+            Config::discover(start)?
+        }
+    };
+    if let Some(p) = &config.source_path {
+        eprintln!("rbp-lint: using config {}", p.display());
+    }
+
     let mut all = Vec::new();
     for path in &cli.paths {
         if path.is_dir() {
@@ -52,11 +72,11 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 if entry.file_type().is_file()
                     && entry.path().extension().is_some_and(|e| e == "rs")
                 {
-                    all.extend(lint_file(entry.path())?);
+                    all.extend(lint_file_with_config(entry.path(), &config)?);
                 }
             }
         } else {
-            all.extend(lint_file(path)?);
+            all.extend(lint_file_with_config(path, &config)?);
         }
     }
 

@@ -4,10 +4,12 @@
 //! concrete syntax tree and reports violations of the conventions in
 //! `nwiizo/rust-best-practices`.
 
+pub mod config;
 pub mod diagnostic;
 pub mod lints;
 pub mod runner;
 
+pub use config::{Config, RuleSetting};
 pub use diagnostic::{Diagnostic, Severity};
-pub use lints::{all_lints, LintRule};
-pub use runner::{lint_file, lint_source};
+pub use lints::{LintRule, all_lints};
+pub use runner::{lint_file, lint_file_with_config, lint_source, lint_source_with_config};

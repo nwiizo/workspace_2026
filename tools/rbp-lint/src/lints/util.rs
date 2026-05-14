@@ -61,3 +61,32 @@ pub fn prev_meaningful_token(node: &SyntaxNode) -> Option<SyntaxToken> {
         }
     }
 }
+
+/// True if any of `comment_lines` is a `// rbp-lint-allow: <rule>[, <rule>...]`
+/// (synonyms `disable` / `ignore`) that names `rule_id` or `all`.
+pub fn comment_allows(comment_lines: &[&str], rule_id: &str) -> bool {
+    for raw in comment_lines {
+        let lower = raw.to_ascii_lowercase();
+        let stripped = lower
+            .trim_start()
+            .trim_start_matches("///")
+            .trim_start_matches("//!")
+            .trim_start_matches("//")
+            .trim();
+        for marker in ["rbp-lint-allow:", "rbp-lint-disable:", "rbp-lint-ignore:"] {
+            let Some(rest) = stripped.strip_prefix(marker) else {
+                continue;
+            };
+            // strip trailing free-text after `(reason: ...)` or `--`.
+            let list = rest.split('(').next().unwrap_or(rest);
+            let list = list.split("--").next().unwrap_or(list);
+            for tok in list.split(',') {
+                let tok = tok.trim();
+                if tok == rule_id || tok == "all" {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}

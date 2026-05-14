@@ -1,5 +1,5 @@
-use ra_ap_syntax::ast::{self, AstNode};
 use ra_ap_syntax::SyntaxKind;
+use ra_ap_syntax::ast::{self, AstNode};
 
 use crate::diagnostic::{Diagnostic, Severity};
 use crate::lints::{LintContext, LintRule};

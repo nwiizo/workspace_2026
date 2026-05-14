@@ -28,6 +28,31 @@ fn good_fixture_is_clean() {
 }
 
 #[test]
+fn suppression_drops_only_marked_rules() {
+    let diags = run("suppressed.rs");
+    // Should still report exactly one no-unwrap (the unsuppressed one at the bottom)
+    let unwraps: Vec<&rbp_lint::Diagnostic> =
+        diags.iter().filter(|d| d.rule == "no-unwrap").collect();
+    assert_eq!(
+        unwraps.len(),
+        1,
+        "expected one unsuppressed no-unwrap, got: {:#?}",
+        diags
+    );
+    assert!(
+        unwraps[0].line >= 16,
+        "expected the unsuppressed unwrap to be near line 17, got line {}",
+        unwraps[0].line
+    );
+    // no-panic must be silenced by file-top allow
+    assert!(
+        !diags.iter().any(|d| d.rule == "no-panic"),
+        "no-panic should be silenced by file-top allow, got: {:#?}",
+        diags
+    );
+}
+
+#[test]
 fn bad_fixture_triggers_each_rule() {
     let diags = run("bad.rs");
     let rules: BTreeSet<&str> = diags.iter().map(|d| d.rule).collect();

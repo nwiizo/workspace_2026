@@ -28,7 +28,49 @@ cargo build --release
 
 # 警告もエラー扱いにして exit 1
 ./target/release/rbp-lint --deny-warnings src/
+
+# 明示的に config を指定（既定は CWD 上向きに `.rbp-lint.toml` を探す）
+./target/release/rbp-lint --config .rbp-lint.toml src/
 ```
+
+## Suppression — `// rbp-lint-allow:`
+
+偽陽性を局所的に逃がすためのコメントを認識する。
+
+```rust
+// rbp-lint-allow: bool-option-pair (reason: 旧スキーマ互換)
+pub struct LegacyOrder {
+    pub is_paid: bool,
+    pub payment_id: Option<u64>,
+}
+
+let raw = std::fs::read_to_string("/etc/passwd").unwrap(); // rbp-lint-allow: no-unwrap
+```
+
+スコープは 3 種類:
+
+- 同一行末尾コメント (その行の違反のみ)
+- 直前の連続 `//` コメント (次の違反 1 件)
+- ファイル先頭 (`//` / `//!`) コメント (ファイル全体)
+
+`rbp-lint-disable:` / `rbp-lint-ignore:` も同義。 ルール名 `all` で全 lint を抑制。
+
+## 設定ファイル — `.rbp-lint.toml`
+
+CWD から親方向に `.rbp-lint.toml` を探索 (見つからなければ既定動作)。
+
+```toml
+[rules]
+no-unwrap          = "error"     # 既定どおり強制
+bool-option-pair   = "warning"   # severity を変える
+debug-print        = "off"       # 完全に無効化
+
+[paths]
+exclude = ["**/examples/**", "vendor/**", "**/*_generated.rs"]
+```
+
+severity 値: `off` / `note` / `warning` / `error` (`allow`/`deny`/`warn` も同義)。
+`exclude` は glob パターン。
 
 ## 実装済み Lint
 
@@ -67,10 +109,24 @@ cargo build --release
 
 ## 設計メモ
 
-- `ra_ap_syntax::SourceFile::parse(src, Edition::Edition2021)` でパース
+- `ra_ap_syntax::SourceFile::parse(src, Edition::Edition2024)` でパース
 - 失敗トレラント: 構文エラーがあっても部分木で lint は走る
 - 各 lint は `LintContext` を受けて `Diagnostic` を vec に追加するだけの責務
 - 型情報は使わない。`arc-clone-explicit` 等は構文ヒューリスティックのみで検出
+- 後処理: suppression コメントを line ベースで適用 → `Config` で severity 上書き / `off` / path 除外を適用 → sort
+
+## 性能の目安
+
+実測 (release build, 1 回 cold):
+
+| 対象 | files | 実時間 |
+|------|------:|------:|
+| `tools/rbp-lint/src` (lint 自身) | 28 | 0.38s |
+| `samples/rust-types-as-walls` | 48 | 1.09s |
+
+1 ファイルあたり 13–22ms cold。 千ファイルでも 20 秒程度なので CI 用途には十分。
+rust-analyzer のリアルタイム保存ループに入れる用途には重いので、 通常は
+`xtask` + CI step を推奨。
 
 ## ライセンス
 

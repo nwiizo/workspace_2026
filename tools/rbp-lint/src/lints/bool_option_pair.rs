@@ -65,15 +65,13 @@ impl LintRule for BoolOptionPair {
                 let strict_match = option_fields
                     .iter()
                     .find(|(_, ostem, _)| stems_overlap(bstem, ostem));
-                let pair_name = strict_match
-                    .map(|(n, _, _)| n.clone())
-                    .or_else(|| {
-                        if prefixed && has_correlated_option {
-                            option_fields.first().map(|(n, _, _)| n.clone())
-                        } else {
-                            None
-                        }
-                    });
+                let pair_name = strict_match.map(|(n, _, _)| n.clone()).or_else(|| {
+                    if prefixed && has_correlated_option {
+                        option_fields.first().map(|(n, _, _)| n.clone())
+                    } else {
+                        None
+                    }
+                });
                 let Some(oname) = pair_name else { continue };
                 let range = bfield.syntax().text_range();
                 out.push(Diagnostic::from_range(
