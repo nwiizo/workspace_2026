@@ -1,0 +1,8 @@
+[workspace]
+resolver = "2"
+members = [
+    "part1-hot-lib-reloader/app",
+    "part1-hot-lib-reloader/lib",
+    "part2-dioxus",
+    "part3-leptos",
+]

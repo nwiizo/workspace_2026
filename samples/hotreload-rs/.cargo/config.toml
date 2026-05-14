@@ -1,0 +1,10 @@
+[target.wasm32-unknown-unknown]
+# Workaround: global RUSTFLAGS="-C target-cpu=native" clears wasm32's
+# default `reference-types` target feature.  Without it, wasm-bindgen's
+# externref intrinsics are omitted and the CLI fails with:
+#   "failed to find the `__wbindgen_externref_table_alloc` function"
+#
+# NOTE: When the RUSTFLAGS env var is set (e.g. RUSTFLAGS="-C target-cpu=native"),
+# Cargo ignores [target.*.rustflags] in config files entirely.
+# In that case, run commands with: RUSTFLAGS="" dx serve / RUSTFLAGS="" trunk serve
+rustflags = ["-C", "target-cpu=generic"]

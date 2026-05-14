@@ -64,6 +64,7 @@ eggs/
 .eggs/
 lib/
 !**/frontend/src/lib/
+!samples/hotreload-rs/part1-hot-lib-reloader/lib/
 lib64/
 parts/
 sdist/
@@ -306,9 +307,6 @@ screenshots/
 # Blog workspace (作業用 - READMEのみコミット)
 blogs/*
 !blogs/README.md
-
-# Blog companion code (ブログ記事のサンプルコード - 作業用)
-samples/hotreload-rs/
 
 # Third-party book companion code (作業用ローカル検証スペース・公開不可)
 samples/infra-snippets/

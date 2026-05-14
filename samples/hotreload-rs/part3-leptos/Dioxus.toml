@@ -1,0 +1,12 @@
+# NOTE: This Dioxus.toml exists for Subsecond hot-patch testing via `dx serve`.
+# The primary dev tool for this Leptos project is `trunk serve --open`.
+# See README.md "Subsecond（実験的）" section for details.
+
+[application]
+name = "part3-leptos"
+
+[web.app]
+title = "Leptos Hot-Reload Demo"
+
+[web.resource]
+style = ["style/main.css"]

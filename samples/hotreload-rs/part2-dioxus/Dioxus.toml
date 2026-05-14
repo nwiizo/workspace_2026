@@ -1,0 +1,10 @@
+[application]
+name = "part2-dioxus"
+
+[web.app]
+title = "Dioxus Hot-Reload Demo"
+
+[web.resource]
+style = ["assets/main.css"]
+
+[web.resource.dev]

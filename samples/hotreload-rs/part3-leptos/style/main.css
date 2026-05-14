@@ -1,0 +1,114 @@
+/* Leptos CSS Hot-Reload 検証用スタイル
+ *
+ * cargo-leptos watch --hot-reload 時にこのファイルを変更すると
+ * ブラウザリロードなしで反映される。
+ *
+ * 試してみること:
+ *   1. --accent の色を変更
+ *   2. .card の box-shadow を変更
+ *   3. body の background を変更
+ */
+
+:root {
+    --accent: #e8561a;
+    --bg: #fafafa;
+    --card-bg: #ffffff;
+    --text: #2d2d2d;
+    --radius: 8px;
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    display: flex;
+    justify-content: center;
+    padding: 2rem;
+}
+
+h1 {
+    color: var(--accent);
+    margin-bottom: 1rem;
+}
+
+h2 {
+    font-size: 1.2rem;
+    margin-bottom: 0.5rem;
+    color: #666;
+}
+
+.container {
+    max-width: 800px;
+    width: 100%;
+}
+
+.card {
+    background: var(--card-bg);
+    border-radius: var(--radius);
+    padding: 1.5rem;
+    margin-bottom: 1rem;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.counter-value {
+    font-size: 3rem;
+    font-weight: bold;
+    color: var(--accent);
+    text-align: center;
+    padding: 1rem;
+}
+
+button {
+    background: var(--accent);
+    color: white;
+    border: none;
+    padding: 0.5rem 1.5rem;
+    border-radius: var(--radius);
+    cursor: pointer;
+    font-size: 1rem;
+    margin: 0.25rem;
+    transition: opacity 0.2s;
+}
+
+button:hover {
+    opacity: 0.85;
+}
+
+.btn-group {
+    display: flex;
+    gap: 0.5rem;
+    justify-content: center;
+    flex-wrap: wrap;
+}
+
+.item-list {
+    list-style: none;
+    padding: 0;
+}
+
+.item-list li {
+    padding: 0.5rem 0;
+    border-bottom: 1px solid #eee;
+}
+
+.note {
+    font-size: 0.85rem;
+    color: #999;
+    margin-top: 0.5rem;
+    font-style: italic;
+}
+
+input[type="text"] {
+    padding: 0.5rem;
+    border: 1px solid #ddd;
+    border-radius: var(--radius);
+    font-size: 1rem;
+    flex: 1;
+}

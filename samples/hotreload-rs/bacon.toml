@@ -1,0 +1,47 @@
+# bacon.toml — hotreload-rs ワークスペース用
+# bacon でファイル監視 + 自動ビルド/テスト/Clippy を実行する
+
+default_job = "check"
+
+[jobs.check]
+command = ["cargo", "check", "--workspace", "--color", "always"]
+need_stdout = false
+
+[jobs.clippy]
+command = [
+    "cargo", "clippy", "--workspace",
+    "--color", "always",
+    "--", "-D", "warnings",
+]
+need_stdout = false
+
+[jobs.test]
+command = ["cargo", "test", "-p", "hot-lib", "--color", "always"]
+need_stdout = true
+
+[jobs.test-all]
+command = ["cargo", "test", "--workspace", "--color", "always"]
+need_stdout = true
+
+# Part 1 用: hot-lib dylib を自動リビルド
+# bacon hot-lib で起動し、lib のソースを変更すると自動でリビルドされる
+[jobs.hot-lib]
+command = ["cargo", "build", "-p", "hot-lib", "--color", "always"]
+need_stdout = false
+watch = ["part1-hot-lib-reloader/lib"]
+on_change_strategy = "kill_then_restart"
+
+# Part 1 用: 静的モードで実行
+[jobs.run-static]
+command = [
+    "cargo", "run", "-p", "hot-app",
+    "--no-default-features", "--color", "always",
+]
+need_stdout = true
+on_change_strategy = "kill_then_restart"
+
+[keybindings]
+t = "job:test"
+c = "job:clippy"
+shift-h = "job:hot-lib"
+r = "job:run-static"
