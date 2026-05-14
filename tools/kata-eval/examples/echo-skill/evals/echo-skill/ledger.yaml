@@ -1,0 +1,14 @@
+iterations:
+- iter: 1
+  timestamp: 2026-05-11T17:29:41.844118+09:00
+  mean_pass_rate: 1.0
+  total_unclear: 0
+  new_rules_this_iter: []
+  reseen_rules_this_iter: []
+- iter: 2
+  timestamp: 2026-05-11T17:29:48.535474+09:00
+  mean_pass_rate: 1.0
+  total_unclear: 0
+  new_rules_this_iter: []
+  reseen_rules_this_iter: []
+known_rules: []

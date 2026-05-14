@@ -1,0 +1,19 @@
+id: echo-judge
+name: Echo with LLM judge
+inputs:
+  prompt: |
+    Echo this back: foo bar baz
+expected:
+  output_contains: ["ECHO: foo bar baz"]
+  require_self_report: true
+
+graders:
+  - name: semantic_compliance
+    type: llm
+    config:
+      model: claude-haiku-4-5-20251001
+      rubric: |
+        Did the executor return the user's text verbatim with exactly the
+        prefix "ECHO: " and no other commentary? Ignore the appended
+        ## Self-report block.
+      pass_threshold: 0.8

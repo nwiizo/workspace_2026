@@ -1,0 +1,19 @@
+{
+  "manifest_version": 3,
+  "name": "Minagine 備考一括入力",
+  "version": "0.1.0",
+  "description": "Minagine勤怠表の備考欄に「自己啓発・研鑽」を一括入力します。",
+  "permissions": ["activeTab", "scripting", "storage"],
+  "host_permissions": ["https://work.minagine.net/*"],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Minagine 備考一括入力"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://work.minagine.net/work/wrktimemngmntshtself/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

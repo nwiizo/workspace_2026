@@ -16,6 +16,8 @@
 | `architecture-modernization-agents/` | アーキテクチャモダナイゼーション Claude Code サブエージェント群（11体、戦略〜移行まで） |
 | `rustlean/` | MIRベース最適化支援ツール（Clone/Copy削減、アロケーション検出、構造体レイアウト分析） |
 | `rbp-lint/` | rust-best-practices ルールを rowan/ra_ap_syntax で検査する Rust リンター（unwrap/expect/panic/dead_code/Arc::clone/tracing/SAFETY/秘密鍵を検出） |
+| `kata-eval/` | Skill 評価 CLI（waxa/waza スキーマ互換）。`claude -p` を bias 抑制で実行し、text / code (rhai) / self-report / llm の 4 grader で採点。`iterate` で ledger 付き RED/GREEN/REFACTOR、`compare` で複数モデル比較、`variant` でスキル A/B 検証 |
+| `minagine-bikou-extension/` | Minagine 勤怠表 (`work.minagine.net`) の備考欄に「自己啓発・研鑽」を一括入力する Chrome 拡張 (MV3)。MUI ダイアログを順次開いて React 互換 setter で値投入 |
 
 ## コマンド
 

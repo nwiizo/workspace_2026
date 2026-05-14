@@ -1,0 +1,4 @@
+name: empty
+skill: echo-skill
+tasks:
+  - "tasks/zzzz-no-match-*.yaml"

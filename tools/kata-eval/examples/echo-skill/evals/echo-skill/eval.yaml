@@ -1,0 +1,21 @@
+name: echo-skill-eval
+skill: echo-skill
+config:
+  trials_per_task: 1
+  timeout_seconds: 120
+  parallel: false
+
+graders:
+  - name: prefix_present
+    type: text
+    config:
+      regex_match: ["^ECHO: "]
+
+  - name: no_extra_prose
+    type: code
+    config:
+      assertions:
+        - "len(output.split('## Self-report')[0].trim().split('\\n')) == 1"
+
+tasks:
+  - "tasks/*.yaml"
