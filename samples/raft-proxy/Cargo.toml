@@ -1,0 +1,23 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/raft-proxy-core",
+    "crates/raft-proxy-control",
+    "crates/raft-proxy-data",
+    "crates/raft-proxy-network",
+    "crates/raft-proxy",
+    "crates/raft-proxy-store",
+]
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.85"
+license = "MIT OR Apache-2.0"
+
+[workspace.dependencies]
+openraft = { version = "=0.9.24", features = ["serde", "storage-v2"] }
+serde = { version = "1", features = ["derive", "rc"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"

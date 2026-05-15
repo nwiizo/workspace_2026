@@ -1,0 +1,19 @@
+[package]
+name = "raft-proxy-store"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+version = "0.1.0"
+
+[dependencies]
+raft-proxy-core = { path = "../raft-proxy-core" }
+openraft = { workspace = true }
+arc-swap = "1"
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt"] }

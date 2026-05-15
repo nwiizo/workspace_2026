@@ -1,0 +1,20 @@
+[package]
+name = "raft-proxy-network"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+version = "0.1.0"
+
+[dependencies]
+raft-proxy-core = { path = "../raft-proxy-core" }
+openraft = { workspace = true }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+parking_lot = "0.12"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt"] }

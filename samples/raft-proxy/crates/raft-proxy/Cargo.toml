@@ -1,0 +1,23 @@
+[package]
+name = "raft-proxy"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+version = "0.1.0"
+
+[[bin]]
+name = "raft-proxy"
+path = "src/main.rs"
+
+[dependencies]
+raft-proxy-core = { path = "../raft-proxy-core" }
+raft-proxy-network = { path = "../raft-proxy-network" }
+raft-proxy-control = { path = "../raft-proxy-control" }
+raft-proxy-data = { path = "../raft-proxy-data" }
+
+axum = { version = "0.8", features = ["macros"] }
+clap = { version = "4", features = ["derive"] }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+anyhow = "1"

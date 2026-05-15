@@ -1,0 +1,24 @@
+[package]
+name = "raft-proxy-control"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+version = "0.1.0"
+
+[dependencies]
+raft-proxy-core = { path = "../raft-proxy-core" }
+raft-proxy-store = { path = "../raft-proxy-store" }
+raft-proxy-network = { path = "../raft-proxy-network" }
+
+openraft = { workspace = true }
+axum = { version = "0.8", features = ["macros"] }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+arc-swap = "1"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }

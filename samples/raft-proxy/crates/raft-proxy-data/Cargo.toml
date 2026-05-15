@@ -1,0 +1,21 @@
+[package]
+name = "raft-proxy-data"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+version = "0.1.0"
+
+[dependencies]
+raft-proxy-core = { path = "../raft-proxy-core" }
+
+pingora = { version = "0.8", features = ["proxy"] }
+arc-swap = "1"
+async-trait = "0.1"
+tokio = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+http = "1"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "time"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
