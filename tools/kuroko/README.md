@@ -9,10 +9,13 @@ no authentication, no telemetry.
 - **Persistence**: optional JSON snapshot per service (atomic rename), enabled
   by `KUROKO_DATA_DIR`. In-memory when unset.
 - **Coverage**: 76 AWS services registered.
-  - Fully implemented: **S3**, **SQS**, **DynamoDB**, **SNS** (with SNS→SQS
-    fanout), **KMS**, **Secrets Manager**, **STS**, **CloudWatch Logs** — all
-    verified end-to-end with the AWS SDK for Rust.
-  - Remaining 68: routed stubs that return a structured `UnsupportedOperation`
+  - Fully implemented (18): **S3**, **SQS**, **DynamoDB**, **SNS** (with
+    SNS→SQS fanout), **KMS**, **Secrets Manager**, **STS**, **CloudWatch
+    Logs**, **SSM Parameter Store**, **EventBridge** (with EventBridge→SQS
+    fanout), **Lambda** (metadata + echo-Invoke), **Kinesis**, **Step
+    Functions**, **IAM**, **ECR**, **ELBv2**, **Route 53**, **API Gateway
+    v1** — all verified end-to-end with the AWS SDK for Rust.
+  - Remaining 58: routed stubs that return a structured `UnsupportedOperation`
     (501) for every action. Each one is its own module under `src/services/`
     so coverage grows file-by-file.
 
@@ -52,10 +55,20 @@ at the top of each test file).
 | SecretsMgr| CreateSecret (ResourceExistsException), GetSecretValue (AWSCURRENT/AWSPREVIOUS staging), PutSecretValue (current→previous rotation), UpdateSecret, DescribeSecret (VersionIdsToStages), ListSecrets, DeleteSecret (incl. ForceDeleteWithoutRecovery), accepts both names and full ARNs |
 | STS       | GetCallerIdentity (Account/Arn), AssumeRole (Credentials), GetSessionToken, AssumeRoleWithWebIdentity, DecodeAuthorizationMessage |
 | CWL Logs  | CreateLogGroup (ResourceAlreadyExistsException), DescribeLogGroups (prefix), CreateLogStream, PutLogEvents, GetLogEvents, FilterLogEvents (substring), DescribeLogStreams |
+| SSM       | PutParameter (ParameterAlreadyExists / Overwrite-version-bump), GetParameter, GetParameters (separates found vs invalid), GetParametersByPath (shallow + recursive), DeleteParameter |
+| EventBridge | CreateEventBus / DeleteEventBus (default protected), PutRule (EventPattern), Enable/DisableRule, PutTargets / RemoveTargets, ListTargetsByRule, **PutEvents → SQS fanout** (only matching + enabled rules deliver) |
+| Lambda    | CreateFunction (ResourceConflictException), GetFunction (Configuration + Code), ListFunctions, UpdateFunctionConfiguration, DeleteFunction, **Invoke (echoes payload — kuroko does not run code)** |
+| Kinesis   | CreateStream (ResourceInUseException), DescribeStream (single shard), ListStreams, PutRecord, PutRecords (batch), GetShardIterator (TRIM_HORIZON / LATEST / AT/AFTER_SEQUENCE_NUMBER), GetRecords (walks the log), DeleteStream |
+| StepFns   | CreateStateMachine (InvalidDefinition for non-JSON), ListStateMachines, DescribeStateMachine, UpdateStateMachine, StartExecution (**immediately SUCCEEDED with input echoed as output**), DescribeExecution, ListExecutions (status filter), GetExecutionHistory (synthetic Started+Succeeded pair) |
+| IAM       | CreateUser (EntityAlreadyExists), GetUser, ListUsers, DeleteUser (cascades access keys), CreateRole (AssumeRolePolicyDocument), CreatePolicy, AttachRolePolicy / ListAttachedRolePolicies, CreateAccessKey / ListAccessKeys |
+| ECR       | CreateRepository (RepositoryAlreadyExistsException), DescribeRepositories, DeleteRepository (RepositoryNotEmptyException without force), PutImage (tag repointing), ListImages, BatchGetImage (by tag or digest), GetAuthorizationToken |
+| ELBv2     | CreateLoadBalancer (DuplicateLoadBalancerNameException), CreateTargetGroup, RegisterTargets / DeregisterTargets, DescribeTargetHealth (all healthy), CreateListener (with default forward action), DeleteLoadBalancer cascades listeners |
+| Route 53  | CreateHostedZone (returns `/hostedzone/<id>`), ListHostedZones, ChangeResourceRecordSets (CREATE / UPSERT replaces TTL+value / DELETE), ListResourceRecordSets, DeleteHostedZone |
+| APIGW v1  | CreateRestApi (auto-creates root resource), GetResources (returns AWS-spec `item` singular), CreateResource (path composition), PutMethod / GetMethod, PutIntegration (AWS_PROXY etc.), CreateDeployment, CreateStage / GetStage |
 | Admin     | `/_kuroko/health`, `/_kuroko/info`, `/_kuroko/services` (≥76 entries), `/_kuroko/reset` (clears all state) |
 | Persist   | S3/SQS/DynamoDB write → snapshot → restart → restore — verified for each service. Snapshot path-traversal hardened (`[a-z0-9_-]+` only). |
 
-Total: 87 tests across 12 suites, all verified against the AWS official API
+Total: 153 tests across 22 suites, all verified against the AWS official API
 reference docs (URLs inlined at the top of each `tests/e2e_*.rs` file).
 
 ## Endpoints
