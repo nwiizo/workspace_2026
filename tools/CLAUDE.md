@@ -18,6 +18,7 @@
 | `rbp-lint/` | rust-best-practices ルールを rowan/ra_ap_syntax で検査する Rust リンター（unwrap/expect/panic/dead_code/Arc::clone/tracing/SAFETY/秘密鍵を検出） |
 | `kata-eval/` | Skill 評価 CLI（waxa/waza スキーマ互換）。`claude -p` を bias 抑制で実行し、text / code (rhai) / self-report / llm の 4 grader で採点。`iterate` で ledger 付き RED/GREEN/REFACTOR、`compare` で複数モデル比較、`variant` でスキル A/B 検証 |
 | `minagine-bikou-extension/` | Minagine 勤怠表 (`work.minagine.net`) の備考欄に「自己啓発・研鑽」を一括入力する Chrome 拡張 (MV3)。MUI ダイアログを順次開いて React 互換 setter で値投入 |
+| `kuroko/` | 軽量 AWS サービスエミュレータ (Rust, axum 0.8, MIT)。port 4566・認証不要・単一バイナリ (~2.9 MB)。AWS JSON 1.0/1.1, Query, REST, Smithy RPC v2 CBOR の 4 プロトコル dispatcher。フル実装8サービス (**S3 / SQS / DynamoDB / SNS (SNS→SQS fanout含む) / KMS / Secrets Manager / STS / CloudWatch Logs**) は AWS SDK for Rust + 公式仕様準拠で 87 テスト疎通検証済み。残り 68 サービスは登録済みで 501 を返す stub。`/_kuroko/reset` / `/_kuroko/health` / `/_kuroko/services` / `/_kuroko/info` の introspection endpoint と KUROKO_DATA_DIR ベースの JSON snapshot 永続化対応 |
 
 ## コマンド
 

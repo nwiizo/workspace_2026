@@ -1,0 +1,69 @@
+[package]
+name = "kuroko"
+version = "0.1.0"
+edition = "2024"
+description = "A lightweight AWS service emulator in Rust"
+license = "MIT"
+repository = "https://github.com/nwiizo/workspace_2026"
+
+[[bin]]
+name = "kuroko"
+path = "src/main.rs"
+
+[lib]
+name = "kuroko"
+path = "src/lib.rs"
+
+[dependencies]
+axum = { version = "0.8", features = ["macros", "matched-path"] }
+tokio = { version = "1", features = ["full"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["trace", "cors"] }
+hyper = "1"
+http = "1"
+http-body-util = "0.1"
+bytes = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_urlencoded = "0.7"
+quick-xml = { version = "0.36", features = ["serialize"] }
+ciborium = "0.2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+thiserror = "2"
+anyhow = "1"
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+base64 = "0.22"
+md-5 = "0.10"
+sha2 = "0.10"
+hex = "0.4"
+parking_lot = "0.12"
+dashmap = "6"
+once_cell = "1"
+async-trait = "0.1"
+clap = { version = "4", features = ["derive", "env"] }
+tempfile = "3"
+mime = "0.3"
+url = "2"
+rand = "0.8"
+
+[dev-dependencies]
+reqwest = { version = "0.12", features = ["json"] }
+aws-config = { version = "1", features = ["behavior-version-latest"] }
+aws-sdk-s3 = "1"
+aws-sdk-sqs = "1"
+aws-sdk-dynamodb = "1"
+aws-sdk-sns = "1"
+aws-sdk-kms = "1"
+aws-sdk-secretsmanager = "1"
+aws-sdk-sts = "1"
+aws-sdk-cloudwatchlogs = "1"
+aws-credential-types = { version = "1", features = ["test-util"] }
+rstest = "0.26"
+pretty_assertions = "1"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
