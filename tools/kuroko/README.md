@@ -9,13 +9,15 @@ no authentication, no telemetry.
 - **Persistence**: optional JSON snapshot per service (atomic rename), enabled
   by `KUROKO_DATA_DIR`. In-memory when unset.
 - **Coverage**: 76 AWS services registered.
-  - Fully implemented (18): **S3**, **SQS**, **DynamoDB**, **SNS** (with
+  - Fully implemented (23): **S3**, **SQS**, **DynamoDB**, **SNS** (with
     SNS→SQS fanout), **KMS**, **Secrets Manager**, **STS**, **CloudWatch
     Logs**, **SSM Parameter Store**, **EventBridge** (with EventBridge→SQS
     fanout), **Lambda** (metadata + echo-Invoke), **Kinesis**, **Step
     Functions**, **IAM**, **ECR**, **ELBv2**, **Route 53**, **API Gateway
-    v1** — all verified end-to-end with the AWS SDK for Rust.
-  - Remaining 58: routed stubs that return a structured `UnsupportedOperation`
+    v1**, **ACM**, **Cognito**, **CloudWatch** (Query + RPC v2 CBOR),
+    **CloudFormation**, **EC2** — all verified end-to-end with the AWS SDK
+    for Rust.
+  - Remaining 53: routed stubs that return a structured `UnsupportedOperation`
     (501) for every action. Each one is its own module under `src/services/`
     so coverage grows file-by-file.
 
@@ -65,10 +67,15 @@ at the top of each test file).
 | ELBv2     | CreateLoadBalancer (DuplicateLoadBalancerNameException), CreateTargetGroup, RegisterTargets / DeregisterTargets, DescribeTargetHealth (all healthy), CreateListener (with default forward action), DeleteLoadBalancer cascades listeners |
 | Route 53  | CreateHostedZone (returns `/hostedzone/<id>`), ListHostedZones, ChangeResourceRecordSets (CREATE / UPSERT replaces TTL+value / DELETE), ListResourceRecordSets, DeleteHostedZone |
 | APIGW v1  | CreateRestApi (auto-creates root resource), GetResources (returns AWS-spec `item` singular), CreateResource (path composition), PutMethod / GetMethod, PutIntegration (AWS_PROXY etc.), CreateDeployment, CreateStage / GetStage |
+| ACM       | RequestCertificate (immediate ISSUED), DescribeCertificate, ListCertificates, DeleteCertificate, ImportCertificate (Blob base64 decode), GetCertificate |
+| Cognito   | CreateUserPool, ListUserPools, CreateUserPoolClient (GenerateSecret), AdminCreateUser (UsernameExistsException), AdminGetUser (UserAttributes field), AdminDeleteUser, AdminSetUserPassword |
+| CloudWatch| PutMetricData, GetMetricStatistics (Sum/Average/Min/Max/SampleCount), ListMetrics (namespace+metric filter), PutMetricAlarm, DescribeAlarms, DeleteAlarms. **Both Query and Smithy RPC v2 CBOR** (with CBOR tag(1) timestamps) — works against the modern SDK's CBOR protocol migration. |
+| CloudForm | CreateStack (AlreadyExistsException, immediate CREATE_COMPLETE), UpdateStack → UPDATE_COMPLETE, DescribeStacks, ListStacks, DescribeStackEvents, ListStackResources, GetTemplate, DeleteStack |
+| EC2       | DescribeRegions (9 regions), DescribeAvailabilityZones, CreateVpc / DescribeVpcs / DeleteVpc, CreateSubnet (InvalidVpcID.NotFound), DescribeSubnets, CreateSecurityGroup, AuthorizeSecurityGroupIngress (IpPermissions.N), RunInstances (immediate running, MinCount/MaxCount), TerminateInstances (terminated state transition), DescribeInstances (reservation set), CreateTags |
 | Admin     | `/_kuroko/health`, `/_kuroko/info`, `/_kuroko/services` (≥76 entries), `/_kuroko/reset` (clears all state) |
 | Persist   | S3/SQS/DynamoDB write → snapshot → restart → restore — verified for each service. Snapshot path-traversal hardened (`[a-z0-9_-]+` only). |
 
-Total: 153 tests across 22 suites, all verified against the AWS official API
+Total: 184 tests across 27 suites, all verified against the AWS official API
 reference docs (URLs inlined at the top of each `tests/e2e_*.rs` file).
 
 ## Endpoints
