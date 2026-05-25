@@ -1,0 +1,23 @@
+version: 1
+
+workspace:
+  state_dir: .remote-mcp-devkit/sessions
+  artifact_dir: .remote-mcp-devkit/artifacts
+
+server:
+  host: localhost
+  port: 8443
+  scheme: https
+
+upstreams:
+  mcp:
+    url: http://127.0.0.1:18080
+
+profile:
+  mcp_path: /mcp
+  forwarded_proto: https
+  oauth:
+    client: local-fake-client
+    # client_id_metadata_document: https://your.example/client.json
+    scopes:
+      - mcp:read

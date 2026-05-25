@@ -1,0 +1,50 @@
+[package]
+name = "remote-mcp-devkit"
+version = "0.1.0"
+edition = "2024"
+description = "Local-only conformance harness for Remote MCP + OAuth 2.1 servers"
+license = "MIT"
+repository = "https://github.com/nwiizo/workspace_2026"
+
+[[bin]]
+name = "remote-mcp-devkit"
+path = "src/main.rs"
+
+[lib]
+name = "remote_mcp_devkit"
+path = "src/lib.rs"
+
+[dependencies]
+axum = { version = "0.8", features = ["macros"] }
+axum-server = { version = "0.7", features = ["tls-rustls-no-provider"] }
+tokio = { version = "1", features = ["full"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["trace"] }
+hyper = "1"
+http = "1"
+http-body-util = "0.1"
+bytes = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+serde_urlencoded = "0.7"
+clap = { version = "4", features = ["derive"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+anyhow = "1"
+thiserror = "2"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+rcgen = "0.13"
+chrono = { version = "0.4", features = ["serde"] }
+base64 = "0.22"
+sha2 = "0.10"
+uuid = { version = "1", features = ["v4"] }
+url = "2"
+urlencoding = "2"
+parking_lot = "0.12"
+rand = "0.8"
+
+[dev-dependencies]
+tempfile = "3"
+pretty_assertions = "1"
