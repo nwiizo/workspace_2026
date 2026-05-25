@@ -1,0 +1,14 @@
+[workspace]
+resolver = "3"
+members = [
+    "bloom-filter",
+    "consistent-hashing",
+    "crdt",
+    "transaction-isolation",
+    "lsm-tree",
+    "fencing-token",
+    "logical-clocks",
+    "tail-latency",
+    "watermark",
+    "idempotency-key",
+]

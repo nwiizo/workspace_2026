@@ -1,0 +1,11 @@
+[package]
+name = "lsm-tree"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bloom-filter = { path = "../bloom-filter" }
+thiserror = "2"
+
+[dev-dependencies]
+tempfile = "3"

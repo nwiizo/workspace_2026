@@ -1,0 +1,9 @@
+[package]
+name = "idempotency-key"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+
+[dev-dependencies]
+proptest = "1"
