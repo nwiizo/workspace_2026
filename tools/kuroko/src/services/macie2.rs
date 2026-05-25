@@ -1,9 +1,14 @@
-//! macie2 — REST-style stub (no router yet; reachable as a named service).
-
-use super::stub;
+//! Amazon Macie 2 — minimal named-resource stub.
+use super::resource_stub::ResourceStub;
 use crate::registry::Registry;
 use std::sync::Arc;
 
 pub fn register(registry: &Arc<Registry>) {
-    stub::register_bare(registry, "macie2");
+    registry.register(Arc::new(ResourceStub::new(
+        "macie2",
+        "/jobs",
+        "/jobs/{name}",
+        "name",
+        "items",
+    )));
 }

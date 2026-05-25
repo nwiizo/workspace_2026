@@ -14,6 +14,9 @@ use std::sync::Arc;
 
 use crate::registry::Registry;
 
+pub mod generic;
+pub mod resource_stub;
+pub mod rest_helpers;
 pub mod stub;
 
 // === Fully implemented services ===

@@ -8,18 +8,24 @@ no authentication, no telemetry.
 - **Framework**: axum 0.8 + tokio, single binary, port `4566` (LocalStack-compatible).
 - **Persistence**: optional JSON snapshot per service (atomic rename), enabled
   by `KUROKO_DATA_DIR`. In-memory when unset.
-- **Coverage**: 76 AWS services registered.
-  - Fully implemented (23): **S3**, **SQS**, **DynamoDB**, **SNS** (with
-    SNS→SQS fanout), **KMS**, **Secrets Manager**, **STS**, **CloudWatch
-    Logs**, **SSM Parameter Store**, **EventBridge** (with EventBridge→SQS
-    fanout), **Lambda** (metadata + echo-Invoke), **Kinesis**, **Step
-    Functions**, **IAM**, **ECR**, **ELBv2**, **Route 53**, **API Gateway
-    v1**, **ACM**, **Cognito**, **CloudWatch** (Query + RPC v2 CBOR),
-    **CloudFormation**, **EC2** — all verified end-to-end with the AWS SDK
-    for Rust.
-  - Remaining 53: routed stubs that return a structured `UnsupportedOperation`
-    (501) for every action. Each one is its own module under `src/services/`
-    so coverage grows file-by-file.
+- **Coverage**: 76 AWS services registered, all with at least a working CRUD
+  surface verified end-to-end with the AWS SDK for Rust or raw HTTP. Highlights:
+  - **Fully implemented with deep API coverage**: S3, SQS, DynamoDB, SNS
+    (SNS→SQS fanout), KMS, Secrets Manager, STS, CloudWatch Logs, SSM Parameter
+    Store, EventBridge (EventBridge→SQS fanout), Lambda, Kinesis, Step
+    Functions, IAM, ECR, ELBv2, Route 53, API Gateway v1, ACM, Cognito,
+    CloudWatch (Query + CBOR), CloudFormation, EC2, ECS, RDS, Firehose, Glue,
+    Athena, CloudTrail, EKS, SES/SESv2, Batch, Backup, Scheduler, Organizations,
+    Comprehend, ElastiCache, Redshift, Glacier, CloudFront, MemoryDB,
+    GlobalAccelerator, Forecast, Route 53 Resolver, Neptune, DocumentDB,
+    SageMaker, Rekognition, Kafka (MSK v1+v2), MQ, Directory Service,
+    Elastic Beanstalk, Config, Service Quotas, GameLift (JSON + CBOR),
+    CloudControl, CodeConnections, Pinpoint SMS V2, Cost Explorer,
+    Amplify, Location, DLM, EBS direct APIs.
+  - **Minimal "resource_stub" services** (control-plane named-resource CRUD):
+    App Mesh, AppSync, Data Exchange, Macie2, FinSpace, Resilience Hub,
+    EMR Serverless, Entity Resolution, Security Lake, S3 Tables, S3 Control,
+    CodeGuru Profiler, CodeGuru Reviewer, Pipes.
 
 ## Quick start
 

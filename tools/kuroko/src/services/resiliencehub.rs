@@ -1,9 +1,14 @@
-//! resiliencehub — REST-style stub (no router yet; reachable as a named service).
-
-use super::stub;
+//! AWS Resilience Hub — minimal named-resource stub.
+use super::resource_stub::ResourceStub;
 use crate::registry::Registry;
 use std::sync::Arc;
 
 pub fn register(registry: &Arc<Registry>) {
-    stub::register_bare(registry, "resiliencehub");
+    registry.register(Arc::new(ResourceStub::new(
+        "resiliencehub",
+        "/create-app",
+        "/describe-app/{name}",
+        "name",
+        "appSummaries",
+    )));
 }

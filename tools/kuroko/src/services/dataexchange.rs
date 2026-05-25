@@ -1,9 +1,14 @@
-//! dataexchange — REST-style stub (no router yet; reachable as a named service).
-
-use super::stub;
+//! AWS Data Exchange — minimal named-resource stub.
+use super::resource_stub::ResourceStub;
 use crate::registry::Registry;
 use std::sync::Arc;
 
 pub fn register(registry: &Arc<Registry>) {
-    stub::register_bare(registry, "dataexchange");
+    registry.register(Arc::new(ResourceStub::new(
+        "dataexchange",
+        "/v1/data-sets",
+        "/v1/data-sets/{name}",
+        "Name",
+        "DataSets",
+    )));
 }

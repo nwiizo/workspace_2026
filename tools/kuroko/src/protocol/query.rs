@@ -74,16 +74,48 @@ fn parse_form(body: &Bytes) -> Result<HashMap<String, String>, AwsError> {
         .map_err(|e| AwsError::new("MalformedQueryString", e.to_string()))
 }
 
-/// User-Agent contains tokens like `aws-sdk-rust/1.4 service/sqs ...` — used to
-/// disambiguate Query action names shared by multiple services.
+/// User-Agent disambiguates AWS Query actions shared by multiple services
+/// (e.g. `CreateDBCluster` lives in rds, neptune, docdb). AWS SDKs across
+/// languages and major versions ship several different UA token shapes:
+///
+/// - `aws-sdk-rust/1.4 service/sqs lang/rust/1.78` (older Rust SDK)
+/// - `aws-sdk-rust/1.x ua/2.0 lib/rds#1.x os/macos lang/rust/1.x` (newer)
+/// - `aws-sdk-java/2.x ... api/rds ...`
+/// - The dedicated `x-amz-user-agent` header (always present on newer SDKs)
+///   carries the same token shapes, sometimes more reliably than `user-agent`
+///   itself.
+///
+/// We check both headers and accept `service/X`, `api/X`, `lib/X#…`, and
+/// `aws-sdk-X/…` forms. Returns the *first* match found, lower-cased.
 fn parse_sdk_id(headers: &HeaderMap) -> Option<String> {
-    let ua = headers.get(header::USER_AGENT)?.to_str().ok()?;
-    for token in ua.split_whitespace() {
-        if let Some(rest) = token.strip_prefix("service/") {
-            return Some(rest.split('/').next().unwrap_or(rest).to_string());
-        }
-        if let Some(rest) = token.strip_prefix("api/") {
-            return Some(rest.split('/').next().unwrap_or(rest).to_string());
+    let amz = headers
+        .get("x-amz-user-agent")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default();
+    let ua = headers
+        .get(header::USER_AGENT)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default();
+    for source in [amz, ua] {
+        for token in source.split_whitespace() {
+            for prefix in ["service/", "api/", "lib/"] {
+                if let Some(rest) = token.strip_prefix(prefix) {
+                    let id = rest.split(['/', '#']).next().unwrap_or(rest);
+                    if !id.is_empty() {
+                        return Some(id.to_ascii_lowercase());
+                    }
+                }
+            }
+            // `aws-sdk-rds/1.x.x` — strip the `aws-sdk-` family prefix but
+            // skip the meta `aws-sdk-rust` / `aws-sdk-go` etc. tokens that
+            // name the language, not the AWS service.
+            if let Some(rest) = token.strip_prefix("aws-sdk-")
+                && let Some(id) = rest.split('/').next()
+                && !id.is_empty()
+                && !["rust", "go", "java", "js", "python", "php", "ruby", "cpp"].contains(&id)
+            {
+                return Some(id.to_ascii_lowercase());
+            }
         }
     }
     None

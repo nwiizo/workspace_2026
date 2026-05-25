@@ -1,9 +1,14 @@
-//! appsync — REST-style stub (no router yet; reachable as a named service).
-
-use super::stub;
+//! AWS AppSync — minimal named-resource stub.
+use super::resource_stub::ResourceStub;
 use crate::registry::Registry;
 use std::sync::Arc;
 
 pub fn register(registry: &Arc<Registry>) {
-    stub::register_bare(registry, "appsync");
+    registry.register(Arc::new(ResourceStub::new(
+        "appsync",
+        "/v1/apis",
+        "/v1/apis/{name}",
+        "name",
+        "graphqlApis",
+    )));
 }
