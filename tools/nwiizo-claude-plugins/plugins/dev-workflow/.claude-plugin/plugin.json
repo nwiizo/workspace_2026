@@ -1,0 +1,5 @@
+{
+  "name": "dev-workflow",
+  "description": "ツール開発ワークフロー。orchestrator で逐次×並列に分割、iterative-refinement で Build→Test→Feedback→Refine、validate-on-oss で実 OSS 検証、sync-tasks でタスク同期。planner / memory-optimizer エージェント同梱。",
+  "author": { "name": "nwiizo" }
+}

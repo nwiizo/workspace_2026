@@ -1,0 +1,5 @@
+{
+  "name": "finops-investigation",
+  "description": "AWS / GCP の FinOps 調査・コスト削減分析。非対話認証の突破、Cost Explorer / Billing Export の読み解き罠、RI/SP・CUD/SUD の誤認パターン、レポート数値の分母混在を避ける実務知見。",
+  "author": { "name": "nwiizo" }
+}

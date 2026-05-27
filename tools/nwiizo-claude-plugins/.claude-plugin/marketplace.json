@@ -1,0 +1,59 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "nwiizo-claude-plugins",
+  "description": "nwiizo の実戦投入済み Claude Code 資産を配布可能なプラグインに再編成したマーケットプレイス。並列レビュー・エンジニアリング規律・FinOps 調査・jj ワークフロー・プロンプト改善・ツール開発・技術コンテンツ作成の 7 プラグイン。",
+  "owner": {
+    "name": "nwiizo"
+  },
+  "plugins": [
+    {
+      "name": "nwiizo-review",
+      "source": "./plugins/nwiizo-review",
+      "description": "並列レビュー・ワークフロー。code-reviewer / codex-reviewer / simplify-reviewer の 3 エージェントで品質・独立観点・可読性を多角レビューし、self-review / fix-review-comments / rust-code-review / design-review / cli-ux-review / proactive-suggestions スキルで補完する。",
+      "author": { "name": "nwiizo" },
+      "category": "code-quality"
+    },
+    {
+      "name": "engineering-discipline",
+      "source": "./plugins/engineering-discipline",
+      "description": "LLM コーディングの 4 大失敗（暗黙の仮定 / 過剰実装 / 関係ない箇所への手出し / 成功基準の曖昧さ）を抑制する Karpathy 由来の行動規範。曖昧・大きい・不確実なタスクの実装前ゲートに使う。",
+      "author": { "name": "nwiizo" },
+      "category": "development"
+    },
+    {
+      "name": "finops-investigation",
+      "source": "./plugins/finops-investigation",
+      "description": "AWS / GCP の FinOps 調査・コスト削減分析。非対話認証の突破、Cost Explorer / Billing Export の読み解き罠、RI/SP・CUD/SUD の誤認パターン、レポート数値の分母混在を避ける実務知見。",
+      "author": { "name": "nwiizo" },
+      "category": "cloud"
+    },
+    {
+      "name": "jj-workflow",
+      "source": "./plugins/jj-workflow",
+      "description": "Jujutsu (jj) ワークフロー。jj-agent-spawn で並列エージェント workspace を立て、jj-commit-cycle で commit パターンを回し、jj-reviewer で履歴安全性を read-only 監査する。",
+      "author": { "name": "nwiizo" },
+      "category": "version-control"
+    },
+    {
+      "name": "prompt-engineering",
+      "source": "./plugins/prompt-engineering",
+      "description": "agent 向け指示（skill / slash command / CLAUDE.md / コード生成プロンプト）の評価と反復改善。empirical-prompt-tuning でバイアスを排した実行と両面評価、prompt-review でプロンプトレビューを行う。",
+      "author": { "name": "nwiizo" },
+      "category": "development"
+    },
+    {
+      "name": "dev-workflow",
+      "source": "./plugins/dev-workflow",
+      "description": "ツール開発ワークフロー。orchestrator で逐次×並列に分割、iterative-refinement で Build→Test→Feedback→Refine、validate-on-oss で実 OSS 検証、sync-tasks でタスク同期。planner / memory-optimizer エージェント同梱。",
+      "author": { "name": "nwiizo" },
+      "category": "productivity"
+    },
+    {
+      "name": "authoring",
+      "source": "./plugins/authoring",
+      "description": "技術コンテンツ作成。marp-slide-editing で Marp スライドの技術制約・ベストプラクティス、translation-quality で公式翻訳との比較から導いた技術書翻訳の品質基準を適用する。",
+      "author": { "name": "nwiizo" },
+      "category": "productivity"
+    }
+  ]
+}

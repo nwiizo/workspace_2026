@@ -1,0 +1,4 @@
+interface:
+  display_name: "Codex Karpathy Guidelines"
+  short_description: "Codex workflow guardrails"
+  default_prompt: "Use $karpathy-guidelines to keep Codex changes simple, surgical, and verified."

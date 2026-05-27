@@ -1,0 +1,5 @@
+{
+  "name": "jj-workflow",
+  "description": "Jujutsu (jj) ワークフロー。jj-agent-spawn で並列エージェント workspace を立て、jj-commit-cycle で commit パターンを回し、jj-reviewer で履歴安全性を read-only 監査する。",
+  "author": { "name": "nwiizo" }
+}

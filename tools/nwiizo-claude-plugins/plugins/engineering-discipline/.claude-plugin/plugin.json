@@ -1,0 +1,5 @@
+{
+  "name": "engineering-discipline",
+  "description": "LLM コーディングの 4 大失敗（暗黙の仮定 / 過剰実装 / 関係ない箇所への手出し / 成功基準の曖昧さ）を抑制する Karpathy 由来の行動規範。曖昧・大きい・不確実なタスクの実装前ゲートに使う。",
+  "author": { "name": "nwiizo" }
+}

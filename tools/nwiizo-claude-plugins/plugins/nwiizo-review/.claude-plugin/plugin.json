@@ -1,0 +1,5 @@
+{
+  "name": "nwiizo-review",
+  "description": "並列レビュー・ワークフロー。code-reviewer / codex-reviewer / simplify-reviewer の 3 エージェントで品質・独立観点・可読性を多角レビューし、self-review / fix-review-comments / rust-code-review / design-review / cli-ux-review / proactive-suggestions スキルで補完する。",
+  "author": { "name": "nwiizo" }
+}

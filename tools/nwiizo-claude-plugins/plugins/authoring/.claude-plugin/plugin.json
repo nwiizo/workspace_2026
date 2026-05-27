@@ -1,0 +1,5 @@
+{
+  "name": "authoring",
+  "description": "技術コンテンツ作成。marp-slide-editing で Marp スライドの技術制約・ベストプラクティス、translation-quality で公式翻訳との比較から導いた技術書翻訳の品質基準を適用する。",
+  "author": { "name": "nwiizo" }
+}

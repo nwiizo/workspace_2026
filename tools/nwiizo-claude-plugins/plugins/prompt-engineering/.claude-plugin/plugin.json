@@ -1,0 +1,5 @@
+{
+  "name": "prompt-engineering",
+  "description": "agent 向け指示（skill / slash command / CLAUDE.md / コード生成プロンプト）の評価と反復改善。empirical-prompt-tuning でバイアスを排した実行と両面評価、prompt-review でプロンプトレビューを行う。",
+  "author": { "name": "nwiizo" }
+}
