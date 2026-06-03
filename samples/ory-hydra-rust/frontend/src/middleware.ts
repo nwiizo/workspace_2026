@@ -20,13 +20,11 @@ function getUserFromCookie(request: NextRequest): { email: string; role: string 
 
 export function middleware(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
-  const sessionCookie = request.cookies.get("session");
-  const authTokenCookie = request.cookies.get("auth_token");
+  const sessionCookie = request.cookies.get("__Host-bff-session") || request.cookies.get("session");
 
   // Check if session exists and has a valid value
   const hasValidSession = sessionCookie && sessionCookie.value && sessionCookie.value.length > 0;
-  const hasValidToken = authTokenCookie && authTokenCookie.value && authTokenCookie.value.length > 0;
-  const isAuthenticated = hasValidSession || hasValidToken;
+  const isAuthenticated = Boolean(hasValidSession);
 
   // Check if path requires authentication
   const requiresAuth = PROTECTED_PATHS.some((p) => pathname.startsWith(p));
@@ -40,6 +38,9 @@ export function middleware(request: NextRequest) {
   // Check role-based access
   if (isAuthenticated) {
     const user = getUserFromCookie(request);
+    if (!user) {
+      return NextResponse.next();
+    }
     const role = user?.role || "customer";
 
     // Platform admin paths - only platform_admin can access

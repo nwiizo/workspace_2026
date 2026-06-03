@@ -6,6 +6,8 @@ use uuid::Uuid;
 use crate::error::AppError;
 use crate::models::{User, UserRole, UserRow, UserStatus};
 
+type SeedEngineer = (&'static str, i32, i64, i32, i64, i64, i32, i32);
+
 /// Service for user management with PostgreSQL backend
 pub struct UserService {
     pool: PgPool,
@@ -282,7 +284,7 @@ impl UserService {
             }
 
             // Seed engineers in tenant schema (lookup user IDs by email)
-            let engineers_to_seed: Vec<(&str, i32, i64, i32, i64, i64, i32, i32)> = vec![
+            let engineers_to_seed: Vec<SeedEngineer> = vec![
                 ("sato@example.com", 5, 2500, 85, 50000, 150000, 8, 3),
                 ("tanaka@example.com", 3, 800, 70, 40000, 80000, 4, 1),
                 ("suzuki@example.com", 2, 300, 90, 35000, 40000, 2, 1),
@@ -356,25 +358,24 @@ impl UserService {
                     .fetch_one(&self.pool)
                     .await;
 
-                    if let Ok((engineer_id,)) = user_result {
-                        if let Some((specialty_id, _)) =
+                    if let Ok((engineer_id,)) = user_result
+                        && let Some((specialty_id, _)) =
                             specialties.iter().find(|(_, name)| name == specialty_name)
-                        {
-                            let sql = format!(
-                                r#"
-                                INSERT INTO {}.engineer_specialties (engineer_id, specialty_id, proficiency)
-                                VALUES ($1, $2, $3)
-                                ON CONFLICT (engineer_id, specialty_id) DO NOTHING
-                                "#,
-                                schema_name
-                            );
-                            let _ = sqlx::query(&sql)
-                                .bind(engineer_id)
-                                .bind(specialty_id)
-                                .bind(proficiency)
-                                .execute(&self.pool)
-                                .await;
-                        }
+                    {
+                        let sql = format!(
+                            r#"
+                            INSERT INTO {}.engineer_specialties (engineer_id, specialty_id, proficiency)
+                            VALUES ($1, $2, $3)
+                            ON CONFLICT (engineer_id, specialty_id) DO NOTHING
+                            "#,
+                            schema_name
+                        );
+                        let _ = sqlx::query(&sql)
+                            .bind(engineer_id)
+                            .bind(specialty_id)
+                            .bind(proficiency)
+                            .execute(&self.pool)
+                            .await;
                     }
                 }
                 tracing::info!("Engineer specialties seeded");

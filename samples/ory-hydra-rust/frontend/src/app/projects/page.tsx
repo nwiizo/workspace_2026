@@ -16,12 +16,6 @@ export default function ProjectsPage() {
   });
 
   useEffect(() => {
-    const cookieRow = document.cookie
-      .split("; ")
-      .find((row) => row.startsWith("auth_token="));
-    const token = cookieRow ? cookieRow.substring("auth_token=".length) : null;
-    if (token) api.setToken(token);
-
     loadProjects();
   }, []);
 

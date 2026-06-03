@@ -52,16 +52,15 @@ pub async fn require_auth(
             // JWT verification failed, try Hydra introspection
             debug!("JWT verification failed, trying Hydra introspection");
 
-            let introspection = state
-                .hydra
-                .introspect_token(token)
-                .await
-                .map_err(|e| {
-                    debug!("Hydra introspection failed: {:?}", e);
-                    AppError::AuthenticationFailed("Invalid or expired token".to_string())
-                })?;
+            let introspection = state.hydra.introspect_token(token).await.map_err(|e| {
+                debug!("Hydra introspection failed: {:?}", e);
+                AppError::AuthenticationFailed("Invalid or expired token".to_string())
+            })?;
 
-            debug!("Hydra token introspection successful: sub={:?}", introspection.sub);
+            debug!(
+                "Hydra token introspection successful: sub={:?}",
+                introspection.sub
+            );
 
             // Convert introspection response to Claims
             let sub = introspection.sub.ok_or_else(|| {
@@ -154,8 +153,6 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
     fn test_bearer_token_parsing() {
         let header = "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9";

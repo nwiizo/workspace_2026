@@ -11,12 +11,6 @@ export default function RecruitmentPage() {
   const [refreshStatus, setRefreshStatus] = useState<{ can_free_refresh: boolean; refresh_cost: number } | null>(null);
 
   useEffect(() => {
-    const cookieRow = document.cookie
-      .split("; ")
-      .find((row) => row.startsWith("auth_token="));
-    const token = cookieRow ? cookieRow.substring("auth_token=".length) : null;
-    if (token) api.setToken(token);
-
     loadData();
   }, []);
 

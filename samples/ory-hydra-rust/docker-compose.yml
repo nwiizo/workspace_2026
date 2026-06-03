@@ -62,6 +62,13 @@ services:
       HOST: 0.0.0.0
       PORT: 3000
       HYDRA_ADMIN_URL: http://hydra:4445
+      HYDRA_PUBLIC_URL: http://hydra:4444
+      BFF_AUTHORIZATION_URL: http://localhost:4444
+      BFF_CLIENT_ID: demo-client
+      BFF_CLIENT_SECRET: demo-secret
+      BFF_REDIRECT_URI: http://localhost:3000/api/bff/callback
+      BFF_FRONTEND_ORIGIN: http://localhost:3002
+      BFF_API_UPSTREAM_URL: http://auth-provider:3000
       DATABASE_URL: postgres://postgres:postgres@postgres:5432/postgres?sslmode=disable
       JWT_SECRET: super-secret-jwt-key-for-development-only
       JWT_ISSUER: auth.example.com
@@ -79,17 +86,17 @@ services:
     build: ./frontend
     environment:
       NODE_ENV: development
-      API_BASE_URL: http://auth-provider:3000
+      NEXT_PUBLIC_BFF_BASE_URL: http://localhost:3000
       NEXT_PUBLIC_API_URL: http://localhost:3000
       NEXT_PUBLIC_HYDRA_URL: http://localhost:4444
       NEXT_PUBLIC_CLIENT_ID: demo-client
-      NEXT_PUBLIC_REDIRECT_URI: http://localhost:3001/callback
+      NEXT_PUBLIC_REDIRECT_URI: http://localhost:3000/api/bff/callback
       NEXT_PUBLIC_DEFAULT_TENANT: test-shop
       HYDRA_PUBLIC_URL: http://hydra:4444
       HYDRA_ADMIN_URL: http://hydra:4445
       CLIENT_SECRET: demo-secret
     ports:
-      - "3001:3000"
+      - "3002:3000"
     depends_on:
       - auth-provider
 

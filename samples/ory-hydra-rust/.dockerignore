@@ -1,0 +1,9 @@
+target/
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+node_modules/
+.git/
+.env
+.env.*
+*.log

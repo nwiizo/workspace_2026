@@ -2,6 +2,7 @@
 #![allow(dead_code)]
 
 mod auth;
+mod bff;
 mod engineer;
 mod game_engine;
 mod hydra;
@@ -13,6 +14,7 @@ mod tenant;
 mod user;
 
 pub use auth::AuthService;
+pub use bff::{BffConfig, BffService, BffSession};
 pub use engineer::EngineerService;
 pub use game_engine::{GameEngineService, LeaderboardEntry, LeaderboardType};
 pub use hydra::HydraClient;

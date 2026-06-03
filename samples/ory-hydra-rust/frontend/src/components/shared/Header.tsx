@@ -13,20 +13,26 @@ export default function Header() {
   const [user, setUser] = useState<User | null>(null);
 
   useEffect(() => {
-    const cookieRow = document.cookie
-      .split("; ")
-      .find((row) => row.startsWith("user_info="));
+    async function loadUser() {
+      const bffBaseUrl = process.env.NEXT_PUBLIC_BFF_BASE_URL || "http://localhost:3000";
+      const response = await fetch(`${bffBaseUrl}/api/bff/me`, {
+        credentials: "include",
+        cache: "no-store",
+      });
 
-    if (cookieRow) {
-      try {
-        const userInfoCookie = cookieRow.substring("user_info=".length);
-        const decodedCookie = decodeURIComponent(userInfoCookie);
-        const userInfo = JSON.parse(atob(decodedCookie));
-        setUser(userInfo);
-      } catch {
-        // Invalid user_info cookie
+      if (!response.ok) {
+        setUser(null);
+        return;
       }
+
+      const session = await response.json();
+      setUser({
+        email: session.user.email || session.user.sub,
+        role: session.user.role || "customer",
+      });
     }
+
+    loadUser().catch(() => setUser(null));
   }, []);
 
   const isManager = user?.role === "manager" || user?.role === "platform_admin";

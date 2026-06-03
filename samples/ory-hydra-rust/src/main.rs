@@ -8,19 +8,19 @@ mod services;
 mod state;
 
 use axum::{
-    Router, middleware as axum_middleware,
-    routing::{delete, get, patch, post, put},
+    Router,
+    http::{HeaderValue, Method, header},
+    middleware as axum_middleware,
+    routing::{any, delete, get, patch, post, put},
 };
 use std::sync::Arc;
-use tower_http::{
-    cors::{Any, CorsLayer},
-    trace::TraceLayer,
-};
+use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::config::Config;
 use crate::db::pool::{create_pool, run_migrations};
+use crate::services::BffConfig;
 use crate::state::AppState;
 
 #[tokio::main]
@@ -48,12 +48,23 @@ async fn main() -> anyhow::Result<()> {
     run_migrations(&pool).await?;
 
     // Create application state
+    let bff_config = BffConfig {
+        hydra_public_url: config.hydra_public_url.clone(),
+        authorization_url: config.bff_authorization_url.clone(),
+        client_id: config.bff_client_id.clone(),
+        client_secret: config.bff_client_secret.clone(),
+        redirect_uri: config.bff_redirect_uri.clone(),
+        frontend_origin: config.bff_frontend_origin.clone(),
+        api_upstream_url: config.bff_api_upstream_url.clone(),
+    };
     let state = Arc::new(AppState::new(
         config.hydra_admin_url.clone(),
+        bff_config,
         config.jwt_secret.as_bytes(),
         config.jwt_issuer.clone(),
         pool,
     ));
+    let frontend_origin = HeaderValue::from_str(&config.bff_frontend_origin)?;
 
     // Initialize auth service (seed demo user)
     state.auth.init().await?;
@@ -202,6 +213,13 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/auth/login", post(handlers::login))
         .route("/api/auth/refresh", post(handlers::refresh))
         .route("/api/auth/logout", post(handlers::logout))
+        // API-driven BFF endpoints. OAuth tokens stay in this Rust process.
+        .route("/api/bff/login", get(handlers::bff_login))
+        .route("/api/bff/callback", get(handlers::bff_callback))
+        .route("/api/bff/me", get(handlers::bff_me))
+        .route("/api/bff/csrf", get(handlers::bff_csrf))
+        .route("/api/bff/logout", get(handlers::bff_logout))
+        .route("/api/bff/proxy/*path", any(handlers::bff_proxy))
         // API v1 - Platform management
         .nest("/api/v1", platform_api)
         // API v1 - Tenant operations (DONADONA)
@@ -209,9 +227,23 @@ async fn main() -> anyhow::Result<()> {
         // Add CORS layer (allow frontend origin)
         .layer(
             CorsLayer::new()
-                .allow_origin(Any)
-                .allow_methods(Any)
-                .allow_headers(Any),
+                .allow_origin(frontend_origin)
+                .allow_credentials(true)
+                .allow_methods([
+                    Method::GET,
+                    Method::POST,
+                    Method::PUT,
+                    Method::PATCH,
+                    Method::DELETE,
+                    Method::OPTIONS,
+                ])
+                .allow_headers([
+                    header::CONTENT_TYPE,
+                    header::ACCEPT,
+                    header::ORIGIN,
+                    header::HeaderName::from_static("x-tenant-slug"),
+                    header::HeaderName::from_static("x-csrf-token"),
+                ]),
         )
         // Add tracing layer
         .layer(TraceLayer::new_for_http())

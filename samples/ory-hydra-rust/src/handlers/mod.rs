@@ -2,6 +2,7 @@
 #![allow(dead_code)]
 
 mod auth;
+mod bff;
 mod callback;
 mod consent;
 mod dashboard;
@@ -13,6 +14,7 @@ pub mod platform;
 pub mod tenant;
 
 pub use auth::*;
+pub use bff::*;
 pub use callback::*;
 pub use consent::*;
 pub use dashboard::*;

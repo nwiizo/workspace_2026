@@ -22,17 +22,8 @@ export default function TenantsPage() {
     loadTenants();
   }, []);
 
-  function setupApi() {
-    const cookieRow = document.cookie
-      .split("; ")
-      .find((row) => row.startsWith("auth_token="));
-    const token = cookieRow ? cookieRow.substring("auth_token=".length) : null;
-    if (token) api.setToken(token);
-  }
-
   async function loadTenants() {
     try {
-      setupApi();
       const data = await api.getTenants();
       setTenants(data);
     } catch (err) {
@@ -48,7 +39,6 @@ export default function TenantsPage() {
     setError(null);
 
     try {
-      setupApi();
       await api.createTenant(newTenant);
       setNewTenant({ slug: "", name: "", plan: "free" });
       setShowCreateForm(false);
@@ -64,7 +54,6 @@ export default function TenantsPage() {
     if (!confirm("Are you sure you want to delete this tenant?")) return;
 
     try {
-      setupApi();
       await api.deleteTenant(tenantId);
       loadTenants();
     } catch (err) {

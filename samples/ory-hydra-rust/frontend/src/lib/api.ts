@@ -1,4 +1,4 @@
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:3000";
+const API_BASE_URL = process.env.NEXT_PUBLIC_BFF_BASE_URL || "http://localhost:3000";
 
 // ============= Types =============
 
@@ -195,7 +195,6 @@ export interface AddSpecialtyRequest {
 
 class ApiClient {
   private baseUrl: string;
-  private token?: string;
   private tenantSlug: string = "test-shop"; // Default tenant for local development
 
   constructor(baseUrl: string = API_BASE_URL) {
@@ -203,11 +202,11 @@ class ApiClient {
   }
 
   setToken(token: string) {
-    this.token = token;
+    void token;
   }
 
   clearToken() {
-    this.token = undefined;
+    // Tokens are owned by the BFF; the browser never stores them.
   }
 
   setTenantSlug(slug: string) {
@@ -222,18 +221,20 @@ class ApiClient {
     endpoint: string,
     options: RequestInit = {}
   ): Promise<T> {
+    const method = (options.method || "GET").toUpperCase();
     const headers: HeadersInit = {
       "Content-Type": "application/json",
       "X-Tenant-Slug": this.tenantSlug,
       ...options.headers,
     };
 
-    if (this.token) {
-      (headers as Record<string, string>)["Authorization"] = `Bearer ${this.token}`;
+    if (!["GET", "HEAD", "OPTIONS"].includes(method)) {
+      (headers as Record<string, string>)["X-CSRF-Token"] = await this.getCsrfToken();
     }
 
-    const response = await fetch(`${this.baseUrl}${endpoint}`, {
+    const response = await fetch(`${this.baseUrl}/api/bff/proxy${endpoint}`, {
       ...options,
+      credentials: "include",
       headers,
     });
 
@@ -246,6 +247,20 @@ class ApiClient {
     const text = await response.text();
     if (!text) return {} as T;
     return JSON.parse(text);
+  }
+
+  private async getCsrfToken(): Promise<string> {
+    const response = await fetch(`${this.baseUrl}/api/bff/csrf`, {
+      credentials: "include",
+      cache: "no-store",
+    });
+
+    if (!response.ok) {
+      throw new Error(`CSRF token request failed: ${response.status}`);
+    }
+
+    const data = await response.json();
+    return data.csrf_token;
   }
 
   // ============= Tenants (Platform Admin) =============
