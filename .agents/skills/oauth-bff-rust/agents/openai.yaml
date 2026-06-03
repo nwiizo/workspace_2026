@@ -1,0 +1,4 @@
+interface:
+  display_name: "OAuth BFF Rust"
+  short_description: "Rust OAuth BFFの安全な実装と検証"
+  default_prompt: "Use $oauth-bff-rust to implement or review a Rust OAuth BFF that keeps browser tokens server-side."
