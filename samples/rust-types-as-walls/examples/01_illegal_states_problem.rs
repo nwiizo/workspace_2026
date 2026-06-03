@@ -25,6 +25,8 @@ enum OrderStatus {
 
 /// よく見かける「フラットなstruct」。
 /// 個々のフィールドは単独では合法だが、組み合わせで矛盾を許してしまう。
+/// `bool` 2つ・3状態・`Option` 1つで、表現できる状態は 2 * 2 * 3 * 2 = 24通り。
+/// ドメイン上正しいのはそのうち数通りで、残りは「書けてしまう不正」だ。
 #[allow(dead_code)]
 #[derive(Debug)]
 struct Order {
@@ -32,6 +34,20 @@ struct Order {
     payment_id: Option<PaymentId>,
     status: OrderStatus,
     verified_at: Option<DateTime<Utc>>,
+}
+
+/// 「実行時に守る」アプローチ。フィールド間の整合性をここでチェックする。
+/// このやり方は3つの弱点を抱える: 呼び忘れる経路があれば素通りし、フィールドが
+/// 増えるたびに条件が膨らみ、矛盾が分かるのは書いた瞬間ではなく実行時だ。
+fn assert_consistent(order: &Order) -> Result<(), &'static str> {
+    if order.is_paid && order.payment_id.is_none() {
+        return Err("支払い済みなのに決済IDがない");
+    }
+    if matches!(order.status, OrderStatus::Verified) && order.verified_at.is_none() {
+        return Err("認証済みなのに認証日時がない");
+    }
+    // 状態が増えるたびに、ここに条件が増えていく。
+    Ok(())
 }
 
 fn main() {
@@ -47,6 +63,13 @@ fn main() {
     // このコードは警告もエラーも出ずに通る。
     println!("不正なのにコンパイルが通ってしまう: {bad_order:?}");
 
-    // 実運用では、こうしたレコードが静かにDBに残り、
+    // 実行時バリデーションを「呼べば」捕まえられる。だが呼び忘れる経路があれば素通りする。
+    match assert_consistent(&bad_order) {
+        Err(reason) => println!("実行時チェックで初めて検出: {reason}"),
+        Ok(()) => unreachable!(),
+    }
+
+    // 実運用では、このチェックを呼び忘れた経路を通ったレコードが静かにDBに残り、
     // 数ヶ月後に返金処理や再認証ポリシーで突然例外を投げる。
+    // 後続のサンプル（04, 08）では、この矛盾を enum と状態型で「書けなく」していく。
 }
