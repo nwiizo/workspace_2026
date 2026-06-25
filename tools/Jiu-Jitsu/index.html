@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>柔術ディフェンス道場 — Jiu-Jitsu Defense Dojo</title>
+  <link rel="stylesheet" href="css/style.css" />
+  <!-- Three.js をビルドなしで読み込む (要 ローカル静的サーバー) -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/"
+    }
+  }
+  </script>
+</head>
+<body>
+  <div id="app">
+    <!-- 3D 描画キャンバス -->
+    <div id="stage">
+      <div id="position-badge" class="position-badge" aria-live="polite"></div>
+      <div id="loading" class="loading">読み込み中… / Loading…</div>
+    </div>
+
+    <!-- 教育パネル -->
+    <aside id="panel" class="panel">
+      <header class="panel__head">
+        <h1 class="panel__title">柔術ディフェンス道場</h1>
+        <p class="panel__subtitle">Jiu-Jitsu Defense Dojo</p>
+        <div class="scoreboard">
+          <span class="score" id="score">道場ポイント: 0</span>
+          <span class="flow" id="flow">流れ: 五分</span>
+          <span class="streak" id="streak" hidden></span>
+          <span class="belt" id="belt" title="連続正解で帯が上がります">⬜ 白帯</span>
+        </div>
+        <div class="modebar" aria-label="稽古モード">
+          <div class="segmented segmented--roll" role="group" aria-label="攻防モード">
+            <button id="mode-mixed" class="segmented__btn is-active" type="button">混合</button>
+            <button id="mode-defense" class="segmented__btn" type="button">防御</button>
+            <button id="mode-offense" class="segmented__btn" type="button">攻撃</button>
+          </div>
+          <div class="segmented" role="group" aria-label="道着モード">
+            <button id="uniform-gi" class="segmented__btn is-active" type="button">ギ</button>
+            <button id="uniform-nogi" class="segmented__btn" type="button">ノーギ</button>
+          </div>
+          <div class="segmented" role="group" aria-label="難易度">
+            <button id="difficulty-beginner" class="segmented__btn is-active" type="button">入門・無制限</button>
+            <button id="difficulty-live" class="segmented__btn" type="button">実戦・秒数あり</button>
+          </div>
+        </div>
+        <div class="stylebar" aria-label="相手スタイル">
+          <div class="segmented segmented--style" role="group" aria-label="相手スタイル">
+            <button id="style-random" class="segmented__btn is-active" type="button">ランダム</button>
+            <button id="style-pressure-passer" class="segmented__btn" type="button">圧</button>
+            <button id="style-choke-hunter" class="segmented__btn" type="button">絞め</button>
+            <button id="style-guard-player" class="segmented__btn" type="button">ガード</button>
+          </div>
+        </div>
+      </header>
+
+      <section class="lesson" id="lesson">
+        <!-- 動的に描画 -->
+      </section>
+
+      <footer class="panel__foot">
+        <button id="dojo-toggle" class="link-btn" type="button">道場の心得 / Dojo Principles ▾</button>
+        <div id="dojo-notes" class="dojo-notes" hidden></div>
+      </footer>
+    </aside>
+  </div>
+
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>

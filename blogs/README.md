@@ -15,7 +15,7 @@ Blog articles, drafts, and the occasional existential crisis about whether anyon
 
 ## Local Config
 
-`.claude/` contains Claude Code commands and agents. They're gitignored because some things are meant to stay mysterious. 🔮
+`.agents/` is the single source of truth for skills, rules, and docs. `.claude/` is just symlinks pointing at it, so Claude Code and Codex read the same brain. 🔮
 
 ## Pro Tips
 

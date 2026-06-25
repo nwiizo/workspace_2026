@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <title>Jiu-Jitsu pose audit</title>
+  <style>
+    html,
+    body {
+      margin: 0;
+      background: #0b1018;
+      color: #dbe7f4;
+      font: 13px system-ui, sans-serif;
+    }
+    #grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(360px, 1fr));
+    }
+    .cell {
+      position: relative;
+      min-height: 420px;
+      border: 1px solid #26374a;
+    }
+    .label {
+      position: absolute;
+      z-index: 2;
+      top: 8px;
+      left: 8px;
+      padding: 4px 8px;
+      border-radius: 999px;
+      background: rgba(0, 0, 0, 0.65);
+      color: #a8d3ff;
+    }
+    .label small {
+      display: block;
+      margin-top: 3px;
+      max-width: 610px;
+      white-space: normal;
+      color: #d6e6f7;
+      font-size: 11px;
+    }
+    img {
+      display: block;
+      width: 100%;
+      height: 420px;
+      object-fit: cover;
+    }
+  </style>
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/"
+    }
+  }
+  </script>
+</head>
+<body>
+  <div id="grid"></div>
+  <script type="module">
+    import * as THREE from "three";
+    import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
+    import { Fighter } from "./js/fighter.js";
+    import { POSES } from "./js/poses.js";
+    import { POSE_SPECS } from "./js/poseSpecs.js";
+    import { OFFENSE_SCENARIOS, SCENARIOS } from "./js/techniques.js";
+
+    const params = new URLSearchParams(window.location.search);
+    const query = params.get("q")?.toLowerCase() || "";
+    const showMarkers = params.get("markers") !== "off";
+    const pairs = [];
+    for (const s of [...SCENARIOS, ...OFFENSE_SCENARIOS]) {
+      pairs.push([`${s.id} setup`, s.setup.red, s.setup.blue]);
+      pairs.push([`${s.id} attack`, s.attack.red, s.attack.blue]);
+      for (const action of s.opponentActions || []) {
+        if (action.attack) {
+          pairs.push([`${s.id} action ${action.id}`, action.attack.red, action.attack.blue]);
+        }
+      }
+      for (const option of s.options) {
+        pairs.push([`${s.id} ${option.correct ? "ok" : "x"}`, option.result.red, option.result.blue]);
+      }
+    }
+
+    const unique = [];
+    const seen = new Set();
+    for (const pair of pairs) {
+      if (query && !pair.join(" ").toLowerCase().includes(query)) continue;
+      const key = pair.join("|");
+      if (!seen.has(key)) {
+        seen.add(key);
+        unique.push(pair);
+      }
+    }
+
+    const markerMaterials = {
+      red: new THREE.MeshBasicMaterial({ color: 0xff4f5e, transparent: true, opacity: 0.42, depthTest: false }),
+      redLine: new THREE.LineBasicMaterial({ color: 0xffb0b8, depthTest: false }),
+      redSupport: new THREE.MeshBasicMaterial({ color: 0xff4f5e, transparent: true, opacity: 0.16, side: THREE.DoubleSide, depthTest: false }),
+      redLoad: new THREE.LineBasicMaterial({ color: 0xffd166, transparent: true, opacity: 0.86, depthTest: false }),
+      blue: new THREE.MeshBasicMaterial({ color: 0x60a5fa, transparent: true, opacity: 0.42, depthTest: false }),
+      blueLine: new THREE.LineBasicMaterial({ color: 0xb7d8ff, depthTest: false }),
+      blueSupport: new THREE.MeshBasicMaterial({ color: 0x60a5fa, transparent: true, opacity: 0.16, side: THREE.DoubleSide, depthTest: false }),
+      blueLoad: new THREE.LineBasicMaterial({ color: 0xffd166, transparent: true, opacity: 0.86, depthTest: false }),
+      loadPoint: new THREE.MeshBasicMaterial({ color: 0xffd166, transparent: true, opacity: 0.9, depthTest: false }),
+    };
+
+    function addFloorDisc(scene, x, z, radius, material) {
+      const disc = new THREE.Mesh(new THREE.CircleGeometry(radius, 32), material);
+      disc.rotation.x = -Math.PI / 2;
+      disc.position.set(x, 0.012, z);
+      disc.renderOrder = 20;
+      scene.add(disc);
+    }
+
+    function addLine(scene, from, to, material) {
+      const geo = new THREE.BufferGeometry().setFromPoints([from, to]);
+      const line = new THREE.Line(geo, material);
+      line.renderOrder = 30;
+      scene.add(line);
+    }
+
+    function addPoint(scene, x, y, z, radius, material) {
+      const point = new THREE.Mesh(new THREE.SphereGeometry(radius, 12, 8), material);
+      point.position.set(x, y, z);
+      point.renderOrder = 35;
+      scene.add(point);
+    }
+
+    function addAuditMarkers(scene, poseId, pose, opponentId, opponentPose, side) {
+      if (!pose?.root?.pos) return;
+      const spec = POSE_SPECS[poseId];
+      const [x, y, z] = pose.root.pos;
+      const mats = side === "red"
+        ? [markerMaterials.red, markerMaterials.redLine, markerMaterials.redSupport, markerMaterials.redLoad]
+        : [markerMaterials.blue, markerMaterials.blueLine, markerMaterials.blueSupport, markerMaterials.blueLoad];
+      const [discMat, lineMat, supportMat, loadMat] = mats;
+      const [dx, dz] = spec?.support?.offset || [0, 0];
+      const supportX = x + dx;
+      const supportZ = z + dz;
+      addFloorDisc(scene, supportX, supportZ, spec?.support?.radius || 0.3, supportMat);
+      addFloorDisc(scene, x, z, 0.045, discMat);
+      addLine(
+        scene,
+        new THREE.Vector3(x, 0.03, z),
+        new THREE.Vector3(x, Math.max(0.08, y), z),
+        lineMat,
+      );
+      if (spec?.support?.load?.includes("opponent") && opponentPose?.root?.pos) {
+        const [opponentX, , opponentZ] = opponentPose.root.pos;
+        addPoint(scene, supportX, 0.16, supportZ, 0.025, markerMaterials.loadPoint);
+        addPoint(scene, opponentX, 0.16, opponentZ, 0.018, markerMaterials.loadPoint);
+        addLine(
+          scene,
+          new THREE.Vector3(supportX, 0.16, supportZ),
+          new THREE.Vector3(opponentX, 0.16, opponentZ),
+          loadMat,
+        );
+      }
+      if (spec?.vector?.some((n) => n !== 0)) {
+        const direction = new THREE.Vector3(spec.vector[0], 0, spec.vector[1]).normalize();
+        const arrow = new THREE.ArrowHelper(
+          direction,
+          new THREE.Vector3(supportX, 0.1, supportZ),
+          0.32,
+          side === "red" ? 0xffb0b8 : 0xb7d8ff,
+          0.08,
+          0.05,
+        );
+        scene.add(arrow);
+      }
+    }
+
+    function specLine(poseId) {
+      const spec = POSE_SPECS[poseId];
+      if (!spec) return `${poseId}: no pose spec`;
+      return `${poseId}: ${spec.force} / ${spec.support.base} / ${spec.contacts.join(", ")}`;
+    }
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+    renderer.setPixelRatio(1);
+    renderer.setSize(640, 420, false);
+    const pmrem = new THREE.PMREMGenerator(renderer);
+    const env = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+    const grid = document.getElementById("grid");
+
+    for (const [label, redId, blueId] of unique) {
+      const scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x10161e);
+      scene.environment = env;
+      scene.add(new THREE.HemisphereLight(0x9fb6d6, 0x202830, 0.9));
+      const key = new THREE.DirectionalLight(0xffffff, 1.4);
+      key.position.set(3, 6, 4);
+      scene.add(key);
+      scene.add(new THREE.GridHelper(4, 8, 0x2a3f5a, 0x1d2b3d));
+
+      const red = new Fighter({ color: 0xe5484d, accent: 0x3a0d0e });
+      const blue = new Fighter({ color: 0x3b82f6, accent: 0x0c1c3a });
+      red.applyPose(POSES[redId], { immediate: true });
+      blue.applyPose(POSES[blueId], { immediate: true });
+      scene.add(red.root, blue.root);
+      if (showMarkers) {
+        addAuditMarkers(scene, redId, POSES[redId], blueId, POSES[blueId], "red");
+        addAuditMarkers(scene, blueId, POSES[blueId], redId, POSES[redId], "blue");
+      }
+
+      const camera = new THREE.PerspectiveCamera(38, 640 / 420, 0.1, 100);
+      camera.position.set(2.8, 2.0, 3.8);
+      camera.lookAt(0, 0.35, 0);
+      renderer.render(scene, camera);
+
+      const cell = document.createElement("div");
+      cell.className = "cell";
+      const caption = document.createElement("div");
+      caption.className = "label";
+      caption.textContent = `${label}: R=${redId} B=${blueId}`;
+      const detail = document.createElement("small");
+      detail.textContent = `R ${specLine(redId)} | B ${specLine(blueId)}`;
+      caption.append(detail);
+      const img = new Image();
+      img.src = renderer.domElement.toDataURL();
+      cell.append(caption, img);
+      grid.appendChild(cell);
+    }
+    document.title = "ready";
+  </script>
+</body>
+</html>

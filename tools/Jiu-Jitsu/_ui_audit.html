@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <title>Jiu-Jitsu UI audit</title>
+  <link rel="stylesheet" href="./css/style.css" />
+  <style>
+    body {
+      min-height: 100vh;
+      padding: 18px;
+      overflow: auto;
+    }
+    #app {
+      display: block;
+      height: auto;
+    }
+    .audit-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(300px, 1fr));
+      gap: 16px;
+    }
+    .audit-panel {
+      min-height: 760px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel-bg);
+      overflow: hidden;
+    }
+    .audit-title {
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--line);
+      color: var(--ink-dim);
+      font-size: 0.82rem;
+    }
+    .audit-panel .lesson {
+      height: auto;
+      overflow: visible;
+    }
+    .audit-hidden {
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <div class="audit-grid">
+    <section class="audit-panel">
+      <div class="audit-title">setup: options locked, numbers visible</div>
+      <div id="setup-out"></div>
+    </section>
+    <section class="audit-panel">
+      <div class="audit-title">decision: options enabled, number keys match visible choices</div>
+      <div id="decision-out"></div>
+    </section>
+    <section class="audit-panel">
+      <div class="audit-title">beginner: pressure cue without countdown</div>
+      <div id="no-limit-out"></div>
+    </section>
+    <section class="audit-panel">
+      <div class="audit-title">feedback: action cue appears after answer</div>
+      <div id="feedback-out"></div>
+    </section>
+    <section class="audit-panel">
+      <div class="audit-title">action-gated: hook ride changes back defense</div>
+      <div id="back-gated-out"></div>
+    </section>
+    <section class="audit-panel">
+      <div class="audit-title">action-gated: turn-away changes the correct attack</div>
+      <div id="action-gated-out"></div>
+    </section>
+    <section class="audit-panel">
+      <div class="audit-title">action-gated: grapevine changes mount escape</div>
+      <div id="mount-gated-out"></div>
+    </section>
+    <section class="audit-panel">
+      <div class="audit-title">offense-gated: bridge changes mount attack</div>
+      <div id="mount-attack-gated-out"></div>
+    </section>
+    <section class="audit-panel">
+      <div class="audit-title">offense-gated: hip slide changes back attack</div>
+      <div id="back-attack-gated-out"></div>
+    </section>
+  </div>
+
+  <div class="audit-hidden">
+    <div id="lesson" class="lesson"></div>
+    <div id="position-badge"></div>
+    <div id="score"></div>
+    <div id="flow"></div>
+    <div id="belt"></div>
+    <div id="streak"></div>
+    <button id="uniform-gi"></button>
+    <button id="uniform-nogi"></button>
+    <button id="mode-mixed"></button>
+    <button id="mode-defense"></button>
+    <button id="mode-offense"></button>
+    <button id="difficulty-beginner"></button>
+    <button id="difficulty-live"></button>
+    <button id="style-random"></button>
+    <button id="style-pressure-passer"></button>
+    <button id="style-choke-hunter"></button>
+    <button id="style-guard-player"></button>
+    <button id="dojo-toggle"></button>
+    <div id="dojo-notes"></div>
+  </div>
+
+  <script type="module">
+    import { UI } from "./js/ui.js";
+    import { OFFENSE_SCENARIOS, SCENARIOS } from "./js/techniques.js";
+
+    const ui = new UI();
+    const matchesAction = (option, actionId) => {
+      const required = option.requiresAction || [];
+      const forbidden = option.forbiddenAction || [];
+      return (!required.length || required.includes(actionId)) && forbidden.every((id) => id !== actionId);
+    };
+    const withActionOptions = (scenario, actionId) => ({
+      ...scenario,
+      options: scenario.options.filter((option) => matchesAction(option, actionId)),
+    });
+    const baseScenario = SCENARIOS.find((item) => item.id === "closed-guard-posture");
+    const scenario = withActionOptions(baseScenario);
+
+    const meta = {
+      rollMode: "mixed",
+      uniformMode: "gi",
+      difficultyMode: "beginner",
+      opponentStyle: { label: "ガードプレイヤー" },
+      mission: { label: "反応を追う", text: "2連続正解を作る" },
+      tactic: { label: "速いスクランブル", text: "相手の反応が速い" },
+      adaptiveFocus: {
+        label: "腰角度 の読み直し",
+        text: "前回ミスした読む線に関係する局面が少し出やすくなります",
+      },
+      rollState: ["ガード回復", "首を守った"],
+      index: 0,
+      total: 4,
+    };
+
+    ui.renderLesson(scenario, () => {}, { ...meta, decisionOpen: false });
+    document.getElementById("setup-out").innerHTML = document.getElementById("lesson").innerHTML;
+
+    ui.renderLesson(
+      {
+        ...withActionOptions(baseScenario, "angle-cut"),
+        opponentAction: {
+          id: "angle-cut",
+          label: "腰角度を作る",
+          cue: "相手の腰角度と片腕の孤立を見て、肘を中心線へ戻す",
+        },
+        readCues: ["腰角度", "片腕", "膝"],
+      },
+      () => {},
+      { ...meta, decisionOpen: true },
+    );
+    document.getElementById("decision-out").innerHTML = document.getElementById("lesson").innerHTML;
+
+    const noLimitLesson = document.getElementById("lesson");
+    noLimitLesson.querySelector("#decision-clock").textContent = "時間制限なし";
+    noLimitLesson.querySelector("#opponent-intent").textContent =
+      "相手の圧を見て、落ち着いて危険な線を先に消す";
+    document.getElementById("no-limit-out").innerHTML = noLimitLesson.innerHTML;
+
+    const active = {
+      ...withActionOptions(baseScenario, "angle-cut"),
+      opponentAction: {
+        id: "angle-cut",
+        label: "腰角度を作る",
+        cue: "相手の腰角度と片腕の孤立を見て、肘を中心線へ戻す",
+      },
+      readCues: ["腰角度", "片腕", "膝"],
+    };
+    ui.renderLesson(active, () => {}, { ...meta, decisionOpen: true });
+    ui.renderFeedback(active, 0, {
+      isLast: false,
+      autoAdvance: false,
+      timedOut: false,
+      tempo: {
+        id: "quick",
+        label: "先手の判断",
+        text: "相手の圧が深くなる前に正しい線を読めた",
+        bonus: 2,
+      },
+      stateEffects: {
+        added: ["姿勢を守った"],
+        removed: ["腕が伸びた"],
+      },
+      onNext: () => {},
+      onReplay: () => {},
+    });
+    document.getElementById("feedback-out").innerHTML = document.querySelector(".feedback").outerHTML;
+
+    const back = SCENARIOS.find((item) => item.id === "back-defense");
+    const backActionId = "hook-ride";
+    ui.renderLesson(
+      {
+        ...withActionOptions(back, backActionId),
+        opponentAction: {
+          id: backActionId,
+          label: "腰のフックで追う",
+          cue: "首を閉じたまま、フックの弱い側へ腰をずらす",
+        },
+        readCues: ["腰", "フック", "弱い側"],
+      },
+      () => {},
+      { ...meta, rollState: [], decisionOpen: true },
+    );
+    document.getElementById("back-gated-out").innerHTML = document.getElementById("lesson").innerHTML;
+
+    const side = OFFENSE_SCENARIOS.find((item) => item.id === "attack-from-side");
+    const actionId = "turn-away";
+    ui.renderLesson(
+      {
+        ...withActionOptions(side, actionId),
+        opponentAction: {
+          id: actionId,
+          label: "青が背を向ける",
+          cue: "背中が見えたら腰を追い、バックかマウントへ進む",
+        },
+        readCues: ["背中", "腰", "フック"],
+      },
+      () => {},
+      { ...meta, rollState: [], decisionOpen: true },
+    );
+    document.getElementById("action-gated-out").innerHTML = document.getElementById("lesson").innerHTML;
+
+    const mount = SCENARIOS.find((item) => item.id === "mount-escape");
+    const mountActionId = "grapevine-base";
+    ui.renderLesson(
+      {
+        ...withActionOptions(mount, mountActionId),
+        opponentAction: {
+          id: mountActionId,
+          label: "脚で腰を伸ばす",
+          cue: "足を絡められたら膝肘で空間を作り、橋だけに固執しない",
+        },
+        readCues: ["足の絡み", "腰", "肘"],
+      },
+      () => {},
+      { ...meta, rollState: [], decisionOpen: true },
+    );
+    document.getElementById("mount-gated-out").innerHTML = document.getElementById("lesson").innerHTML;
+
+    const mountAttack = OFFENSE_SCENARIOS.find((item) => item.id === "attack-from-mount");
+    const mountAttackActionId = "bridge-threat";
+    ui.renderLesson(
+      {
+        ...withActionOptions(mountAttack, mountAttackActionId),
+        opponentAction: {
+          id: mountAttackActionId,
+          label: "青が橋を作る",
+          cue: "腰が跳ねる方向を読み、ベースを残してから攻める",
+        },
+        readCues: ["同側の足", "腰", "肘"],
+      },
+      () => {},
+      { ...meta, rollState: [], rollMode: "offense", decisionOpen: true },
+    );
+    document.getElementById("mount-attack-gated-out").innerHTML = document.getElementById("lesson").innerHTML;
+
+    const backAttack = OFFENSE_SCENARIOS.find((item) => item.id === "attack-from-back");
+    const backAttackActionId = "hip-slide";
+    ui.renderLesson(
+      {
+        ...withActionOptions(backAttack, backAttackActionId),
+        opponentAction: {
+          id: backAttackActionId,
+          label: "青が弱い側へ腰を抜く",
+          cue: "腰が抜ける前にフックを保つか上位へ切り替える",
+        },
+        readCues: ["フック", "腰", "背中"],
+      },
+      () => {},
+      { ...meta, rollState: [], rollMode: "offense", decisionOpen: true },
+    );
+    document.getElementById("back-attack-gated-out").innerHTML = document.getElementById("lesson").innerHTML;
+  </script>
+</body>
+</html>
