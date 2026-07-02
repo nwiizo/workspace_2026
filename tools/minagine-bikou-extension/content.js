@@ -166,10 +166,14 @@
     const dialogRoot = container.matches(DIALOG_SELECTOR)
       ? container
       : container.closest(DIALOG_SELECTOR) || container;
+    let reasonsOk = true;
     try {
-      await selectReason(dialogRoot, "reasonStartSelected", memoText);
-      await selectReason(dialogRoot, "reasonEndSelected", memoText);
+      // Sequential: the second select waits for the first menu to unmount.
+      const startOk = await selectReason(dialogRoot, "reasonStartSelected", memoText);
+      const endOk = await selectReason(dialogRoot, "reasonEndSelected", memoText);
+      reasonsOk = startOk && endOk;
     } catch (e) {
+      reasonsOk = false;
       console.warn("[minagine-bikou] reason select failed:", e);
     }
 
@@ -183,6 +187,12 @@
       { timeout: 4500 },
     );
     await sleep(220);
+
+    // A reason field that existed but never took the value must not be reported
+    // as success — surface it as a row failure instead.
+    if (!reasonsOk) {
+      throw new Error("PCログ打刻差異の理由（開始/終了）を設定できませんでした");
+    }
   }
 
   // Locate the outer form's primary 保存 button (submit) so we can commit
@@ -197,40 +207,75 @@
   }
 
   // Open the labelled MUI Select and click the option whose text matches.
+  // MUI Menus animate closed over ~200ms and keep their listbox + backdrop
+  // mounted during that transition. Opening the next select too early lets the
+  // stale backdrop swallow the click and makes an unscoped
+  // document.querySelector('[role="listbox"]') return the *previous* select's
+  // dying listbox — so the second select (終了時刻) silently never gets set.
+  // We therefore (1) wait for any prior menu to unmount before opening, (2)
+  // scope the listbox to this select via aria-controls, and (3) verify the
+  // displayed value actually changed and retry once.
   async function selectReason(scope, nativeName, optionText) {
+    // A missing field means this row has no 打刻差異 report to fill — nothing to
+    // set, so report success (true). Only a present-but-unchanged field fails.
     const native = scope.querySelector(`input[name="${nativeName}"]`);
-    if (!native) return;
+    if (!native) return true;
     const combobox = native
       .closest(".MuiInputBase-root")
       ?.querySelector('[role="combobox"]');
-    if (!combobox) return;
+    if (!combobox) return true;
 
-    if ((combobox.textContent || "").trim() === optionText) return;
+    const current = () => (combobox.textContent || "").trim();
+    if (current() === optionText) return true;
 
-    combobox.focus();
-    combobox.dispatchEvent(
-      new MouseEvent("mousedown", { bubbles: true, button: 0 }),
-    );
-    combobox.click();
+    const noListbox = () => !document.querySelector('[role="listbox"]');
 
-    const listbox = await waitFor(
-      () => document.querySelector('[role="listbox"]'),
-      { timeout: 2000 },
-    );
-    if (!listbox) return;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      // Ensure the previous select's menu has fully unmounted before opening
+      // ours, otherwise its backdrop/listbox interferes.
+      await waitFor(noListbox, { timeout: 1500 });
 
-    const options = Array.from(listbox.querySelectorAll('[role="option"]'));
-    const match =
-      options.find((o) => (o.textContent || "").trim() === optionText) ||
-      options.find((o) => (o.textContent || "").includes(optionText));
-    if (match) {
-      match.click();
-    } else {
-      document.dispatchEvent(
-        new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+      combobox.focus();
+      combobox.dispatchEvent(
+        new MouseEvent("mousedown", { bubbles: true, button: 0 }),
       );
+      combobox.click();
+
+      // Scope to *this* select's listbox via aria-controls; fall back to any
+      // freshly-opened listbox only when the id is unavailable (safe because we
+      // waited for no listbox to exist just above).
+      const listboxId = combobox.getAttribute("aria-controls");
+      const listbox = await waitFor(
+        () =>
+          (listboxId && document.getElementById(listboxId)) ||
+          document.querySelector('[role="listbox"]'),
+        { timeout: 2000 },
+      );
+      if (!listbox) continue;
+
+      const options = Array.from(listbox.querySelectorAll('[role="option"]'));
+      const match =
+        options.find((o) => (o.textContent || "").trim() === optionText) ||
+        options.find((o) => (o.textContent || "").includes(optionText));
+      if (!match) {
+        document.dispatchEvent(
+          new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+        );
+        await sleep(150);
+        continue;
+      }
+
+      match.click();
+      // Wait for the menu to unmount, then confirm the displayed value stuck.
+      await waitFor(noListbox, { timeout: 1500 });
+      if (current() === optionText) return true;
+      await sleep(150);
     }
-    await sleep(150);
+
+    console.warn(
+      `[minagine-bikou] reason "${nativeName}" not set to "${optionText}" (still "${current()}")`,
+    );
+    return false;
   }
 
   async function closeDialog(dialog) {

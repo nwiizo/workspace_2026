@@ -54,6 +54,7 @@
 | `memo input did not appear after clicking the pencil` | クリック後に新規 input/textarea が生成されない | 拡張機能を再読み込み → ページ再読み込み。それでも出ない場合は手動で1行開いてDOMを確認 |
 | `save button not found`                           | 保存ボタンのラベルが想定外                     | `content.js` の `SAVE_KEYWORDS` に該当文言を追加                                      |
 | `dialog did not close after save click`           | バリデーションエラーで保存に失敗                | コンソールでネットワークエラーを確認、または手動で1件試して原因特定                  |
+| `PCログ打刻差異の理由（開始/終了）を設定できませんでした` | 開始/終了の理由 Select が投入後に反映されなかった（MUIメニューの閉じ切り待ち失敗など） | 拡張・ページを再読み込みして再実行。継続する場合は該当日を手動で選択 |
 
 ## 注意
 
