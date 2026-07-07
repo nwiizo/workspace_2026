@@ -1,0 +1,9 @@
+[package]
+name = "anatomy"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# 純 Rust の関節モデル。Bevy にも glam にも依存しないので `cargo test -p anatomy` が高速。
+# dojo クレートがこのデータを Avian のジョイントへ変換する。
+[dependencies]

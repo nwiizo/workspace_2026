@@ -1,5 +1,9 @@
 # CLAUDE.md - Jiu-Jitsu Defense Dojo
 
+> **現行の実装は `v2/` と `native/` の 2 系統。** `v2/` は TypeScript strict + Vite + Vitest + three/npm の Web 参照実装。解剖モデル (`v2/src/anatomy/`) がレンダリング clamp・ポーズ検証・関節ラボ教育の 3 役を駆動し、ロールは台本なしのスクランブル式 (ポジショングラフ歩行 + Leitner SRS)。検証は `cd v2 && npm run check && npm run test`、ポーズ目視は `v2/_audit.html?one=<red>+<blue>`。詳細は [v2/README.md](v2/README.md)。
+> `native/` は Rust + Bevy + Avian で物理関節へ移行する試作。検証は `cd native && cargo test -p anatomy && cargo check`。詳細は [native/README.md](native/README.md)。以下は v1 (このディレクトリ直下) の記述。
+> 注意: 座標規約のうち「仰向け頭+Z = rot[-90,180,0]」は v1 の Euler 合成順バグ。THREE の XYZ order では [-90,0,180] が正 (v2 で修正済み)。
+
 赤・青の 3D 人体で柔術を学ぶブラウザ教育ゲーム。Three.js (CDN, ビルド不要)。
 一本の連続ロールとして進行し、ミックス/防御(自分=青)/攻撃(自分=赤)、ギ/ノーギ、入門/実戦を切替可能。
 正解すると短い結果表示後に自動前進。各 scenario は複数の `opponentActions` を持ち、現在は25件の初動と7件の3初動以上シナリオがある。相手スタイル/戦術制約で出やすい初動が変わる。各 `opponentActions` は専用 attack pose と cue も持ち、判断フェーズの3D・読む線・pressure と回答後の「初動の読み」が初動ごとに変わる。choice は `requiresAction` / `forbiddenAction` で初動別に出し分けられ、マウント脱出では腕隔離/高いマウント/脚絡みで、サイド攻撃ではフレーム回復/背を向ける/膝盾で、クローズドガード防御では姿勢折り/腰角度/起き上がりで正解が変わる。正解 choice の `reaction` で相手の反応を表示し、不正解 choice の `consequence` で相手の追撃を表示する。choice の `stateEffects` は `rollState` として次局面へ残り、`requiresState` / `forbiddenState` で一部選択肢を出し分ける。scenario の `stateBias` は現在の `rollState` に噛み合う次局面候補と実戦時間切れ時の追撃候補を出やすくする。回答後はその初動で読むべき `readCues` を「読めた線 / 見落とした線 / 遅れた線」として返す。`reaction` / `consequence` は重み付き `next` 候補で次スロットを差し替え、直前結果と矛盾しにくい局面へ寄せる。差し替え時は過去に解いた局面と未来スロットの重複を避ける。相手スタイル（ランダム/プレッシャーパサー/絞めハンター/ガードプレイヤー）は UI で選べ、シナリオ優先度、相手初動、実戦時間切れ時の悪手選択、実戦モードの相手意図に影響する。入門は時間制限なし、実戦は判断制限時間あり。実戦の速い初回正解はテンポボーナスを得る。正解/不正解/実戦時間切れで流れメーターが変わり、実戦モードでは次局面の判断時間にも軽く影響する。ロールごとのミッション（今回の狙い）は終了ボーナス、戦術制約（今回の制約）は実戦判断時間と next 重みに影響する。通常再ロールでは直近ミスの readCue を拾って関連局面を少し出やすくする。ロール終了時に各局面の判断・相手初動・読む線・テンポ・反応/追撃・選ばれた次局面・引き継ぎ状態・次の稽古ポイントをレビューする。ミスがあれば、最初の苦手局面と同じ相手初動を先頭にした新しいロールを任意で開始できる。

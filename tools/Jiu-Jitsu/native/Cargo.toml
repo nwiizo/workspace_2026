@@ -1,0 +1,21 @@
+[workspace]
+resolver = "2"
+members = ["crates/anatomy", "crates/dojo"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[workspace.dependencies]
+anatomy = { path = "crates/anatomy" }
+# avian3d 0.5 が bevy 0.18 に依存するため、bevy 側もそれに合わせる (二重バージョン回避)。
+bevy = "0.18"
+avian3d = "0.5"
+
+# Bevy は最適化なしだと実行時が重い。依存だけ opt-level を上げてビルド時間と実行速度を両立する。
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.dev]
+opt-level = 1
