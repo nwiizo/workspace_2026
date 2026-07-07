@@ -1,0 +1,954 @@
+/* 柔術道場 — ダークな道場テーマ (藍/朱/生成りのアクセント) */
+
+:root {
+  --bg: #14161c;
+  --bg-2: #1b1e27;
+  --bg-3: #232733;
+  --bg-4: #2b3040;
+  --line: #333a49;
+  --text: #dfe3ea;
+  --muted: #8a91a1;
+  --cream: #e8dcc0;
+  --indigo: #6f8fd6;
+  --indigo-deep: #3f5c9a;
+  --vermilion: #e0655a;
+  --vermilion-deep: #c23b3b;
+  --good: #57b57a;
+  --bad: #d1493f;
+  --warn: #e0a13a;
+  --radius: 10px;
+  font-family: system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.6;
+}
+
+#app {
+  display: flex;
+  flex-direction: column;
+  min-width: 1000px;
+}
+
+/* ヘッダー ------------------------------------------------------------------ */
+.app-header {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  padding: 12px 24px;
+  background: linear-gradient(180deg, #1b1e27, #16181f);
+  border-bottom: 1px solid var(--line);
+}
+
+.app-brand {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.app-title {
+  margin: 0;
+  font-size: 20px;
+  letter-spacing: 0.12em;
+  color: var(--cream);
+}
+
+.app-subtitle {
+  font-size: 12px;
+  color: var(--muted);
+  letter-spacing: 0.08em;
+}
+
+.tabs {
+  display: flex;
+  gap: 4px;
+  flex: 1;
+}
+
+.tab {
+  appearance: none;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--muted);
+  font-size: 14px;
+  padding: 8px 16px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.tab:hover {
+  color: var(--text);
+  background: var(--bg-3);
+}
+
+.tab-on {
+  color: var(--cream);
+  background: var(--bg-3);
+  border-color: var(--indigo-deep);
+}
+
+.belt-badge {
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: var(--bg-3);
+  border: 1px solid var(--line);
+  color: var(--cream);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+/* タブ本体 ------------------------------------------------------------------ */
+.app-main {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+}
+
+.tab-panel {
+  display: none;
+  height: 100%;
+  overflow: auto;
+}
+
+.tab-panel-on {
+  display: block;
+}
+
+/* 道場タブ ------------------------------------------------------------------ */
+.dojo {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.dojo-settings {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 12px 24px;
+  background: var(--bg-2);
+  border-bottom: 1px solid var(--line);
+  flex-wrap: wrap;
+}
+
+.seg {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.seg-label {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.seg-btns {
+  display: flex;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.seg-btn {
+  appearance: none;
+  border: none;
+  background: var(--bg-3);
+  color: var(--muted);
+  font-size: 13px;
+  padding: 6px 14px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.seg-btn + .seg-btn {
+  border-left: 1px solid var(--line);
+}
+
+.seg-btn-on {
+  background: var(--indigo-deep);
+  color: #fff;
+}
+
+.seg-btn[disabled] {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.roll-live-tag {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--vermilion);
+  letter-spacing: 0.1em;
+}
+
+.dojo-stage-wrap {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+}
+
+.dojo-canvas-wrap {
+  position: relative;
+  min-height: 0;
+  background: radial-gradient(circle at 50% 40%, #1b1f2a, #101218);
+}
+
+.dojo-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.dojo-caption {
+  position: absolute;
+  left: 16px;
+  bottom: 16px;
+  right: 16px;
+  padding: 8px 14px;
+  border-radius: var(--radius);
+  background: rgba(16, 18, 24, 0.82);
+  border: 1px solid var(--line);
+  font-size: 14px;
+  color: var(--cream);
+  pointer-events: none;
+}
+
+.dojo-caption b {
+  color: #fff;
+}
+
+.dojo-panel {
+  min-height: 0;
+  overflow: auto;
+  padding: 20px;
+  background: var(--bg-2);
+  border-left: 1px solid var(--line);
+}
+
+/* パネル内コンテンツ -------------------------------------------------------- */
+.panel-title {
+  margin: 0 0 8px;
+  font-size: 18px;
+  color: var(--cream);
+}
+
+.panel-lead {
+  margin: 0 0 16px;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.how-list {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.how-list li {
+  margin-bottom: 6px;
+}
+
+.position-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.belt-tag {
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: var(--bg-4);
+  border: 1px solid var(--line);
+  font-size: 12px;
+  color: var(--cream);
+  white-space: nowrap;
+}
+
+.position-names {
+  display: flex;
+  flex-direction: column;
+}
+
+.position-jp {
+  font-size: 16px;
+  color: var(--cream);
+  font-weight: 600;
+}
+
+.position-en {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.badge-line {
+  padding: 8px 12px;
+  border-radius: var(--radius);
+  background: var(--bg-3);
+  border: 1px solid var(--line);
+  font-size: 13px;
+  margin-bottom: 12px;
+}
+
+.badge-line b {
+  color: var(--cream);
+}
+
+.situation {
+  margin: 0 0 14px;
+  font-size: 14px;
+}
+
+.cue-title {
+  margin: 14px 0 6px;
+  font-size: 12px;
+  color: var(--muted);
+  letter-spacing: 0.06em;
+}
+
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.chip {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  border: 1px solid var(--line);
+  background: var(--bg-3);
+  color: var(--text);
+}
+
+.chip-read {
+  border-color: var(--good);
+  color: #bfe7cd;
+  background: rgba(87, 181, 122, 0.12);
+}
+
+.chip-missed {
+  border-color: var(--bad);
+  color: #f0b6b0;
+  background: rgba(209, 73, 63, 0.12);
+}
+
+.chip-state {
+  border-color: var(--indigo-deep);
+  color: #c4d4f2;
+}
+
+.waiting {
+  margin-top: 18px;
+  font-size: 14px;
+  color: var(--warn);
+  letter-spacing: 0.1em;
+  animation: pulse 1s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
+}
+
+/* 判断フェーズ -------------------------------------------------------------- */
+.action-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 4px;
+}
+
+.action-tag {
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: var(--vermilion-deep);
+  color: #fff;
+  font-size: 11px;
+}
+
+.action-label {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--cream);
+}
+
+.timer-track {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--bg-3);
+  overflow: hidden;
+  margin: 12px 0 8px;
+}
+
+.timer-fill {
+  height: 100%;
+  width: 100%;
+  background: var(--good);
+  transition: background 0.2s;
+}
+
+.timer-fill-urgent {
+  background: var(--bad);
+}
+
+.pressure {
+  min-height: 20px;
+  font-size: 13px;
+  color: var(--warn);
+}
+
+.pressure-urgent {
+  color: var(--vermilion);
+  font-weight: 600;
+}
+
+.prompt {
+  margin: 12px 0;
+  font-size: 15px;
+  color: var(--cream);
+  font-weight: 600;
+}
+
+.options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.option {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  text-align: left;
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  background: var(--bg-3);
+  color: var(--text);
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.option:hover {
+  border-color: var(--indigo);
+  background: var(--bg-4);
+}
+
+.option-num {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  background: var(--indigo-deep);
+  color: #fff;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.option-body {
+  display: flex;
+  flex-direction: column;
+}
+
+.option-jp {
+  font-size: 14px;
+}
+
+.option-en {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* フィードバック ------------------------------------------------------------ */
+.verdict {
+  font-size: 18px;
+  font-weight: 700;
+  padding: 8px 14px;
+  border-radius: var(--radius);
+  margin-bottom: 12px;
+}
+
+.verdict-good {
+  background: rgba(87, 181, 122, 0.16);
+  color: #bfe7cd;
+  border: 1px solid var(--good);
+}
+
+.verdict-bad {
+  background: rgba(209, 73, 63, 0.16);
+  color: #f0b6b0;
+  border: 1px solid var(--bad);
+}
+
+.verdict-timeout {
+  background: rgba(224, 161, 58, 0.16);
+  color: #f0d5a2;
+  border: 1px solid var(--warn);
+}
+
+.feedback {
+  margin: 0 0 12px;
+  font-size: 14px;
+}
+
+.feedback b {
+  color: var(--cream);
+}
+
+.follow {
+  margin: 0 0 12px;
+  padding: 8px 12px;
+  border-radius: var(--radius);
+  font-size: 13px;
+  background: var(--bg-3);
+  border-left: 3px solid var(--line);
+}
+
+.follow-reaction {
+  border-left-color: var(--good);
+}
+
+.follow-consequence {
+  border-left-color: var(--bad);
+}
+
+.action-cue {
+  margin: 12px 0;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.action-cue strong {
+  color: var(--indigo);
+}
+
+.principle {
+  margin: 12px 0;
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  background: rgba(63, 92, 154, 0.14);
+  border: 1px solid var(--indigo-deep);
+  font-size: 13px;
+}
+
+.principle b {
+  color: var(--cream);
+}
+
+.danger-struct {
+  margin: 14px 0;
+  padding: 12px;
+  border-radius: var(--radius);
+  border: 1px dashed var(--vermilion-deep);
+}
+
+.danger-names {
+  margin: 0 0 10px;
+  font-size: 14px;
+  color: var(--vermilion);
+}
+
+/* ボタン -------------------------------------------------------------------- */
+.btn {
+  appearance: none;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 9px 16px;
+  font-size: 14px;
+  cursor: pointer;
+  background: var(--bg-3);
+  color: var(--text);
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.btn:hover {
+  background: var(--bg-4);
+}
+
+.btn-start {
+  background: var(--indigo-deep);
+  border-color: var(--indigo-deep);
+  color: #fff;
+}
+
+.btn-next {
+  margin-top: 8px;
+  width: 100%;
+  background: var(--indigo-deep);
+  border-color: var(--indigo-deep);
+  color: #fff;
+}
+
+.btn-lab {
+  border-color: var(--vermilion-deep);
+  color: var(--vermilion);
+}
+
+.btn-secondary {
+  border-color: var(--warn);
+  color: var(--warn);
+}
+
+/* レビュー ------------------------------------------------------------------ */
+.review-score {
+  font-size: 14px;
+  margin: 0 0 14px;
+}
+
+.review-score strong {
+  font-size: 22px;
+  color: var(--cream);
+}
+
+.review-changes {
+  margin-bottom: 16px;
+}
+
+.change {
+  font-size: 13px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  margin-bottom: 4px;
+}
+
+.change-up {
+  background: rgba(87, 181, 122, 0.12);
+  color: #bfe7cd;
+}
+
+.change-down {
+  background: rgba(209, 73, 63, 0.12);
+  color: #f0b6b0;
+}
+
+.review-log {
+  margin: 0 0 16px;
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.log-item {
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  background: var(--bg-3);
+  border-left: 3px solid var(--line);
+}
+
+.log-ok {
+  border-left-color: var(--good);
+}
+
+.log-ng {
+  border-left-color: var(--bad);
+}
+
+.log-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.log-mark {
+  font-weight: 700;
+}
+
+.log-pos {
+  font-size: 14px;
+  color: var(--cream);
+}
+
+.log-line {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.log-follow {
+  font-size: 12px;
+  margin-top: 4px;
+  color: var(--text);
+}
+
+.log-next {
+  font-size: 12px;
+  margin-top: 4px;
+  color: var(--indigo);
+}
+
+.review-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+/* 稽古記録タブ -------------------------------------------------------------- */
+.records {
+  padding: 24px;
+  max-width: 1000px;
+  margin: 0 auto;
+}
+
+.records-summary {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.stat {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 16px;
+  border-radius: var(--radius);
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+}
+
+.stat-value {
+  font-size: 26px;
+  color: var(--cream);
+  font-weight: 700;
+}
+
+.stat-label {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.records-card {
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  margin-bottom: 14px;
+}
+
+.records-card-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.records-card-head h3 {
+  margin: 0;
+  font-size: 15px;
+  color: var(--cream);
+}
+
+.records-card-en {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.records-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 0;
+  border-top: 1px solid var(--line);
+}
+
+.records-action {
+  font-size: 13px;
+}
+
+.box-bar {
+  display: flex;
+  gap: 4px;
+}
+
+.box-dot {
+  width: 14px;
+  height: 8px;
+  border-radius: 3px;
+  background: var(--bg-4);
+}
+
+.box-dot-on {
+  background: var(--indigo);
+}
+
+.records-badges {
+  display: flex;
+  gap: 6px;
+}
+
+.badge {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+
+.badge-mastered {
+  background: rgba(87, 181, 122, 0.16);
+  color: #bfe7cd;
+  border: 1px solid var(--good);
+}
+
+.badge-due {
+  background: rgba(224, 161, 58, 0.16);
+  color: #f0d5a2;
+  border: 1px solid var(--warn);
+}
+
+/* 心得タブ ------------------------------------------------------------------ */
+.notes {
+  padding: 24px;
+  max-width: 820px;
+  margin: 0 auto;
+}
+
+.notes-section {
+  margin-bottom: 28px;
+}
+
+.notes-section h2 {
+  font-size: 16px;
+  color: var(--cream);
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 6px;
+}
+
+.hierarchy {
+  padding-left: 20px;
+}
+
+.hierarchy li {
+  margin-bottom: 6px;
+}
+
+.pair-list {
+  margin: 0;
+}
+
+.pair-list dt {
+  color: var(--cream);
+  font-weight: 600;
+  margin-top: 12px;
+}
+
+.pair-list dd {
+  margin: 4px 0 0;
+  color: var(--text);
+  font-size: 14px;
+}
+
+/* 関節ラボ (別エージェント実装の DOM 契約用ベーススタイル) ------------------ */
+.lab-root {
+  height: 100%;
+}
+
+.lab {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  height: 100%;
+}
+
+.lab-canvas-wrap {
+  position: relative;
+  min-height: 0;
+  background: radial-gradient(circle at 50% 40%, #1b1f2a, #101218);
+}
+
+.lab-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.lab-panel {
+  min-height: 0;
+  overflow: auto;
+  padding: 20px;
+  background: var(--bg-2);
+  border-left: 1px solid var(--line);
+}
+
+.lab-joint-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 16px;
+}
+
+.lab-joint-btn {
+  appearance: none;
+  text-align: left;
+  padding: 8px 12px;
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  background: var(--bg-3);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.lab-joint-btn:hover {
+  border-color: var(--indigo);
+  background: var(--bg-4);
+}
+
+.lab-joint-btn-on {
+  border-color: var(--indigo);
+  background: var(--indigo-deep);
+  color: #fff;
+}
+
+.lab-slider-row {
+  display: grid;
+  grid-template-columns: 80px 1fr auto;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.lab-slider-label {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.lab-slider {
+  width: 100%;
+}
+
+.lab-badge-safe {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(87, 181, 122, 0.16);
+  color: #bfe7cd;
+  border: 1px solid var(--good);
+}
+
+.lab-badge-limit {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(209, 73, 63, 0.16);
+  color: #f0b6b0;
+  border: 1px solid var(--bad);
+}
