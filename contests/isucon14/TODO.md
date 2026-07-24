@@ -130,6 +130,12 @@
   - [ ] 複数instanceやrolling restartを使う前に、起動repairと評価のlock順を
     DB advisory lockまたはdeadlock限定retryで安全にする
   - 詳細: [`tuning/20-chair-stats-current-state.md`](./tuning/20-chair-stats-current-state.md)
+- [x] 通知の未送信status検索と最新status fallbackをCTEで1 SQLへまとめて比較する
+  - 60秒runは`pass=true`、94,573点、error map空
+  - SQL呼出しは減ったが、app / chair CTE版の累積が53.756秒、平均約0.56msへ増加
+  - 変更前の関連query全体は約32秒だったため、実装は元へ戻して不採用
+  - 単発`EXPLAIN ANALYZE`と高並行時の累積costが逆転した理由を記録
+  - 詳細: [`tuning/21-notification-status-query.md`](./tuning/21-notification-status-query.md)
 - [x] nearbyの集合SQL、chair statsの集約SQL、batch matcherを実装
 - [x] 上記3変更を別々のBenchmarkとして正当性・性能検証する
 
@@ -599,7 +605,14 @@
 
 - [ ] ride存在確認とtransaction内の最新ride再取得を1回へまとめる
 - [ ] 未送信statusがない場合は高価なpayloadを再構築せず `data: null` を返せるかprevalidationで確認する
+  - status追加なしで `rides.chair_id` が変わり、同じ `MATCHING` のpayloadへchair情報を
+    追加する必要があるため、未送信行の有無だけで短絡する案は不採用
+  - status ID、chair割当、評価、statsを含むpayload versionまたは明示的なinvalidateが必要
 - [ ] 未送信status、ride、user/chair、fareを1 SQLで取得する
+- [x] 未送信statusと送信済み時の最新status fallbackだけをCTEで1 SQLへまとめて比較する
+  - run 1は94,573点、app / chair SQL累積53.756秒で変更前の関連query約32秒より悪化
+  - SQL数ではなく、候補集合・sort・rows examinedを含む累積costで不採用と判断
+  - 詳細: [`tuning/21-notification-status-query.md`](./tuning/21-notification-status-query.md)
 - [x] `get_chair_stats` を集約SQL1回へ置き換える
 - [x] 初期データの全椅子で旧履歴集約とcurrent-state表の結果を比較する
   - `./scripts/test-chair-stats-consistency.sh` で500 chairの件数・評価合計の差0件
