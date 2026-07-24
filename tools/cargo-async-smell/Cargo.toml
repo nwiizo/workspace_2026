@@ -1,0 +1,30 @@
+[package]
+name = "cargo-async-smell"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+publish = false
+description = "Async Rust production-risk design diagnostic tool"
+license = "MIT"
+
+[dependencies]
+cargo_metadata = "0.19"
+clap = { version = "4.5", features = ["derive"] }
+design-gate-core = { path = "../design-gate-core" }
+ra_ap_syntax = "0.0.331"
+rayon = "1.10"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+toml = "0.8"
+
+[dev-dependencies]
+tempfile = "3"
+
+[lib]
+name = "cargo_async_smell"
+path = "src/lib.rs"
+
+[[bin]]
+name = "cargo-async-smell"
+path = "src/main.rs"
