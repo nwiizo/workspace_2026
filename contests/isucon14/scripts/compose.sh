@@ -3,6 +3,7 @@
 set -eu
 
 project_dir=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
+diagnostic_compose_file="$project_dir/compose.diagnostics.yaml"
 
 if docker compose version >/dev/null 2>&1; then
   compose_command=docker-plugin
@@ -26,7 +27,21 @@ if [ -z "${DOCKER_CONFIG:-}" ]; then
 fi
 
 if [ "$compose_command" = docker-plugin ]; then
+  if [ "${ISUCON_DIAGNOSTIC:-0}" = "1" ]; then
+    exec docker compose \
+      --project-directory "$project_dir" \
+      -f "$project_dir/compose.yaml" \
+      -f "$diagnostic_compose_file" \
+      "$@"
+  fi
   exec docker compose --project-directory "$project_dir" -f "$project_dir/compose.yaml" "$@"
 fi
 
+if [ "${ISUCON_DIAGNOSTIC:-0}" = "1" ]; then
+  exec docker-compose \
+    --project-directory "$project_dir" \
+    -f "$project_dir/compose.yaml" \
+    -f "$diagnostic_compose_file" \
+    "$@"
+fi
 exec docker-compose --project-directory "$project_dir" -f "$project_dir/compose.yaml" "$@"
