@@ -33,9 +33,9 @@
 
 図書館で「Aさんが借りた本」を調べるために、全利用者の貸出履歴を集計して最後にAさんを探す必要はありません。先にAさんの利用者番号で絞る方が、同じ答えを少ない作業で求められます。
 
-![window関数の前に対象ownerを絞って中間データを小さくする流れ](./images/filter-before-window.webp)
+![全位置履歴を集計してから絞る処理と、ownerで絞ってから集計する処理の比較](./images/03-owner-chairs.svg)
 
-*filterをwindow計算の外側だけに置かず、入力段階へ押し込むとsortと一時表も小さくなります。*
+_owner条件をwindow計算より前へ移すと、sort・一時表・距離計算の対象が減り、同じMySQLを使う他APIの待ちも短くなります。_
 
 > **用語補足**
 >
@@ -65,10 +65,6 @@ LAG(latitude) OVER (
 - `PARTITION BY`: 椅子ごとにグループを分ける
 - `ORDER BY`: 位置を時刻順に並べる
 - `LAG`: 1つ前の行を取得する
-
-![椅子ごとの位置履歴を時刻順に分けてマンハッタン距離を積算する流れ](./images/window-manhattan-distance.webp)
-
-*`PARTITION BY` で椅子ごとに分け、`LAG` で連続する2地点だけを比較して距離を足します。*
 
 ## どのログを確認したか
 
@@ -156,10 +152,6 @@ Rustの結果型から、APIレスポンス作成に使わない `owner_id`、`a
 ```
 
 改善後のエラーmapが空になったことから、以前のCODE=1やCODE=30も個別の処理だけが原因ではなく、owner SQLによる共有DBの混雑の影響を受けていたと推測できます。これはログからの推論であり、nearbyのN+1自体が消えたわけではありません。
-
-![1本の重い集計SQLが共有DBと接続プールを通じて他APIを待たせる様子](./images/shared-db-bottleneck-ripple.webp)
-
-*対象行を早く絞るとowner APIだけでなく、同じpoolとMySQLを使う短いAPIの待ちも減ります。*
 
 ## 他の選択肢
 

@@ -1,0 +1,19 @@
+digraph G {
+  graph [bgcolor="#f7f4ed", pad="0.35", ranksep="0.65", nodesep="0.42", fontname="Hiragino Sans", label="Benchmark 00: 比較できる基準を作る", labelloc="t", fontsize=22];
+  node [shape=box, style="rounded,filled", fontname="Hiragino Sans", fontsize=14, color="#19324d", fontcolor="#19324d", fillcolor="#ffffff", penwidth=1.5, margin="0.18,0.12"];
+  edge [fontname="Hiragino Sans", fontsize=12, color="#546578", fontcolor="#546578", penwidth=1.5, arrowsize=0.8];
+
+  base [label="公式Rust初期実装\n同じrevision・CPU・データ", fillcolor="#d8efea"];
+  short [label="10秒\n待ち行列が育つ前はpass"];
+  long [label="60秒\nSQL・connection待ちが蓄積\n一部APIがtimeout", fillcolor="#fce2cf"];
+  logs [label="同じ時間帯で観測\nHTTP件数 / SQL回数・累積時間\nCPU・I/O / エラー"];
+  hypothesis [label="INDEX不足と高頻度SQLが\n共有DBを混雑させるという仮説", fillcolor="#d8efea"];
+  next [label="1変更ずつ再計測\n結果を次のBenchmarkと比較"];
+
+  base -> short [label="短時間"];
+  base -> long [label="長時間"];
+  short -> logs;
+  long -> logs;
+  logs -> hypothesis [label="原因と症状を分離"];
+  hypothesis -> next;
+}

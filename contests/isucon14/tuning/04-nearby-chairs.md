@@ -30,9 +30,13 @@ SQLの往復回数は設計どおり1回まで減りました。一方、60秒�
 
 椅子が `N` 台なら、最初の1回に加えて最大 `N` 回のSQLが必要なのでN+1と呼びます。さらに各rideごとにstatusを取ると、SQL回数は `N × ride数` まで増えます。
 
-![N+1による多数のSQL往復と集合SQLによる一括取得の違い](./images/n-plus-one-vs-bulk-query.webp)
+![椅子ごとにSQLを繰り返すN+1と、候補を1 SQLで返す処理の比較](./images/04-nearby-chairs.svg)
 
-*各要素からDBへ戻るloopを、必要な集合をまとめて返す少数のSQLへ置き換えます。*
+_変更後はactive、使用中ride、最新位置をDB内でまとめて判定し、Rustは小さい候補集合の距離計算だけを行います。_
+
+![6台の椅子を調べるためにDBと6往復する方法と、1回の一括取得で済ませる方法の比較](./images/04-n-plus-one-generated.webp)
+
+_左は椅子ごとにDBへ問い合わせ、結果を1件ずつ持ち帰ります。右は同じ6件をまとめて要求し、1往復で受け取ります。1回のSQLが短くても、往復が重なると全体の待ち時間は増えます。_
 
 ## 変更前に何を確認したか
 
@@ -91,10 +95,6 @@ WHERE chairs.is_active = TRUE
 4. Rustへ必要なID、名前、モデル、座標だけを返す
 5. Rustでマンハッタン距離を計算し、指定距離以内だけをresponseへ入れる
 
-![最新statusと最新位置を集合として取得し、Rustへ候補だけを返す流れ](./images/nearby-set-based-query.webp)
-
-*DBでactive・最新状態・最新位置をまとめて絞り、Rust側は小さな候補集合の距離計算に集中します。*
-
 > **用語補足**
 >
 > - **`LATERAL`**: 外側queryの1行を参照できるsubqueryです。ここでは「このchairの最新位置」を同じSQL内で取得します。
@@ -148,8 +148,6 @@ WHERE chairs.is_active = TRUE
 履歴テーブル: 過去の全位置・状態を保存
 現在状態テーブル: 椅子またはrideごとに最新1行だけ保存
 ```
-
-![大きな履歴表から毎回最新行を探す方式と現在状態を別に持つ方式](./images/history-vs-current-state.webp)
 
 readは最も短くできますが、履歴INSERTと現在状態UPDATEを同じtransactionで正しく保つ必要があります。initializeや再起動後の再構築方法も必要になるため、今回は小さい変更を先に検証しました。
 

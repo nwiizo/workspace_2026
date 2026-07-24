@@ -100,9 +100,9 @@ slow statement 警告は104件でした。connection pool 取得待ちの警告�
 - passとスコアだけでなく、エラー、不満足度、HTTP件数、SQL累積時間を残す
 - 1回だけの小差は改善と断定せず、必要なら再走して分布を比べる
 
-![短時間では見えない待ち行列が長時間走行で蓄積する様子](./images/benchmark-short-vs-long.webp)
+![初期実装を短時間・長時間で計測し、複数のログから次の仮説へ進む流れ](./images/00-baseline.svg)
 
-*短時間の成功だけで判断せず、負荷とデータが増えた後の待ち・timeoutまで観測します。*
+_短時間のpassだけで判断せず、長時間で蓄積する待ちと、HTTP・SQL・CPUの観測結果をつないで次の仮説を立てます。_
 
 ## なぜ10秒と60秒を比較するか
 
@@ -159,10 +159,6 @@ slow statement 警告は104件でした。connection pool 取得待ちの警告�
 | Axum/nginxログ | タイムアウトしたHTTP経路 | DB、CPU、ネットワークの原因分離が必要 |
 | `docker stats` | CPU、メモリ、block I/O | 瞬間値と累積値を混同しない |
 
-![クライアントからOS資源まで複数層を同じ時系列で観測する構成](./images/observability-layers.webp)
-
-*HTTP、connection pool、SQL、CPU・I/Oを重ねて見ると、「最後に失敗したAPI」と「最初に詰まらせた処理」を分けられます。*
-
 ## 最初の仮説
 
 初期スキーマの索引不足により、高頻度の認証、最新位置、最新ライド、最新status取得が毎回全件走査とsortを行い、リクエスト増加とともにMySQLの待ち行列を作っていると仮定しました。
@@ -172,9 +168,5 @@ slow statement 警告は104件でした。connection pool 取得待ちの警告�
 - 実行計画が変更前からindex lookupになっている
 - 索引追加後も走査行数が減らない
 - 同じ60秒条件で処理量やスコアが改善しない
-
-![計測から仮説、単一変更、再計測へ進むチューニングの循環](./images/evidence-driven-tuning-loop.webp)
-
-*計測→仮説→小さな変更→同条件で再計測を1周ずつ回し、悪化した変更を戻せるようにします。*
 
 結果と変更内容は [01-indexes.md](./01-indexes.md) に記録します。

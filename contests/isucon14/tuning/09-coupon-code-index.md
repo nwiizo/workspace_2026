@@ -55,9 +55,16 @@ WHERE code = ?
 
 そのためMySQLは、主キーが存在していても `code` だけでは目的位置へ直接移動できず、テーブル全体を確認していました。
 
-![user_idから並ぶ複合主キーと、codeから並ぶsecondary INDEXの探索範囲の違い](./images/coupon-primary-vs-code-index.webp)
+![codeだけの検索が複合主キーを使えず全件をlockする場合と、code INDEXで対象行だけをlockする場合](./images/09-coupon-index.svg)
 
-_複合INDEXは列の集合ではなく順序を持ちます。`user_id` ごとに散らばるcodeを横断する代わりに、codeを左端にしたINDEXでは同じ値が連続する範囲へ直接移動できます。_
+_`(user_id, code)` はcodeだけの検索へ直接使えません。`(code)` を追加すると対象の数行へ直接移動でき、`FOR UPDATE` が触る範囲とdeadlockの機会を減らせます。_
+
+> **用語補足**
+>
+> - **`FOR UPDATE`**: 読んだ対象をtransaction終了までlockし、同時更新から保護する指定です。
+> - **deadlock**: transaction同士が相手のlock解放を待ち、どちらも進めない状態です。DBは片方をrollbackして解消します。
+> - **gap lock**: INDEX上の既存行だけでなく行間も保護し、条件に入る新規INSERTを防ぐlockです。
+> - **secondary INDEX**: 主キーとは別の並びを追加するINDEXです。検索は速くなりますが、書き込み時に更新が増えます。
 
 INDEX追加前の実測は次のとおりです。
 
@@ -69,10 +76,6 @@ Filter全体 actual time=5.5..6.41 rows=2
 ```
 
 問題は6.41msという時間だけではありません。query末尾の `FOR UPDATE` は招待数を確認してからcouponを追加するまで対象を保護します。全件走査と組み合わさると、本来無関係な利用者のcouponまで広くlockし、並行登録と衝突しやすくなります。
-
-![全件走査で広がるFOR UPDATEのlockとINDEXで絞ったlock範囲の比較](./images/coupon-index-lock-scope.webp)
-
-_検索対象を数行へ絞ると、無関係なcouponまで触る経路がなくなり、並行transaction同士のlock範囲が重なる機会も減ります。_
 
 ## 実装
 
@@ -103,10 +106,6 @@ code
 ```
 
 MySQLはB-treeをたどって対象codeの先頭へ移動し、同じcodeが続く範囲だけを読みます。`SELECT *` なので最終的な行本体はPRIMARY KEYを使って取得しますが、入口で対象を数行へ絞れます。
-
-![secondary INDEXのleafから主キーを使って行本体を取得する2段階のlookup](./images/coupon-secondary-index-lookup.webp)
-
-_secondary INDEXはcode順のキーと主キーへの手掛かりを持ちます。該当leafだけを読み、そこから必要な行本体へたどるため、テーブル全体を確認せずに済みます。_
 
 INDEXは「検索を魔法のように速くする設定」ではなく、特定の並び順を追加で維持するデータ構造です。そのためINSERT時にはsecondary INDEXにも項目を追加します。読み取りとlock競合を減らす代わりに、書き込み量と保存領域は少し増えます。
 

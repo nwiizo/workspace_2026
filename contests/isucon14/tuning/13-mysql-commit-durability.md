@@ -44,9 +44,20 @@ binary logは、主にreplicationとpoint-in-time recoveryで使う変更履歴�
 redoとbinary logは目的が異なります。そのためredoだけを緩めても、
 `sync_binlog=1` の同期がcommit待ちとして残る可能性があります。
 
-![COMMITでInnoDB redo logとbinary logをそれぞれ書き込み同期する流れ](./images/mysql-commit-redo-binlog.webp)
+![COMMITのdurable設定と高速設定でlogをdiskへ同期する時点の違い](./images/13-commit-durability.svg)
 
-_redo logはクラッシュ復旧、binary logはreplicationやpoint-in-time recoveryのために別々の履歴を持ちます。耐久設定では両方の同期完了がCOMMIT応答を待たせます。_
+_durable設定はredo logとbinary logの同期を待ってからCOMMIT成功を返します。高速設定は同期をまとめて待ち時間を減らしますが、障害時に直近の確定dataを失う時間幅が生まれます。_
+
+> **用語補足**
+>
+> - **write**: log dataをOSのmemoryへ渡す段階です。この時点ではdiskへ永続化されていない場合があります。
+> - **flush / fsync**: OSへ、memory上のdataをdiskなどの永続媒体へ反映するよう要求する処理です。
+> - **durability（耐久性）**: COMMIT成功後のdataが障害後にも残る性質です。
+> - **replication / point-in-time recovery**: 別DBへ変更を複製する仕組み / backupとlogから特定時点まで戻す復旧方法です。
+
+![2つのlogを金庫へ保存してから完了を返す方法と、一時トレイの段階で完了を返す方法の比較](./images/13-commit-durability-generated.webp)
+
+_左は2つのlogを永続保管してから完了を返します。右は一時領域に置いた段階で完了を返し、後でまとめて保存します。待ちは短くなりますが、保存前の障害では完了済みdataを失う可能性があります。_
 
 参考:
 
@@ -76,10 +87,6 @@ command:
 binary logは無効化していません。記録は続けますが、MySQLはcommitごとのdisk同期を
 要求しません。
 
-![redoとbinary logの同期設定を段階的に緩和したときのCOMMIT待ち比較](./images/mysql-commit-flush-stages.webp)
-
-_redoだけを周期flushにしてもbinlogの同期が残れば待ちは続きます。両方のcommit単位の同期を外すと、log記録を維持しつつdisk同期をまとめられます。_
-
 現在のComposeではMySQL imageをdigestで固定し、設定値は環境変数で上書きできます。
 
 ```yaml
@@ -106,6 +113,9 @@ command:
 単発の最大値ではなく中央値で比較します。imageをfloating tagのままにすると
 将来のpullでMySQLのpatch versionが変わるため、追加計測時に確認したversionと
 digestをComposeへ固定しました。
+
+tagは同じ名前のまま中身が更新される識別子です。digestはimage内容に対する固定ID
+なので、同じdigestを指定すれば後の計測でも同一内容を取得できます。
 
 ## ベンチ結果
 
@@ -204,10 +214,6 @@ matching不満足度は悪化しています。DBが速くなり、ベンチが�
 ISUCON環境です。そのため性能を優先して採用しました。業務データを持つ本番DBへ
 同じ設定をそのまま適用してはいけません。許容損失、backup、replication、
 復旧目標を先に決める必要があります。
-
-![commit耐久性を緩めた性能向上と電源障害時の直近データ損失リスク](./images/mysql-commit-durability-tradeoff.webp)
-
-_同期前でもCOMMITを返す設定ではthroughputが上がる一方、電源やOS障害時に直近のcommit済みデータを失う窓が生まれます。再初期化できる競技環境と本番DBでは判断が異なります。_
 
 ## durable設定へ戻す
 

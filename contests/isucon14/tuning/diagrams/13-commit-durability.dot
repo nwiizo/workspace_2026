@@ -1,0 +1,21 @@
+digraph G {
+  graph [bgcolor="#f7f4ed", pad="0.35", ranksep="0.62", nodesep="0.4", fontname="Hiragino Sans", label="Benchmark 13: COMMIT待ちと耐久性の交換条件", labelloc="t", fontsize=22];
+  node [shape=box, style="rounded,filled", fontname="Hiragino Sans", fontsize=14, color="#19324d", fontcolor="#19324d", fillcolor="#ffffff", penwidth=1.5, margin="0.18,0.12"];
+  edge [fontname="Hiragino Sans", fontsize=12, color="#546578", fontcolor="#546578", penwidth=1.5, arrowsize=0.8];
+
+  commit [label="transaction COMMIT"];
+  redo [label="redo log\nMySQL障害後の復旧用"];
+  binlog [label="binary log\nreplication・時点復旧用"];
+  strict_mode [label="1 / 1\ncommitごとにredoとbinlogをdisk同期\n高い耐久性・長い待ち", fillcolor="#fce2cf"];
+  redo2 [label="2 / 1\nredoは周期flush\nbinlog同期の待ちは残る"];
+  relaxed [label="2 / 0\n両方のcommit単位同期を外す\nCOMMIT平均を短縮", fillcolor="#d8efea"];
+  benefit [label="DB connectionを早く返せる\n同じ60秒で処理できるrequestが増える"];
+  risk [label="OS・電源障害では\n直近のcommit済みデータを失う可能性\n本番DBへそのまま適用しない", fillcolor="#fff7e8"];
+
+  commit -> redo;
+  commit -> binlog;
+  redo -> strict_mode;
+  binlog -> strict_mode;
+  strict_mode -> redo2 -> relaxed -> benefit;
+  relaxed -> risk [style=dashed, label="交換条件"];
+}

@@ -31,9 +31,16 @@
 
 pickupまたはdestinationへ到着した場合は、さらにstatusをINSERTします。通常の移動中は状態遷移を起こさないため、最も回数の多い経路から重複SQLをなくすことを優先しました。
 
-![座標更新の通常経路を4回のDB往復から2回へ減らす前後比較](./images/coordinate-round-trips-before-after.webp)
+![座標更新で時刻の再SELECTをなくし、rideとstatusを1 SQLへまとめる処理フロー](./images/08-coordinate-hot-path.svg)
 
-_高頻度の座標更新では、小さなSQLでも往復のたびにconnection取得、送受信、decodeが重なります。通常経路を2往復にまとめ、connection poolの占有を減らします。_
+_変更後は同じ時刻をINSERTとresponseへ使い、current rideとlatest statusをまとめて取得します。通常経路は4回から2回のDB往復になります。_
+
+> **用語補足**
+>
+> - **hot path**: request中に高頻度で通るため、全体負荷へ大きく効く処理経路です。
+> - **DB往復**: アプリがqueryを送り、DBが実行して結果を返すまでの1往復です。
+> - **read-after-write**: 書いた値を確認・取得するため、直後に読み直す処理です。
+> - **相関subquery**: 外側queryの値（ここではride ID）を条件に使う内側queryです。
 
 ## 仮説
 
@@ -67,10 +74,6 @@ sqlx::query(
 
 変更前はMySQLのdefault値で `created_at` を作り、その値を知るために同じ行をSELECTしていました。変更後は「INSERTした値」と「APIで返す値」が同じ変数から作られるため、再SELECTせず一貫性を保てます。
 
-![アプリケーションで一度作った時刻をINSERTとAPIレスポンスへ同時に使う流れ](./images/coordinate-insert-timestamp-reuse.webp)
-
-_同じ時刻をDB行とレスポンスへ分岐させることで、書き込んだ時刻を知るためだけのread-after-writeをなくします。_
-
 ### rideとstatusを1 SQLで取得する
 
 現在rideに必要な列だけを `CurrentRide` へdecodeし、最新statusは相関subqueryで同時に取得します。
@@ -98,10 +101,6 @@ LIMIT 1
 
 - `rides(chair_id, updated_at)`: 対象椅子の最新rideを末尾側から探す
 - `ride_statuses(ride_id, created_at)`: 対象rideの最新statusを末尾側から探す
-
-![現在rideを取得してからstatusを再検索する経路と、1 SQLでまとめて取得する経路](./images/coordinate-ride-status-one-query.webp)
-
-_2本のINDEXを使い、現在rideから最新statusへ1回のquery内でたどります。直列の2往復を、必要な値をまとめた1往復へ変えます。_
 
 実測した単発の実行計画では、最新ride側が約1.5ms、status subquery側が約4.84msでした。値はホスト負荷とデータ量で変わるため、絶対値より、chairまたはrideをキーにINDEX lookupできていることを確認しています。
 

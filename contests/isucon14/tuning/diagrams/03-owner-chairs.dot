@@ -1,0 +1,16 @@
+digraph G {
+  graph [bgcolor="#f7f4ed", pad="0.35", ranksep="0.62", nodesep="0.4", fontname="Hiragino Sans", label="Benchmark 03: window計算の前にownerで絞る", labelloc="t", fontsize=22];
+  node [shape=box, style="rounded,filled", fontname="Hiragino Sans", fontsize=14, color="#19324d", fontcolor="#19324d", fillcolor="#ffffff", penwidth=1.5, margin="0.18,0.12"];
+  edge [fontname="Hiragino Sans", fontsize=12, color="#546578", fontcolor="#546578", penwidth=1.5, arrowsize=0.8];
+
+  all [label="変更前\n全ownerの位置履歴 22,078行"];
+  allwin [label="全行をsort\nLAGで前位置を参照\n距離を集計", fillcolor="#fce2cf"];
+  late [label="最後に対象ownerをfilter"];
+  owner [label="変更後\nowner_id INDEXで対象椅子を先に取得", fillcolor="#d8efea"];
+  positions [label="対象椅子の位置履歴だけ取得"];
+  smallwin [label="小さい集合だけsort・window計算", fillcolor="#d8efea"];
+  effect [label="一時表とDB占有時間が減る\n他APIのconnection待ちも減る"];
+
+  all -> allwin -> late -> effect;
+  owner -> positions -> smallwin -> effect;
+}

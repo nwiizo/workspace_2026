@@ -1,0 +1,16 @@
+digraph G {
+  graph [bgcolor="#f7f4ed", pad="0.35", ranksep="0.62", nodesep="0.4", fontname="Hiragino Sans", label="Benchmark 09: code検索用INDEXでlock範囲を狭める", labelloc="t", fontsize=22];
+  node [shape=box, style="rounded,filled", fontname="Hiragino Sans", fontsize=14, color="#19324d", fontcolor="#19324d", fillcolor="#ffffff", penwidth=1.5, margin="0.18,0.12"];
+  edge [fontname="Hiragino Sans", fontsize=12, color="#546578", fontcolor="#546578", penwidth=1.5, arrowsize=0.8];
+
+  query [label="WHERE code = ?\nFOR UPDATE"];
+  pk [label="既存PRIMARY KEY\n(user_id, code)\nuser_idがないためcodeへ直接移動できない"];
+  scan [label="全件走査\n無関係な行まで広くlock", fillcolor="#fce2cf"];
+  deadlock [label="並行transactionのlockが重なり\n相互待ち → deadlock"];
+  idx [label="追加INDEX\n(code)\n同じcodeが連続する並び"];
+  narrow [label="対象codeの数行だけlookup・lock", fillcolor="#d8efea"];
+  effect [label="全件走査を除去\n観測したdeadlock原因を縮小"];
+
+  query -> pk -> scan -> deadlock;
+  query -> idx -> narrow -> effect;
+}

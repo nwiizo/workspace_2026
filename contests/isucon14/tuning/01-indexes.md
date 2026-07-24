@@ -17,17 +17,17 @@
 
 DBのINDEXも同じ目的です。ただし、INDEX自体もデータとして保持され、INSERTやUPDATE時には索引の並びも更新する必要があります。検索は速くなりますが、書き込みと保存容量にはコストが増えます。
 
-![全件走査とB-tree INDEXによる検索範囲の違い](./images/index-full-scan-vs-btree.webp)
+![図書館の全棚を順番に探す方法と、目録から目的の棚へ進む方法の比較](./images/01-index-library-generated.webp)
 
-_左は全ページを順番に確認する全件走査、右はB-treeをたどって必要な範囲だけを読むINDEX検索を表します。_
+_左は目的の本が見つかるまで全棚を確認します。右は目録で候補を段階的に絞るため、目的の棚だけを確認できます。DBの全件走査とB-tree探索も同じ違いです。_
+
+![全件走査とB-tree INDEX検索の処理経路、および書き込みコストの比較](./images/01-indexes.svg)
+
+_INDEXはrootから条件に合うleafへ進み、必要な行だけを読みます。その代わり、書き込み時はテーブル本体とINDEXの両方を更新します。_
 
 ## MySQLのB-tree INDEX
 
 InnoDBの通常の `INDEX` はB-treeです。キーを大小順に保つ木構造で、比較しながら対象範囲へ降ります。
-
-![B-tree INDEXのrootからleafをたどり、主キーでテーブル本体の行を読む流れ](./images/btree-index-anatomy.webp)
-
-_INDEXはテーブル本体の複製ではなく、並べたキーと行への手掛かりを持つ別の構造です。rootから比較を繰り返してleafへ降り、候補の主キーから必要な行だけを読みます。_
 
 > **用語補足**
 >
@@ -72,10 +72,6 @@ INDEX example (chair_id, created_at)
 - 姓が田中の中で、名の順に最初の人を取る
 
 一方、名だけが太郎の人を探すのは苦手です。先頭の「姓」が決まらず、電話帳の広い範囲を見る必要があるためです。これを複合INDEXの左端一致、またはleftmost prefixと呼びます。
-
-![複合INDEXの先頭列から連続して条件を使える場合と使えない場合](./images/composite-index-column-order.webp)
-
-*複合INDEXは列の集合ではなく順序を持ちます。先頭列で範囲を狭められる並びをSQLごとに選びます。*
 
 ### `WHERE` と `ORDER BY` を同時に助ける
 
@@ -209,10 +205,6 @@ INDEXは検索用の別データなので、増やすほど次の負担も増え
 - DELETE時にINDEXからも削除する
 - ディスクとMySQLのbuffer poolを使う
 - 似たINDEXが増えると、用途と削除判断が難しくなる
-
-![INDEXによる読み取り短縮と書き込み・保存容量の追加コスト](./images/index-read-write-tradeoff.webp)
-
-*読み取り経路は短くなりますが、書き込み時はテーブル本体と各INDEXの両方を更新します。*
 
 そのため、全カラムへ機械的にINDEXを付けません。高頻度で、実行計画が全件走査で、検索条件と並び順が安定しているSQLだけを対象にしました。
 

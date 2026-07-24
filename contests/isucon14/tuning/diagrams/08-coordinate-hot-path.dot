@@ -1,0 +1,16 @@
+digraph G {
+  graph [bgcolor="#f7f4ed", pad="0.35", ranksep="0.62", nodesep="0.4", fontname="Hiragino Sans", label="Benchmark 08: 座標更新のDB往復を4回から2回へ", labelloc="t", fontsize=22];
+  node [shape=box, style="rounded,filled", fontname="Hiragino Sans", fontsize=14, color="#19324d", fontcolor="#19324d", fillcolor="#ffffff", penwidth=1.5, margin="0.18,0.12"];
+  edge [fontname="Hiragino Sans", fontsize=12, color="#546578", fontcolor="#546578", penwidth=1.5, arrowsize=0.8];
+
+  request [label="座標更新request"];
+  old [label="変更前\n1. location INSERT\n2. INSERT行を再SELECT\n3. current ride SELECT\n4. latest status SELECT", fillcolor="#fce2cf"];
+  time [label="変更後\nアプリで作った時刻を\nINSERTとresponseへ同じ値として使う"];
+  combined [label="current rideとlatest statusを\n1 SQLで取得"];
+  two [label="通常経路は2回のDB往復\nconnection取得・送受信・decodeも半減", fillcolor="#d8efea"];
+  correctness [label="位置・状態遷移は\n同じtransactionに残す"];
+
+  request -> old;
+  request -> time -> combined -> two;
+  two -> correctness [style=dashed, label="正しさを維持"];
+}

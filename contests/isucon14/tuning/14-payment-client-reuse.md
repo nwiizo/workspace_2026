@@ -51,6 +51,21 @@ AppStateのClient -> 評価AのPOST
                   -> retry時のGET
 ```
 
+![requestごとにTCP connectionを作る処理と共有clientのconnection poolを再利用する処理の違い](./images/14-payment-client-reuse.svg)
+
+_共有clientは再利用可能なTCP connectionをpoolへ戻します。次の決済で接続確立を省けると、評価確定とchairを次のrideへ戻すまでの待ちも短くなります。_
+
+> **用語補足**
+>
+> - **DNS名前解決**: `payment-server` のようなhost名を接続先のIP addressへ変換する処理です。
+> - **TCP connection**: clientとserverの間に作る、順序と到達を管理する通信路です。
+> - **TLS handshake**: HTTPS通信を始める前に、相手の証明書と暗号化方法を確認する手順です。
+> - **keep-alive / idle connection**: 応答後も閉じず、次のrequestに再利用できる待機中のconnectionです。
+
+![決済ごとに接続を作って捨てる方法と、同じ接続を複数の決済に再利用する方法の比較](./images/14-payment-client-reuse-generated.webp)
+
+_左はrequestごとに接続を準備して破棄します。右は同じ接続を保持して複数requestへ使うため、決済内容を変えずに接続確立とsocket管理の繰り返しを減らせます。_
+
 再利用は「必ず同じTCP connectionを使う」という保証ではありません。相手側の
 keep-alive設定、idle timeout、同時実行数、通信エラーによって新しいconnectionが
 必要になる場合があります。重要なのは、再利用可能なときにpoolを捨てないことです。
@@ -223,6 +238,8 @@ ride IDを冪等keyにできれば、POSTの応答が不明な場合も同じkey
 一覧GETと全件JSON decodeを除去できる可能性があります。ただし決済serviceがkeyを
 どのように扱うか、同じkeyで異なる金額を拒否できるかを確認する必要があります。
 
+冪等とは、同じ操作を複数回送っても、結果が1回だけ送った場合と同じになる性質です。
+
 ### 4. 外部HTTPをDB transaction外へ出す
 
 現在も決済待ちと100ms sleepの間、DB connectionとtransactionを保持します。
@@ -236,6 +253,9 @@ ride IDを冪等keyにできれば、POSTの応答が不明な場合も同じkey
 
 outbox、決済状態表、一意な冪等key、reconciliation処理を含めて別の性能実験として
 扱います。
+
+outboxは「後で外部へ送る処理」をDBへ先に記録し、再送可能にする方式です。
+reconciliationはDBと決済serviceの記録を照合し、不一致を検出・修復する処理です。
 
 ## 残すTODO
 

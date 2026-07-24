@@ -1,0 +1,17 @@
+digraph G {
+  graph [bgcolor="#f7f4ed", pad="0.35", ranksep="0.62", nodesep="0.4", fontname="Hiragino Sans", label="Benchmark 04: N+1を1回の集合SQLへまとめる", labelloc="t", fontsize=22];
+  node [shape=box, style="rounded,filled", fontname="Hiragino Sans", fontsize=14, color="#19324d", fontcolor="#19324d", fillcolor="#ffffff", penwidth=1.5, margin="0.18,0.12"];
+  edge [fontname="Hiragino Sans", fontsize=12, color="#546578", fontcolor="#546578", penwidth=1.5, arrowsize=0.8];
+
+  before [label="変更前\n椅子一覧を取得"];
+  loop1 [label="椅子ごとにrideを問い合わせ"];
+  loop2 [label="rideごとにstatusを問い合わせ"];
+  loop3 [label="空き椅子ごとに位置を問い合わせ", fillcolor="#fce2cf"];
+  one [label="変更後: 1 SQL\nactive椅子をfilter"];
+  status [label="NOT EXISTSで使用中rideを除外"];
+  location [label="LATERALで各椅子の最新位置を取得"];
+  rust [label="Rustは候補の距離計算だけ", fillcolor="#d8efea"];
+
+  before -> loop1 -> loop2 -> loop3 -> rust [label="多数のDB往復"];
+  one -> status -> location -> rust [label="1回のDB往復"];
+}

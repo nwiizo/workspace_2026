@@ -1,0 +1,20 @@
+digraph G {
+  graph [bgcolor="#f7f4ed", pad="0.35", ranksep="0.62", nodesep="0.42", fontname="Hiragino Sans", label="Benchmark 02: 必要な通知だけtransactionを開始する", labelloc="t", fontsize=22];
+  node [shape=box, style="rounded,filled", fontname="Hiragino Sans", fontsize=14, color="#19324d", fontcolor="#19324d", fillcolor="#ffffff", penwidth=1.5, margin="0.18,0.12"];
+  edge [fontname="Hiragino Sans", fontsize=12, color="#546578", fontcolor="#546578", penwidth=1.5, arrowsize=0.8];
+
+  request [label="通知polling"];
+  exists [label="INDEXで軽い存在確認\nrideはあるか？", shape=diamond, fillcolor="#fff7e8"];
+  empty [label="dataなしで即return\nBEGIN / ROLLBACKなし", fillcolor="#d8efea"];
+  begin [label="BEGIN"];
+  reads [label="同じsnapshotで読む\nride → status → fare → chair統計"];
+  update [label="通知済み時刻をUPDATE"];
+  commit [label="COMMIT", fillcolor="#d8efea"];
+  bad [label="全面autocommit\n各SELECTが別時点を読み\n通知内容が不整合", fillcolor="#fce2cf"];
+
+  request -> exists;
+  exists -> empty [label="ない"];
+  exists -> begin [label="ある"];
+  begin -> reads -> update -> commit;
+  reads -> bad [style=dashed, label="transactionを全部外すと"];
+}

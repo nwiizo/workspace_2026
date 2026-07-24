@@ -1,0 +1,19 @@
+digraph G {
+  graph [bgcolor="#f7f4ed", pad="0.35", ranksep="0.62", nodesep="0.4", fontname="Hiragino Sans", label="Benchmark 12: covering INDEXの局所改善と全体コスト", labelloc="t", fontsize=22];
+  node [shape=box, style="rounded,filled", fontname="Hiragino Sans", fontsize=14, color="#19324d", fontcolor="#19324d", fillcolor="#ffffff", penwidth=1.5, margin="0.18,0.12"];
+  edge [fontname="Hiragino Sans", fontsize=12, color="#546578", fontcolor="#546578", penwidth=1.5, arrowsize=0.8];
+
+  query [label="最新statusを1件取得"];
+  normal [label="通常INDEX\n(ride_id, created_at)\nleaf → 主キー行 → status"];
+  cover [label="covering INDEX\n(ride_id, created_at, status)\nleafだけでstatusを返す", fillcolor="#d8efea"];
+  micro [label="単発queryは短縮\n0.415ms → 0.050ms"];
+  write [label="一方で全status INSERT時に\n広いINDEXを更新\nbuffer pool使用も増える", fillcolor="#fce2cf"];
+  bench [label="総合ベンチはscore・完了数が低下"];
+  decision [label="不採用\n元のINDEXへ戻す"];
+
+  query -> normal;
+  query -> cover -> micro;
+  cover -> write;
+  micro -> bench;
+  write -> bench -> decision;
+}

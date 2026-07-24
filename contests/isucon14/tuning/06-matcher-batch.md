@@ -25,9 +25,20 @@ matcher containerは500msごとに `/api/internal/matching` を1回呼びます�
 
 SQLがどれだけ速くても、この上限を超えてrideが作られると待ち行列が伸びます。Benchmark 05の `CODE=32` は、個々のSQLだけでなくこの構造的上限を見る必要があることを示しました。
 
-![一定間隔で1件だけ処理するmatcherと、同じ1回で複数件を処理するbatch matcher](./images/matcher-throughput-single-vs-batch.webp)
+![matcher 1回で1件だけ割り当てる処理と、最大64件をclaimして割り当てる処理の比較](./images/06-matcher-batch.svg)
 
-_poll間隔を変えなくても、1回にclaimする件数を増やせば、生成速度に負けて伸び続ける待ち行列をまとめて減らせます。_
+_batch化はpolling間隔を変えずに1回の処理上限を増やします。期限超過は解消しましたが、ID順のchair選択では距離が悪いため、選択品質は次のBenchmarkで分けて改善します。_
+
+> **用語補足**
+>
+> - **throughput**: 単位時間に処理できる件数です。ここでは1秒に割り当てられるride数を指します。
+> - **batch**: 複数件を1回の処理へまとめる方式です。
+> - **claim**: transaction中に行をlockし、「このmatcherが処理する対象」として確保することです。
+> - **starvation**: 新しいrideばかり選ばれ、古いrideがいつまでも処理されない状態です。
+
+![同じ1回のmatcher起動で、1組だけ割り当てる方法と複数組をまとめて割り当てる方法の比較](./images/06-matcher-batch-generated.webp)
+
+_左は1回の起動後もrideとchairの待ち行列が残ります。右は同じ起動1回で候補をまとめてclaimし、複数組を割り当てるため、次の起動を待つ件数を減らせます。_
 
 さらに `ORDER BY RAND()` は候補行へ乱数を付けて並べるため、INDEXで先頭1件へ直接移動できません。
 
@@ -46,10 +57,6 @@ _poll間隔を変えなくても、1回にclaimする件数を増やせば、生
 `FOR UPDATE` は「このtransactionが処理中」と行へ印を付ける操作です。別matcherが同時に来たとき、`SKIP LOCKED` は待たずに別の未claim行を選びます。同じbatch内では使用したchairを候補から除くため、1台を2 ridesへ割り当てません。
 
 `ORDER BY created_at` は最古ride優先を維持します。新しいrideばかり選び、古いrideが永遠に残るstarvationを防ぐためです。
-
-![複数matcherがlock済みの行を待たずに飛ばし、別々のrideとchairをclaimする流れ](./images/matcher-skip-locked-claims.webp)
-
-_`FOR UPDATE SKIP LOCKED` により、並行matcherは同じ行を奪い合わず、すでにclaimされた行を飛ばして別の組を処理できます。_
 
 ## 空き椅子判定を維持した理由
 
@@ -70,10 +77,6 @@ Benchmark 06では空きchairを `ORDER BY chairs.id` で安定して選びま�
 ```
 
 エラー0は競合と期限の正当性を、100%の不満はchair選択policyの悪さを示します。passとscoreは別の指標なので、片方だけを見て成功と判断してはいけません。
-
-![期限内に全件を割り当ててpassしても、遠い椅子を選ぶとscoreが低くなる様子](./images/matcher-pass-vs-score.webp)
-
-_正しく期限内に割り当てることと、pickup距離を短くして処理量・満足度を上げることは別の評価軸です。_
 
 ## 他の選択肢
 

@@ -12,9 +12,9 @@
 
 全面autocommit化は速くなりましたが、通知内容が不正になったため採用していません。最終実装は、ライドがない正常系だけをtransaction開始前に返し、通知内容を組み立てる処理はtransactionへ残します。
 
-![高頻度transactionがconnection poolを占有して他の処理を待たせる様子](./images/transaction-pool-contention.webp)
+![空通知と通知ありでtransactionを開始する位置を分ける処理フロー](./images/02-notification-transactions.svg)
 
-*短い空pollingでも、同時に繰り返されるとtransaction境界とconnection保持が共有poolの混雑になります。*
+_rideがなければtransactionを始めず即座に返し、rideがある場合だけ同じsnapshotで通知を組み立てます。_
 
 ## 先に要点
 
@@ -34,10 +34,6 @@ transactionは、複数のDB操作を同じ時点のひとまとまりとして�
 ```
 
 「transactionを全部消す」のではなく、「データがなく、まとめる処理もない分岐だけ開始前へ移す」のがポイントです。
-
-![空pollingをtransaction開始前に判定し、必要な処理だけtransactionへ入れる流れ](./images/empty-poll-early-return.webp)
-
-*空なら軽い存在確認から直接returnし、データがある場合だけ同じsnapshotで通知を組み立てます。*
 
 > **用語補足**
 >
@@ -126,10 +122,6 @@ CODE=33は単なるtimeoutではなく、利用者へ返した通知内容が期
 autocommitでは各SELECTが別の時点を見ます。負荷中にride/status/evaluationが更新されると、レスポンス内のstatusと椅子統計が違う時点の値になり得ます。
 
 速度仮説の一部は当たりましたが、反証条件「正当性エラーが増える」に該当したため変更を撤回しました。スコアだけを見て採用しない例です。
-
-![単独readと複数更新でtransaction境界を使い分ける考え方](./images/transaction-atomicity.webp)
-
-*単独のreadを無条件に囲わず、同じ時点として扱う複数操作には小さなtransaction境界を残します。*
 
 ## 採用した仮説
 

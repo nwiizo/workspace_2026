@@ -1,0 +1,16 @@
+digraph G {
+  graph [bgcolor="#f7f4ed", pad="0.35", ranksep="0.62", nodesep="0.4", fontname="Hiragino Sans", label="Benchmark 11: matcher周期は処理時間とsleepの合計", labelloc="t", fontsize=22];
+  node [shape=box, style="rounded,filled", fontname="Hiragino Sans", fontsize=14, color="#19324d", fontcolor="#19324d", fillcolor="#ffffff", penwidth=1.5, margin="0.18,0.12"];
+  edge [fontname="Hiragino Sans", fontsize=12, color="#546578", fontcolor="#546578", penwidth=1.5, arrowsize=0.8];
+
+  cycle [label="実際の1周期\ncurl接続 + HTTP + matcher SQL + COMMIT + sleep"];
+  fast [label="30ms\n割当開始は早い\n空振りの固定費が増える", fillcolor="#fce2cf"];
+  impact [label="matcher呼出は増えたが\n通知・座標更新・完了rideは減少"];
+  normal [label="500ms\nbatchで最大64件処理できるため\nこの時点では待ちが主因ではない"];
+  decision [label="500msを維持", fillcolor="#d8efea"];
+  alternative [label="改善候補\nride作成時に起動 / adaptive interval\n空のときだけ間隔を広げる"];
+
+  cycle -> fast -> impact -> decision;
+  cycle -> normal -> decision;
+  decision -> alternative;
+}
