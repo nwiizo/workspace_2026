@@ -11,9 +11,11 @@ ISUCON14 の公式リポジトリを基に、Rust リファレンス実装と公
 
 公式の `development/compose-rust.yml` を土台に、フロントエンドのコンテナビルドとローカル用ベンチマーカーを追加しています。公式の競技環境は 3 台の競技者 VM と専用ベンチマーカーであり、この 1 ホスト構成のスコアは本番スコアと直接比較できません。
 
+性能改善の計測手順と残タスクは [TODO.md](./TODO.md)、変更理由と結果は [TUNING.md](./TUNING.md) で管理します。
+
 ## 初期状態
 
-このディレクトリは、公式リポジトリの特定コミットをそのまま基準にした未チューニング環境です。Rust アプリ本体と初期 SQL には性能改善を加えていません。
+このディレクトリは、公式リポジトリの特定コミットを基準に構築しました。次の表はチューニング前の基準状態です。現在のRustアプリと初期SQLには、後述のベンチマークで検証した改善が段階的に入っています。
 
 | 項目 | 初期状態 |
 |---|---|
@@ -22,7 +24,7 @@ ISUCON14 の公式リポジトリを基に、Rust リファレンス実装と公
 | DB | 公式 `webapp/sql/` の初期データ。初回起動時に MySQL ボリュームへ投入 |
 | フロントエンド | 公式ソースを Docker ビルド時に pnpm でビルド |
 | ベンチマーカー | 公式 Go 実装。フロントエンドと同時生成した静的ファイルハッシュを使用 |
-| チューニング | インデックス追加、SQL変更、キャッシュ導入などは未実施 |
+| チューニング | 基準時点ではインデックス追加、SQL変更、キャッシュ導入などは未実施 |
 | 起動前 | コンテナ、ネットワーク、MySQL ボリュームは未作成 |
 
 公式スナップショットは、作業時に次の方法で入れ子の `.git` を含めず取り込みました。通常の利用時にこの操作をやり直す必要はありません。
@@ -42,11 +44,12 @@ git -C "$source_dir/isucon14" archive HEAD | tar -x -C contests/isucon14
 | `compose.yaml` | Rust、MySQL、nginx、matcher、benchmark のサービス定義 |
 | `docker/Dockerfile` | フロントエンド、nginx、公式ベンチマーカーのコンテナビルド |
 | `docker/nginx.conf` | 静的ファイル配信と Rust API へのプロキシ |
-| `docker/client-config/config.json` | 公開イメージ取得用のプロジェクト専用 Docker 設定 |
+| `docker/client-config/config.json` | 公開イメージ取得とHomebrew CLI plugin検出用のプロジェクト専用 Docker 設定 |
 | `scripts/compose.sh` | Compose plugin / standalone Compose の差を吸収 |
 | `scripts/up.sh` / `down.sh` | 起動、停止、DBを含む完全初期化 |
 | `scripts/smoke-test.sh` | トップ画面と初期化 API の疎通確認 |
 | `scripts/benchmark.sh` | 決済モックを含む公式ベンチマーカーの実行 |
+| `.dockerignore` / `webapp/rust/.dockerignore` | Dockerへ不要なソース・`target/` を送らない |
 
 ## 初期構築方法
 
@@ -59,6 +62,78 @@ git -C "$source_dir/isucon14" archive HEAD | tar -x -C contests/isucon14
 Rust、Go、Node.js、pnpm をホストへインストールする必要はありません。
 
 この環境が取得するコンテナイメージはすべて公開イメージです。操作スクリプトは `docker/client-config/config.json` を使うため、ホスト側のレジストリ認証情報を読み込んだり変更したりしません。
+
+### ローカル実行環境の確認と最適化
+
+Docker Desktop以外にColimaを使う場合は、最初に割り当て資源を確認します。
+
+```sh
+colima status --extended
+```
+
+今回の初期ベンチ条件は4 CPU / 4 GiB / 100 GiB diskです。アプリ、MySQL、nginx、matcher、ベンチマーカーを同じVMへ入れるため、CPUとメモリは全サービスで共有されます。
+
+将来、別条件として資源を増やす場合は、実行中のCompose環境を安全に停止してからColimaを再起動します。次は8 CPU / 12 GiBを使えるホストでの参考例です。今回の検証では実行していません。
+
+```sh
+./scripts/down.sh
+colima stop
+colima start --cpu 8 --memory 12 --disk 100
+./scripts/up.sh
+colima status --extended
+```
+
+Colimaの停止・再起動ではVMのdiskは保持されますが、実行中コンテナは停止します。別プロジェクトのコンテナも同じColimaを使っている場合は、先に影響を確認してください。ホストOSが使うCPU・メモリも必要なので、搭載資源のほぼ全量は割り当てません。
+
+資源を変えるとスコアの比較条件も変わります。変更前後を比較するときは、CPU・メモリ・走行時間を同じにし、結果ファイルへ記録してください。
+
+#### Docker build context
+
+Dockerはイメージをビルドする前に、build contextをdaemonへ送ります。Rustの `target/` にはコンパイル済み成果物が数百MB生成されますが、Dockerfileはコンテナ内で改めてビルドするため、ホストの `target/` は不要です。
+
+この環境では次の2段階で対象を絞っています。
+
+- ルート `.dockerignore`: nginx・ベンチイメージへ `frontend/`、`bench/`、`docker/` だけを送る
+- `webapp/rust/.dockerignore`: Rustイメージへ `target/` を送らない
+
+実測ではローカルテスト後のRust build contextが約467MBから32.5KBへ減りました。これはアプリのベンチスコアではなく、変更後の再ビルド待ち時間とColimaへのI/Oを減らす改善です。
+
+通常の反復ではDocker cacheを使用します。依存関係や生成物の不整合を調査するとき以外は `--no-cache` を付けません。
+
+#### Rust release再ビルド
+
+プロジェクト専用Docker設定は、Apple Silicon Homebrewの `/opt/homebrew/lib/docker/cli-plugins` とIntel Homebrewの `/usr/local/lib/docker/cli-plugins` を参照します。これにより、ホストの認証設定を読み込まずComposeとBuildxを使用できます。
+
+Rust DockerfileはBuildKitのcache mountへ次を保存します。
+
+- Cargo registry
+- Cargo Git checkout
+- releaseの `target/` とincremental情報
+
+さらにRust toolchain同梱のLLDをlinkerとして使います。`opt-level=3` は変更していません。
+
+4 CPU / 4 GiBを固定した実測は次のとおりです。
+
+| 状態 | 時間 |
+|---|---:|
+| legacy builderでRust source変更後 | 30分52秒 |
+| BuildKit cacheの初回作成（Cargo全依存を含む） | Cargo 4分08秒、全体6分15.24秒 |
+| owner SQL変更後のincremental再build | Cargo 7.03秒、全体11.02秒 |
+
+`scripts/benchmark.sh` は前回のISUCON stackを正常停止してからbuildし、`up.sh` で再開します。古いmatcherのpollingやMySQLのmemory保持を、Rust buildと競合させないためです。他のCompose projectは停止しません。
+
+詳しいログ、失敗した方法、cacheの仕組みは [Rust / sqlx実装から学べること](./tuning/80-rust-implementation.md) を参照してください。
+
+#### 同居ベンチの注意
+
+公式競技環境は競技者VMとベンチマーカーが別です。このローカル構成では同じColima VM内で動くため、ベンチマーカー自身のCPU・メモリ・I/Oもアプリと競合します。
+
+- 本番スコアとの絶対比較には使わない
+- バックグラウンドの重いコンテナを止める
+- 同じColima資源で変更前後を比較する
+- 負荷終了後にDBが詰まっている場合は、再起動または初期化してから次を測る
+
+詳細な理由と計測値は [ローカル環境の最適化記録](./tuning/90-local-environment.md) に記載しています。
 
 ### 2. ビルドと起動
 
@@ -125,9 +200,16 @@ RESET=1 ./scripts/down.sh
 |---|---|
 | `./scripts/smoke-test.sh` | `GET /` が 200、`POST /api/initialize` が `{"language":"rust"}` |
 | `./scripts/benchmark.sh 10` | `pass=true`（最終確認時のスコア 394） |
-| `./scripts/benchmark.sh 60` | 実行完了。初期実装が高負荷で遅延し、`CODE=32`（長時間マッチングされない）で `pass=false` |
+| 初期状態の `./scripts/benchmark.sh 60` | `pass=false`、スコア0、`CODE=32` |
+| INDEX追加後 | `pass=false`、スコア364 |
+| 空通知polling改善後 | `pass=true`、スコア2,357 |
+| owner距離集計改善後 | `pass=true`、スコア5,601、エラー0 |
+| nearby N+1集約後 | `pass=true`、スコア4,116、`CODE=26` 1件 |
+| 椅子統計集約後 | `pass=false`、スコア4,460、`CODE=32` 2件 |
+| matcherバッチ化後 | `pass=true`、スコア2,393、エラー0 |
+| 近傍優先matcher後 | `pass=true`、スコア16,909、エラー0 |
 
-60 秒走行では MySQL のクエリが十数秒以上へ遅延し、ベンチマーカーの期限を超えました。コンテナ停止や初期化失敗ではなく、未チューニングの初期実装を 1 ホスト上でアプリ・DB・ベンチマーカーと同居させた際の性能限界です。まず 10 秒走行で環境を検証し、その後 60 秒走行のボトルネックを改善するのがローカルチューニングの開始点です。
+初期60秒走行ではMySQLのqueryが十数秒以上へ遅延し、ベンチマーカーの期限を超えました。INDEX、空通知polling、owner距離集計、N+1削減、matcherを1変更ずつ計測しました。最終走行はホストとColimaを4 CPU / 4 GiBのまま、初期スコア0から16,909まで改善してエラー0で完走しました。詳細は [TUNING.md](./TUNING.md) からベンチマーク単位の記録を参照してください。
 
 ## 構成
 
@@ -174,7 +256,7 @@ Rust 実装が提供する API は次のとおりです。
 | `GET` / `POST` | `/api/app/rides` | 配車履歴取得、配車依頼 | 利用者 Cookie |
 | `POST` | `/api/app/rides/estimated-fare` | 料金見積もり | 利用者 Cookie |
 | `POST` | `/api/app/rides/:ride_id/evaluation` | 乗車評価 | 利用者 Cookie |
-| `GET` | `/api/app/notification` | 利用者向け通知（SSE） | 利用者 Cookie |
+| `GET` | `/api/app/notification` | 利用者向け通知polling | 利用者 Cookie |
 | `GET` | `/api/app/nearby-chairs` | 周辺の椅子検索 | 利用者 Cookie |
 | `POST` | `/api/owner/owners` | オーナー登録 | なし |
 | `GET` | `/api/owner/sales` | 売上取得 | オーナー Cookie |
@@ -182,7 +264,7 @@ Rust 実装が提供する API は次のとおりです。
 | `POST` | `/api/chair/chairs` | 椅子登録 | 登録トークン |
 | `POST` | `/api/chair/activity` | 稼働状態更新 | 椅子 Cookie |
 | `POST` | `/api/chair/coordinate` | 座標更新 | 椅子 Cookie |
-| `GET` | `/api/chair/notification` | 椅子向け通知（SSE） | 椅子 Cookie |
+| `GET` | `/api/chair/notification` | 椅子向け通知polling | 椅子 Cookie |
 | `POST` | `/api/chair/rides/:ride_id/status` | 乗車状態更新 | 椅子 Cookie |
 | `GET` | `/api/internal/matching` | 配車マッチング | ローカル環境内（nginx 制限） |
 

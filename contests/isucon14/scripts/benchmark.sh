@@ -13,6 +13,11 @@ case "$duration" in
     ;;
 esac
 
+# 前回起動したISUCON stackは、再ビルドには不要。matcherのpollingと
+# MySQLのmemory保持が、固定されたローカル資源をRust buildと奪い合わない
+# よう正常停止し、up.shの中で新しいwebappと一緒に再開する。
+"$compose" stop matcher nginx webapp db >/dev/null 2>&1 || true
+
 "$script_dir/up.sh"
 "$compose" --profile benchmark build benchmark
 

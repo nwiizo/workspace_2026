@@ -1,3 +1,5 @@
+# syntax=docker/dockerfile:1
+
 FROM rust:1.83-bookworm
 
 WORKDIR /home/isucon/webapp/rust
@@ -8,9 +10,24 @@ RUN apt-get update && apt-get install --no-install-recommends -y \
  && rm -rf /var/lib/apt/lists/*
 
 COPY ./Cargo.toml ./Cargo.lock ./
-RUN mkdir src && echo 'fn main() {}' > ./src/main.rs && cargo build --release --locked && rm src/main.rs target/release/deps/isuride-*
+RUN --mount=type=cache,id=isucon14-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,id=isucon14-cargo-git,target=/usr/local/cargo/git,sharing=locked \
+    mkdir src \
+    && printf 'fn main() {}\n' > src/main.rs \
+    && cargo fetch --locked \
+    && rm src/main.rs \
+    && rmdir src
+
 COPY ./src/ ./src/
-RUN cargo build --release --locked --frozen
+RUN --mount=type=cache,id=isucon14-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,id=isucon14-cargo-git,target=/usr/local/cargo/git,sharing=locked \
+    --mount=type=cache,id=isucon14-rust-target,target=/home/isucon/webapp/rust/target,sharing=locked \
+    lld_dir="$(find "$(rustc --print sysroot)" -type d -path '*/gcc-ld' -print -quit)" \
+    && PATH="$lld_dir:$PATH" \
+       CARGO_INCREMENTAL=1 \
+       RUSTFLAGS="-C link-arg=-fuse-ld=lld" \
+       cargo build --release --locked --frozen --timings \
+    && install -m 0755 target/release/isuride /usr/local/bin/isuride
 
 EXPOSE 8080
-CMD ["/home/isucon/webapp/rust/target/release/isuride"]
+CMD ["/usr/local/bin/isuride"]
