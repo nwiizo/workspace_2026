@@ -1,7 +1,6 @@
 use axum::extract::State;
 use axum::http::StatusCode;
 
-use crate::models::{Chair, Ride};
 use crate::{AppState, Error};
 
 pub fn internal_routes() -> axum::Router<AppState> {
@@ -15,40 +14,102 @@ pub fn internal_routes() -> axum::Router<AppState> {
 async fn internal_get_matching(
     State(AppState { pool, .. }): State<AppState>,
 ) -> Result<StatusCode, Error> {
-    // MEMO: 一旦最も待たせているリクエストに適当な空いている椅子マッチさせる実装とする。おそらくもっといい方法があるはず…
-    let Some(ride): Option<Ride> =
-        sqlx::query_as("SELECT * FROM rides WHERE chair_id IS NULL ORDER BY created_at LIMIT 1")
-            .fetch_optional(&pool)
-            .await?
-    else {
-        return Ok(StatusCode::NO_CONTENT);
-    };
+    const MATCHING_BATCH_SIZE: i64 = 64;
 
-    for _ in 0..10 {
-        let Some(matched): Option<Chair> =
-            sqlx::query_as("SELECT * FROM chairs INNER JOIN (SELECT id FROM chairs WHERE is_active = TRUE ORDER BY RAND() LIMIT 1) AS tmp ON chairs.id = tmp.id LIMIT 1")
-                .fetch_optional(&pool)
-                .await?
-        else {
-            return Ok(StatusCode::NO_CONTENT);
-        };
-
-        let empty: bool = sqlx::query_scalar(
-            "SELECT COUNT(*) = 0 FROM (SELECT COUNT(chair_sent_at) = 6 AS completed FROM ride_statuses WHERE ride_id IN (SELECT id FROM rides WHERE chair_id = ?) GROUP BY ride_id) is_completed WHERE completed = FALSE",
-        )
-        .bind(&matched.id)
-        .fetch_one(&pool)
-        .await?;
-
-        if empty {
-            sqlx::query("UPDATE rides SET chair_id = ? WHERE id = ?")
-                .bind(matched.id)
-                .bind(ride.id)
-                .execute(&pool)
-                .await?;
-            break;
-        }
+    #[derive(sqlx::FromRow)]
+    struct PendingRide {
+        id: String,
+        pickup_latitude: i32,
+        pickup_longitude: i32,
     }
+
+    #[derive(sqlx::FromRow)]
+    struct AvailableChair {
+        id: String,
+        latitude: i32,
+        longitude: i32,
+    }
+
+    let mut tx = pool.begin().await?;
+
+    let pending_rides: Vec<PendingRide> = sqlx::query_as(
+        r#"
+SELECT id, pickup_latitude, pickup_longitude
+FROM rides
+WHERE chair_id IS NULL
+ORDER BY created_at
+LIMIT ?
+FOR UPDATE SKIP LOCKED
+        "#,
+    )
+    .bind(MATCHING_BATCH_SIZE)
+    .fetch_all(&mut *tx)
+    .await?;
+
+    if pending_rides.is_empty() {
+        tx.commit().await?;
+        return Ok(StatusCode::NO_CONTENT);
+    }
+
+    let mut available_chairs: Vec<AvailableChair> = sqlx::query_as(
+        r#"
+SELECT chairs.id,
+       latest_location.latitude,
+       latest_location.longitude
+FROM chairs
+INNER JOIN LATERAL (
+    SELECT latitude, longitude
+    FROM chair_locations
+    WHERE chair_id = chairs.id
+    ORDER BY created_at DESC
+    LIMIT 1
+) AS latest_location ON TRUE
+WHERE chairs.is_active = TRUE
+  AND NOT EXISTS (
+      SELECT 1
+      FROM rides
+      WHERE rides.chair_id = chairs.id
+        AND (
+            SELECT COUNT(ride_statuses.chair_sent_at)
+            FROM ride_statuses
+            WHERE ride_statuses.ride_id = rides.id
+        ) <> 6
+  )
+ORDER BY chairs.id
+LIMIT ?
+FOR UPDATE SKIP LOCKED
+        "#,
+    )
+    .bind(MATCHING_BATCH_SIZE)
+    .fetch_all(&mut *tx)
+    .await?;
+
+    for ride in pending_rides {
+        let Some((chair_index, _)) =
+            available_chairs
+                .iter()
+                .enumerate()
+                .min_by_key(|(_, chair)| {
+                    crate::calculate_distance(
+                        ride.pickup_latitude,
+                        ride.pickup_longitude,
+                        chair.latitude,
+                        chair.longitude,
+                    )
+                })
+        else {
+            break;
+        };
+        let chair = available_chairs.swap_remove(chair_index);
+
+        sqlx::query("UPDATE rides SET chair_id = ? WHERE id = ? AND chair_id IS NULL")
+            .bind(chair.id)
+            .bind(ride.id)
+            .execute(&mut *tx)
+            .await?;
+    }
+
+    tx.commit().await?;
 
     Ok(StatusCode::NO_CONTENT)
 }
