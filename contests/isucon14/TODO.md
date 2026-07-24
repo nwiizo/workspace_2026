@@ -240,6 +240,20 @@
   - この群のacquire平均58.172msに対し、idleあり群は平均4.379ms
   - pool上限は変更せず、決済中のconnectionとride row lockを先に解放する
   - 詳細: [`tuning/31-evaluation-phase-diagnostics.md`](./tuning/31-evaluation-phase-diagnostics.md)
+- [x] 評価APIを準備transaction、transaction外決済、完了transactionへ分割する
+  - 診断runは `pass=true`、118,204点、error map空。診断n=1なのでscoreは未推定
+  - connection所有平均319.754ms→19.241ms（-94.0%）、p95
+    695.556ms→36.764ms（-94.7%）
+  - 初回pool acquire平均49.957ms→27.773ms、p95 123.528ms→78.674ms
+  - 決済平均は302.507ms→308.947msでほぼ同じ。DB資源の保持だけを短縮できた
+  - 遅延決済中のride row lock 0件を確認
+  - 2 requestがともに準備transactionを抜けて決済barrierへ到達してから204を返し、
+    200 / 400各1件、`COMPLETED`とchair statsの加算1回を確認
+  - 通常3走99,689 / 106,035 / 99,633点、推定代表値の中央値99,689点
+  - 全run `pass=true`・error map空。Benchmark 29中央値比-2.8%で得点寄与は未確定
+  - 初回sampleの66.5%、完了sampleの66.0%はpool size 50 / idle 0だったため、
+    次は上限50 / 75 / 100を比較する
+  - 詳細: [`tuning/32-evaluation-transaction-split.md`](./tuning/32-evaluation-transaction-split.md)
 - [ ] `CODE=26` のowner累積距離が座標responseの受信境界より先へ進む競合を検証する
   - 期待値より実値が4–40程度大きく、直近1回の移動距離に近い例を確認
   - ベンチマーカーのcoordinate POST、world更新、owner検証の順序を同じchairで追う
@@ -259,8 +273,8 @@
 | P0 | `app_get_nearby_chairs` | 最新座標はcurrent-state表 + process cache、active / 割当可否はDB、評価はsnapshot + revision + delivery leaseで除外 | 最終run例8.079ms。ride antijoinとtracker確認の内訳を測る |
 | P0 | 通知2経路 | recipient + chair stats dependency revision付きpayload cache。未送信statusは30ms、定常cacheは100ms。cursorはDBに維持 | 診断runのp95はapp 166ms / chair 181ms。response ACKなしの配送loss、cache missのphase分解、long pollingが未検証 |
 | P0 | `get_chair_stats` | 評価時差分更新 + 主キーreadへ変更 | SQL累積は約89%減、スコア中央値は約3.5%低下したため次の通知施策と合わせて再評価 |
-| P0 | `app_post_ride_evaluation` | ride IDの冪等keyで決済retry。DB transaction中に外部HTTPと最大5回の100ms sleep | connection所有平均319.754msの約94.6%が決済。準備transaction、transaction外決済、ride再lock付き完了transactionへ分ける |
-| P0 | `chair_post_coordinate` | 履歴INSERT + current UPDATE、遷移候補だけride lock + 最新status再読 | acquire p95 113.156ms、SQL BEGIN p95 2.327ms。78.1%のsampleでpool 50接続が全使用中 |
+| P0 | `app_post_ride_evaluation` | 準備transaction、transaction外の冪等決済、ride再lock付き完了transactionへ分割済み | connection所有平均は94.0%短縮。完了時の追加acquireとprocess crash後の自動回収を検討する |
+| P0 | `chair_post_coordinate` | 履歴INSERT + current UPDATE、遷移候補だけride lock + 最新status再読 | 評価分割後も初回評価sampleの66.5%でpool 50接続が全使用中。pool上限50 / 75 / 100を比較する |
 | P1 | `app_get_rides` | rideごとにstatus、coupon、chair、ownerを取得 | 履歴増加に比例するN+1 |
 | P1 | `owner_get_sales` | ownerのchairごとに完了rideを取得し、評価responseと重なったride IDを除外 | N+1、read transactionが暗黙ROLLBACK。複数processではtracker共有が必要 |
 | P1 | `app_post_rides` | userの全rideとride別最新statusを取得 | ライド作成ごとに履歴全体を再走査 |
@@ -803,16 +817,31 @@
   - retry sleep平均201.719ms・p95 502.523ms、完了write平均6.417ms・p95 20.904ms
   - 詳細: [`tuning/31-evaluation-phase-diagnostics.md`](./tuning/31-evaluation-phase-diagnostics.md)
 - [ ] 決済URLをinitialize時にメモリへ読み込み、評価ごとのsettings検索をなくす
-- [ ] ride、payment token、fareの読取りを短い区間へまとめる
-- [ ] 外部決済HTTPとretry sleep中はDB transactionを保持しない
-- [ ] 評価と `COMPLETED` 追加を短いwrite transactionへ分離する
+- [x] ride、payment token、fareの読取りを短い準備transactionへまとめる
+- [x] 外部決済HTTPとretry sleep中はDB transactionを保持しない
+  - 8秒の遅延決済mockがrequestを受理した後、500msにわたり対象rideのrow lockが
+    0件であることを確認
+- [x] 評価と `COMPLETED` 追加を短いwrite transactionへ分離する
+  - 完了時にrideを再lockし、所有user、未評価、`ARRIVED`、chair IDを再検証する
 - [x] 決済成功後にだけ評価、chair stats、`COMPLETED` を同じwrite transactionで確定する
 - [x] write transaction成功後にだけ評価APIの200を返す
-- [ ] 同じrideへの並行評価を防ぐ状態またはride単位mutexを設ける
-- [x] 「決済成功後にDB更新失敗」と「HTTPエラーだが決済成功」の両方で、同じrideのretryを同じ決済keyへ収束させる
-  - process crash後に未完了rideを自動再開する回収処理は未実装
-- [ ] 正常系、決済retry、重複評価、タイムアウトのテストを追加する
+- [x] 同じrideへの並行評価を完了transactionのrow lockと再検証で1件へ収束させる
+  - 2並行requestを決済barrierで同期し、両方が準備確認を通過したことをassert
+  - barrier解放後はHTTP 200 / 400各1件、評価、`COMPLETED`、chair statsは1回分
+  - process内mutexと異なり、複数processでもMySQLの同じlock境界を利用できる
+- [x] 「HTTP 500の後に決済成功」は同じhandler内のretryを同じ決済keyへ収束させる
+  - RustのTCP unit testで500→204の2 requestが同じride ID keyであることを確認
+- [ ] 「決済成功後にDB更新失敗」を故障注入し、次のhandlerが同じ決済keyで完了することを確認する
+  - 現在の実装は毎回ride IDをkeyにするため再送可能だが、204後に完了transactionを
+    意図的に失敗させるHTTP回帰は未実施
+  - process crash後に未完了rideを自動再開する回収処理も未実装
+- [x] 正常系、決済retry、重複評価、遅延決済のテストを追加する
+  - network timeout時のhandler cancelとprocess crash後の自動回収は別途検証する
 - [ ] `CODE=6`、`CODE=34`、`CODE=35` と評価APIのp99を比較する
+- [ ] 評価分割後のSQLx pool上限50 / 75 / 100を各3走で比較する
+  - scoreだけでなく初回・完了acquire p95、MySQL `Threads_running`、
+    `Max_used_connections`、row lock waitを同時に記録する
+  - ホストのCPU / memoryは4 CPU / 4 GiBのまま変更しない
 
 ### 座標更新
 

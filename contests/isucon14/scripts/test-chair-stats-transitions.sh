@@ -15,6 +15,8 @@ curl_max_time=${CURL_MAX_TIME:-10}
 container_suffix=$$
 ok_container="isucon14-chair-stats-payment-ok-$container_suffix"
 fail_container="isucon14-chair-stats-payment-fail-$container_suffix"
+barrier_container="isucon14-chair-stats-payment-barrier-$container_suffix"
+tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/isucon14-chair-stats.XXXXXX")
 
 initialize() {
   payment_server=$1
@@ -32,7 +34,8 @@ initialize() {
 
 cleanup() {
   initialize "http://benchmark:12345" >/dev/null || true
-  docker rm --force "$ok_container" "$fail_container" >/dev/null 2>&1 || true
+  docker rm --force "$ok_container" "$fail_container" "$barrier_container" >/dev/null 2>&1 || true
+  rm -rf "$tmp_dir"
 }
 
 trap cleanup EXIT
@@ -58,9 +61,20 @@ trap 'exit 143' TERM
   matcher \
   -c "while true; do printf 'HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n' | nc -l -p 18080; done" \
   >/dev/null
+"$compose" run \
+  --detach \
+  --rm \
+  --no-deps \
+  --name "$barrier_container" \
+  --volume "$script_dir/payment-barrier-handler.sh:/usr/local/bin/payment-barrier-handler:ro" \
+  --entrypoint sh \
+  matcher \
+  -c "mkdir -p /tmp/payment-barrier; exec nc -lk -p 18080 -e /usr/local/bin/payment-barrier-handler" \
+  >/dev/null
 
 ok_payment_url="http://$ok_container:18080"
 fail_payment_url="http://$fail_container:18080"
+barrier_payment_url="http://$barrier_container:18080"
 response=$(initialize "$ok_payment_url")
 case "$response" in
   *'"language":"rust"'*) ;;
@@ -144,6 +158,9 @@ missing_arrived_id=$(printf 'A%025d' "$$")
 valid_ride_id=$(printf 'V%025d' "$$")
 valid_carrying_id=$(printf 'C%025d' "$$")
 valid_arrived_id=$(printf 'B%025d' "$$")
+parallel_ride_id=$(printf 'Q%025d' "$$")
+parallel_carrying_id=$(printf 'R%025d' "$$")
+parallel_arrived_id=$(printf 'S%025d' "$$")
 other_ride_id=$(printf 'O%025d' "$$")
 other_carrying_id=$(printf 'D%025d' "$$")
 other_arrived_id=$(printf 'E%025d' "$$")
@@ -339,6 +356,112 @@ if [ "$(read_stats)" != "$expected_stats" ]; then
   exit 1
 fi
 
+"$compose" exec -T db mysql \
+  --batch \
+  --skip-column-names \
+  -uisucon \
+  -pisucon \
+  isuride <<SQL
+INSERT INTO rides (
+  id,
+  user_id,
+  chair_id,
+  pickup_latitude,
+  pickup_longitude,
+  destination_latitude,
+  destination_longitude
+) VALUES ('$parallel_ride_id', '$user_id', '$chair_id', 0, 0, 1, 1);
+INSERT INTO ride_statuses (id, ride_id, status, created_at)
+VALUES
+  ('$parallel_carrying_id', '$parallel_ride_id', 'CARRYING', NOW(6)),
+  (
+    '$parallel_arrived_id',
+    '$parallel_ride_id',
+    'ARRIVED',
+    TIMESTAMPADD(MICROSECOND, 1, NOW(6))
+  );
+SQL
+
+"$compose" exec -T db mysql \
+  --batch \
+  --skip-column-names \
+  -uisucon \
+  -pisucon \
+  isuride \
+  -e "UPDATE settings SET value = '$barrier_payment_url' WHERE name = 'payment_gateway_url'"
+
+post_evaluation "$parallel_ride_id" 3 >"$tmp_dir/parallel-1.out" &
+parallel_pid_1=$!
+post_evaluation "$parallel_ride_id" 3 >"$tmp_dir/parallel-2.out" &
+parallel_pid_2=$!
+
+barrier_reached=0
+attempt=0
+while [ "$attempt" -lt 200 ]; do
+  if docker exec "$barrier_container" test -f /tmp/payment-barrier/arrived-2; then
+    barrier_reached=1
+    break
+  fi
+  attempt=$((attempt + 1))
+  sleep 0.025
+done
+if [ "$barrier_reached" -ne 1 ]; then
+  echo "parallel evaluation: both payment requests did not reach the barrier" >&2
+  exit 1
+fi
+docker exec "$barrier_container" touch /tmp/payment-barrier/release
+
+wait "$parallel_pid_1"
+wait "$parallel_pid_2"
+
+parallel_status_1=$(tail -n 1 "$tmp_dir/parallel-1.out")
+parallel_status_2=$(tail -n 1 "$tmp_dir/parallel-2.out")
+case "$parallel_status_1:$parallel_status_2" in
+  "200:400"|"400:200") ;;
+  *)
+    echo "parallel evaluation: expected one HTTP 200 and one HTTP 400 actual=$parallel_status_1,$parallel_status_2" >&2
+    exit 1
+    ;;
+esac
+
+parallel_state=$(
+  "$compose" exec -T db mysql \
+    --batch \
+    --skip-column-names \
+    -uisucon \
+    -pisucon \
+    isuride \
+    -e "
+SELECT evaluation,
+       (
+         SELECT COUNT(*)
+         FROM ride_statuses
+         WHERE ride_id = '$parallel_ride_id'
+           AND status = 'COMPLETED'
+       )
+FROM rides
+WHERE id = '$parallel_ride_id'
+"
+)
+if [ "$parallel_state" != "3	1" ]; then
+  echo "parallel evaluation did not converge to one completion: $parallel_state" >&2
+  exit 1
+fi
+
+expected_stats=$(printf '%s\t%s' "$((initial_count + 2))" "$((initial_sum + 7))")
+if [ "$(read_stats)" != "$expected_stats" ]; then
+  echo "parallel evaluation added chair_stats more than once" >&2
+  exit 1
+fi
+
+"$compose" exec -T db mysql \
+  --batch \
+  --skip-column-names \
+  -uisucon \
+  -pisucon \
+  isuride \
+  -e "UPDATE settings SET value = '$ok_payment_url' WHERE name = 'payment_gateway_url'"
+
 # Make the completed ride the deterministic latest ride and warm a stable app
 # notification payload that embeds the shared chair's current statistics.
 "$compose" exec -T db mysql \
@@ -366,7 +489,7 @@ cached_count=$(
     "$base_url/api/app/notification" |
     jq -r '.data.chair.stats.total_rides_count'
 )
-if [ "$cached_count" != "$((initial_count + 1))" ]; then
+if [ "$cached_count" != "$((initial_count + 2))" ]; then
   echo "app notification did not expose the initial shared-chair stats: $cached_count" >&2
   exit 1
 fi
@@ -421,7 +544,7 @@ refreshed_count=$(
     "$base_url/api/app/notification" |
     jq -r '.data.chair.stats.total_rides_count'
 )
-if [ "$refreshed_count" != "$((initial_count + 2))" ]; then
+if [ "$refreshed_count" != "$((initial_count + 3))" ]; then
   echo "cross-user chair stats cache stayed stale: $refreshed_count" >&2
   exit 1
 fi

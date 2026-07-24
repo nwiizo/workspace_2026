@@ -572,6 +572,8 @@ struct EvaluationDiagnosticSample {
     active_evaluations: Option<u64>,
     same_ride_evaluations: Option<u64>,
     preparation_us: u64,
+    preparation_commit_us: u64,
+    preparation_connection_owned_us: u64,
     payment_us: u64,
     payment_attempts: u32,
     payment_request_us: u64,
@@ -581,8 +583,15 @@ struct EvaluationDiagnosticSample {
     payment_server_errors: u32,
     payment_other_status_errors: u32,
     payment_terminal_status: Option<u16>,
+    completion_pool_acquire_us: u64,
+    completion_transaction_begin_us: u64,
+    completion_pool_size_before: Option<u64>,
+    completion_pool_idle_before: Option<u64>,
+    completion_pool_in_use_before: Option<u64>,
+    completion_ride_recheck_us: u64,
     completion_write_us: u64,
     commit_us: u64,
+    completion_connection_owned_us: u64,
     cache_response_us: u64,
     connection_owned_us: u64,
     total_us: u64,
@@ -590,10 +599,17 @@ struct EvaluationDiagnosticSample {
     terminal_phase: &'static str,
 }
 
+#[derive(Clone, Copy)]
+enum EvaluationConnectionStage {
+    Preparation,
+    Completion,
+}
+
 struct EvaluationDiagnostic {
     started_at: Instant,
     checkpoint_at: Instant,
     connection_acquired_at: Option<Instant>,
+    connection_stage: Option<EvaluationConnectionStage>,
     payment_started_at: Option<Instant>,
     payment_diagnostic: crate::payment_gateway::PaymentGatewayDiagnostic,
     sample: EvaluationDiagnosticSample,
@@ -619,6 +635,7 @@ impl EvaluationDiagnostic {
             started_at,
             checkpoint_at: started_at,
             connection_acquired_at: None,
+            connection_stage: None,
             payment_started_at: None,
             payment_diagnostic: crate::payment_gateway::PaymentGatewayDiagnostic::default(),
             sample: EvaluationDiagnosticSample {
@@ -634,6 +651,8 @@ impl EvaluationDiagnostic {
                 active_evaluations: None,
                 same_ride_evaluations: None,
                 preparation_us: 0,
+                preparation_commit_us: 0,
+                preparation_connection_owned_us: 0,
                 payment_us: 0,
                 payment_attempts: 0,
                 payment_request_us: 0,
@@ -643,8 +662,15 @@ impl EvaluationDiagnostic {
                 payment_server_errors: 0,
                 payment_other_status_errors: 0,
                 payment_terminal_status: None,
+                completion_pool_acquire_us: 0,
+                completion_transaction_begin_us: 0,
+                completion_pool_size_before: None,
+                completion_pool_idle_before: None,
+                completion_pool_in_use_before: None,
+                completion_ride_recheck_us: 0,
                 completion_write_us: 0,
                 commit_us: 0,
+                completion_connection_owned_us: 0,
                 cache_response_us: 0,
                 connection_owned_us: 0,
                 total_us: 0,
@@ -662,14 +688,27 @@ impl EvaluationDiagnostic {
         elapsed.min(u128::from(u64::MAX)) as u64
     }
 
-    fn connection_acquired(&mut self) {
+    fn connection_acquired(&mut self, stage: EvaluationConnectionStage) {
         self.connection_acquired_at = Some(Instant::now());
+        self.connection_stage = Some(stage);
     }
 
     fn connection_released(&mut self) {
         if let Some(acquired_at) = self.connection_acquired_at.take() {
-            self.sample.connection_owned_us =
-                acquired_at.elapsed().as_micros().min(u128::from(u64::MAX)) as u64;
+            let elapsed_us = acquired_at.elapsed().as_micros().min(u128::from(u64::MAX)) as u64;
+            match self.connection_stage.take() {
+                Some(EvaluationConnectionStage::Preparation) => {
+                    self.sample.preparation_connection_owned_us = elapsed_us;
+                }
+                Some(EvaluationConnectionStage::Completion) => {
+                    self.sample.completion_connection_owned_us = elapsed_us;
+                }
+                None => {}
+            }
+            self.sample.connection_owned_us = self
+                .sample
+                .preparation_connection_owned_us
+                .saturating_add(self.sample.completion_connection_owned_us);
         }
     }
 
@@ -761,7 +800,7 @@ async fn app_post_ride_evaluation(
     }
     let mut connection = pool.acquire().await?;
     if let Some(diagnostic) = &mut diagnostic {
-        diagnostic.connection_acquired();
+        diagnostic.connection_acquired(EvaluationConnectionStage::Preparation);
         diagnostic.sample.pool_acquire_us = diagnostic.elapsed_since_checkpoint_us();
         diagnostic.sample.terminal_phase = "transaction_begin";
     }
@@ -782,7 +821,7 @@ async fn app_post_ride_evaluation(
     };
     let status = crate::get_latest_ride_status(&mut *tx, &ride.id).await?;
 
-    if status != "ARRIVED" {
+    if status != "ARRIVED" || ride.evaluation.is_some() {
         return Err(Error::BadRequest("not arrived yet"));
     }
     if let Some(diagnostic) = &mut diagnostic {
@@ -790,11 +829,11 @@ async fn app_post_ride_evaluation(
         diagnostic.sample.terminal_phase = "tracker_begin";
     }
 
-    // The evaluation transaction also performs an external payment request.
-    // Keep the assigned chair unavailable after the DB commit until Axum has
-    // consumed or dropped the response body. Dropping the guard starts the
-    // tracker's measured delivery grace because handing the body to Hyper can
-    // still precede the benchmark client receiving that response.
+    // Keep the assigned chair unavailable while the preparation transaction,
+    // transaction-free payment, completion transaction, and response delivery
+    // are in progress. Dropping the guard starts the tracker's measured
+    // delivery grace because handing the body to Hyper can still precede the
+    // benchmark client receiving that response.
     let active_evaluation = ride
         .chair_id
         .clone()
@@ -841,6 +880,15 @@ async fn app_post_ride_evaluation(
 
     if let Some(diagnostic) = &mut diagnostic {
         diagnostic.sample.preparation_us = diagnostic.elapsed_since_checkpoint_us();
+        diagnostic.sample.terminal_phase = "preparation_commit";
+    }
+    tx.commit().await?;
+    if let Some(diagnostic) = &mut diagnostic {
+        diagnostic.sample.preparation_commit_us = diagnostic.elapsed_since_checkpoint_us();
+    }
+    drop(connection);
+    if let Some(diagnostic) = &mut diagnostic {
+        diagnostic.connection_released();
         diagnostic.sample.terminal_phase = "payment";
         diagnostic.payment_started();
     }
@@ -862,6 +910,45 @@ async fn app_post_ride_evaluation(
     }
     payment_result?;
     if let Some(diagnostic) = &mut diagnostic {
+        let pool_size = u64::from(pool.size());
+        let pool_idle = u64::try_from(pool.num_idle()).unwrap_or(u64::MAX);
+        diagnostic.sample.completion_pool_size_before = Some(pool_size);
+        diagnostic.sample.completion_pool_idle_before = Some(pool_idle);
+        diagnostic.sample.completion_pool_in_use_before = Some(pool_size.saturating_sub(pool_idle));
+        diagnostic.sample.terminal_phase = "completion_pool_acquire";
+    }
+
+    let mut connection = pool.acquire().await?;
+    if let Some(diagnostic) = &mut diagnostic {
+        diagnostic.connection_acquired(EvaluationConnectionStage::Completion);
+        diagnostic.sample.completion_pool_acquire_us = diagnostic.elapsed_since_checkpoint_us();
+        diagnostic.sample.terminal_phase = "completion_transaction_begin";
+    }
+    let mut tx = connection.begin().await?;
+    if let Some(diagnostic) = &mut diagnostic {
+        diagnostic.sample.completion_transaction_begin_us =
+            diagnostic.elapsed_since_checkpoint_us();
+        diagnostic.sample.terminal_phase = "completion_ride_recheck";
+    }
+
+    let Some(completion_ride): Option<Ride> =
+        sqlx::query_as("SELECT * FROM rides WHERE id = ? AND user_id = ? FOR UPDATE")
+            .bind(&ride_id)
+            .bind(&user.id)
+            .fetch_optional(&mut *tx)
+            .await?
+    else {
+        return Err(Error::NotFound("ride not found"));
+    };
+    let completion_status = crate::get_latest_ride_status(&mut *tx, &completion_ride.id).await?;
+    if completion_ride.evaluation.is_some()
+        || completion_status != "ARRIVED"
+        || completion_ride.chair_id.as_deref() != Some(chair_id.as_str())
+    {
+        return Err(Error::BadRequest("not arrived yet"));
+    }
+    if let Some(diagnostic) = &mut diagnostic {
+        diagnostic.sample.completion_ride_recheck_us = diagnostic.elapsed_since_checkpoint_us();
         diagnostic.sample.terminal_phase = "completion_write";
     }
 

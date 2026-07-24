@@ -49,9 +49,9 @@ if ! command -v jq >/dev/null 2>&1; then
   exit 1
 fi
 
-# The delay is the behavior under test: it keeps the evaluation transaction
-# open after it locks the ride. Readiness below is detected from the actual
-# InnoDB row lock rather than an arbitrary startup sleep.
+# The delay is the behavior under test: it keeps the external payment in
+# progress after the short preparation transaction has released its ride lock
+# and DB connection.
 "$compose" run \
   --detach \
   --rm \
@@ -212,40 +212,8 @@ SQL
   nc "$app_host" "$app_port" >"$tmp_dir/evaluation.out" &
 evaluation_pid=$!
 
-# Wait until the evaluation transaction owns the pending ride row. The handler
-# is now waiting for payment; the vulnerable implementation had already
-# changed rides.updated_at at this point.
-lock_seen=0
-attempt=0
-while [ "$attempt" -lt 200 ]; do
-  lock_count=$(
-    "$compose" exec -T --env MYSQL_PWD=isucon db mysql \
-      --batch \
-      --skip-column-names \
-      -uroot \
-      -e "
-SELECT COUNT(*)
-FROM performance_schema.data_locks
-WHERE OBJECT_SCHEMA = 'isuride'
-  AND OBJECT_NAME = 'rides'
-  AND LOCATE('$pending_ride_id', COALESCE(LOCK_DATA, '')) > 0
-"
-  )
-  if [ "$lock_count" -gt 0 ]; then
-    lock_seen=1
-    break
-  fi
-  attempt=$((attempt + 1))
-  sleep 0.025
-done
-if [ "$lock_seen" -ne 1 ]; then
-  echo "評価transactionのride row lockを期限内に確認できませんでした" >&2
-  exit 1
-fi
-
-# A row lock alone only proves that the handler started its transaction. Wait
-# for the mock server's accept log as well, so the known ride is moved after
-# the evaluation has actually reached the delayed payment boundary.
+# Wait for the mock server's accept log so the known ride is moved after the
+# evaluation has reached the delayed payment boundary.
 payment_request_seen=0
 attempt=0
 while [ "$attempt" -lt 200 ]; do
@@ -261,9 +229,35 @@ if [ "$payment_request_seen" -ne 1 ]; then
   exit 1
 fi
 
-# Move the already-completed ride's timestamp after the pending evaluation's
-# early UPDATE. Updating a pre-existing, unrelated row avoids making fixture
-# INSERT lock waits part of the timing condition under test.
+# The preparation transaction must be complete before the payment request.
+# Observe the first 500ms of the eight-second payment delay and fail if the
+# pending ride row remains locked.
+attempt=0
+while [ "$attempt" -lt 20 ]; do
+  lock_count=$(
+    "$compose" exec -T --env MYSQL_PWD=isucon db mysql \
+      --batch \
+      --skip-column-names \
+      -uroot \
+      -e "
+SELECT COUNT(*)
+FROM performance_schema.data_locks
+WHERE OBJECT_SCHEMA = 'isuride'
+  AND OBJECT_NAME = 'rides'
+  AND LOCATE('$pending_ride_id', COALESCE(LOCK_DATA, '')) > 0
+"
+  )
+  if [ "$lock_count" -ne 0 ]; then
+    echo "遅延決済中もpending rideのrow lockが保持されています" >&2
+    exit 1
+  fi
+  attempt=$((attempt + 1))
+  sleep 0.025
+done
+
+# Move the already-completed ride's timestamp while the pending evaluation is
+# waiting outside a DB transaction. Updating a pre-existing, unrelated row
+# avoids making fixture INSERT lock waits part of the timing condition.
 "$compose" exec -T --env MYSQL_PWD=isucon db mysql \
   --batch \
   --skip-column-names \
@@ -307,7 +301,7 @@ baseline_total=$(get_total_sales)
 known_ride_sale=700
 expected_baseline=$((initial_total + known_ride_sale))
 if [ "$baseline_total" -ne "$expected_baseline" ]; then
-  echo "評価transactionが基準売上の取得前にcommitしました" >&2
+  echo "評価の完了transactionが基準売上の取得前にcommitしました" >&2
   echo "initial_total=$initial_total expected_baseline=$expected_baseline baseline_total=$baseline_total" >&2
   exit 1
 fi
@@ -334,7 +328,7 @@ WHERE id = '$pending_ride_id'
   sleep 0.025
 done
 if [ "$evaluation_committed" -ne 1 ]; then
-  echo "評価transactionのcommitを期限内に確認できませんでした" >&2
+  echo "評価の完了transaction commitを期限内に確認できませんでした" >&2
   exit 1
 fi
 
@@ -429,6 +423,7 @@ if [ "$after_total" -ne "$baseline_total" ]; then
 fi
 
 echo "OK: pending evaluation timestamp is after the known completion"
+echo "OK: delayed payment held no pending ride row lock"
 echo "OK: payment request acceptance and evaluation response completed_at were verified"
 echo "OK: pending_updated_at known_updated_at completed_rows_in_window=$visibility"
 echo "OK: owner sales stayed at $baseline_total for the known ride's until boundary"

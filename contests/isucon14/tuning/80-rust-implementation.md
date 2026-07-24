@@ -1655,6 +1655,88 @@ protocol flushを行う非同期taskが開始されます。そのため計測�
 計測名は実装できた値ではなく、実際に表す境界に合わせます。誤った名前は、精密な数値を
 出しても誤った施策へ導きます。
 
+## `.await`をまたぐtransactionを分割する
+
+### async処理ではscopeが資源保持時間になる
+
+Rustの`Transaction<'_, MySql>`や`PoolConnection<MySql>`を変数として生存させたまま
+`.await`すると、待っている間もその値はfutureのstateへ保存されます。threadを占有して
+いなくても、DB connectionとrow lockは所有したままです。
+
+```rust
+let mut tx = connection.begin().await?;
+let ride = lock_and_read_ride(&mut tx).await?;
+request_payment(&ride).await?; // DBと無関係でもtxは生存中
+write_completion(&mut tx).await?;
+tx.commit().await?;
+```
+
+「asyncだから待ち時間は軽い」は、CPU threadについての説明です。pool connection、
+mutex guard、file descriptorなど、futureが所有する有限資源まで自動的に解放される
+わけではありません。`.await`の前後で何を所有しているかを確認する必要があります。
+
+### commitとdropを境界として明示する
+
+評価handlerでは必要値をownedな値へ取り出し、準備transactionをcommitしてconnectionを
+dropしてから決済へ進みます。
+
+```rust
+let payment_context = {
+    let mut connection = pool.acquire().await?;
+    let mut tx = connection.begin().await?;
+    let context = read_payment_context(&mut tx).await?;
+    tx.commit().await?;
+    context
+}; // connectionを後段へ持ち出さない
+
+request_payment(&payment_context).await?;
+```
+
+実装では診断計測のため明示的な`drop(connection)`も使っています。scopeで解放する方法と
+動作は同じ方向ですが、「この時点からpayment」という計測境界をコード上でも示せます。
+
+ただしSQLx poolへの返却には非同期の後処理があり得るため、`drop`時刻は
+「handlerが所有をやめた時刻」であって「別requestが取得可能になった厳密な時刻」では
+ありません。そこで診断名を`connection_owned_us`としています。
+
+### 分割後は古い読取り結果を信用しない
+
+transactionを分けると、間に別requestが状態を変更できます。Rustのownershipが値の
+メモリ安全性を保証しても、その値が現在のDB状態と一致することまでは保証しません。
+
+完了transactionではrideをもう一度`FOR UPDATE`で読み、次を再検証します。
+
+```rust
+let completion_ride = lock_owned_ride(&mut tx, &ride_id, &user_id).await?;
+let completion_status = get_latest_ride_status(&mut tx, &ride_id).await?;
+
+if completion_ride.evaluation.is_some()
+    || completion_status != "ARRIVED"
+    || completion_ride.chair_id.as_deref() != Some(expected_chair_id.as_str())
+{
+    return Err(Error::BadRequest("not arrived yet"));
+}
+```
+
+この再検証がないと、準備時には未評価だったrideへ2つのrequestが同時に決済し、両方が
+chair statsを加算するTOCTOU競合が起きます。`FOR UPDATE`で直列化した後に条件を見る
+順序が重要です。lock前に条件を見てからlockしても、待っている間に条件が変わります。
+
+### 冪等性はDB transactionの外側を補う
+
+MySQL transactionは外部HTTP決済をrollbackできません。決済成功後に完了transactionが
+失敗する可能性は残ります。ride IDを`Idempotency-Key`にしておけば、clientの再送は
+同じ支払い結果へ収束し、完了transactionだけを再試行できます。
+
+これは原子性を完全に得たという意味ではありません。process crash後にclientが再送しない
+場合の自動回収には、決済中・決済済みなどの永続状態とworkerが別途必要です。今回の変更は
+API契約内で二重課金を避けつつ、長いDB資源保持をなくす設計です。
+
+診断runではconnection所有平均319.754msから19.241ms、p95 695.556msから36.764msへ
+短縮しました。一方で完了前に2回目のpool acquireが平均27.039ms追加されています。
+個々のhandler latencyとシステム全体の資源効率は同じ指標ではないため、両方を記録します。
+詳細は[Benchmark 32](./32-evaluation-transaction-split.md)に記載しています。
+
 ## 避けるショートカット
 
 - N+1を無制限の `tokio::spawn` で隠す

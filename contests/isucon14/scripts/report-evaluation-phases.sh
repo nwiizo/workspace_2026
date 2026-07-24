@@ -112,11 +112,17 @@ for phase in \
   ride_lock_status_us \
   tracker_begin_us \
   preparation_us \
+  preparation_commit_us \
+  preparation_connection_owned_us \
   payment_us \
   payment_request_us \
   payment_retry_sleep_us \
+  completion_pool_acquire_us \
+  completion_transaction_begin_us \
+  completion_ride_recheck_us \
   completion_write_us \
   commit_us \
+  completion_connection_owned_us \
   cache_response_us \
   connection_owned_us \
   total_us
@@ -234,6 +240,95 @@ jq --slurp --raw-output '
       $samples[] |
       select(.pool_size_before < $max_size and .pool_idle_before == 0) |
       .pool_acquire_us
+    ]
+  )
+' "$json_log"
+
+printf '\ncompletion pool state before sampled acquire\n\n'
+printf 'summary: '
+jq --slurp --raw-output '
+  [.[] | select(.completion_pool_size_before != null)] as $samples |
+  if ($samples | length) == 0 then
+    "no split-transaction samples"
+  else
+    ($samples | map(.completion_pool_size_before) | max) as $max_size |
+    "samples=\($samples | length) " +
+    "no_idle=\($samples | map(select(.completion_pool_idle_before == 0)) | length) " +
+    "observed_max_size=\($max_size) " +
+    "observed_max_size_no_idle=\($samples | map(select(
+      .completion_pool_size_before == $max_size and .completion_pool_idle_before == 0
+    )) | length)"
+  end
+' "$json_log"
+printf '\n'
+printf '| pool size | idle | in use | samples |\n'
+printf '|---:|---:|---:|---:|\n'
+jq --slurp --raw-output '
+  [
+    .[] |
+    select(.completion_pool_size_before != null) |
+    {
+      size: .completion_pool_size_before,
+      idle: .completion_pool_idle_before,
+      in_use: .completion_pool_in_use_before
+    }
+  ] |
+  sort_by([.size, .idle, .in_use]) |
+  group_by([.size, .idle, .in_use])[] |
+  "| \(.[0].size) | \(.[0].idle) | \(.[0].in_use) | \(length) |"
+' "$json_log"
+
+printf '\ncompletion pool acquire latency by state before acquire\n\n'
+printf '| state | samples | avg_us | p50_us | p95_us | p99_us | max_us |\n'
+printf '|---|---:|---:|---:|---:|---:|---:|\n'
+jq --slurp --raw-output '
+  [
+    .[] |
+    select(.outcome == "success") |
+    select(.completion_pool_size_before != null)
+  ] as $samples |
+  ($samples | map(.completion_pool_size_before) | max) as $max_size |
+  def row($label; $values):
+    ($values | sort) as $sorted |
+    ($sorted | length) as $length |
+    if $length == 0 then
+      "| \($label) | 0 | n/a | n/a | n/a | n/a | n/a |"
+    else
+      "| \($label) | \($length) | " +
+      "\(($sorted | add) / $length | floor) | " +
+      "\($sorted[(($length - 1) * 0.50 | floor)]) | " +
+      "\($sorted[(($length - 1) * 0.95 | floor)]) | " +
+      "\($sorted[(($length - 1) * 0.99 | floor)]) | " +
+      "\($sorted[$length - 1]) |"
+    end;
+  row(
+    "observed_max_size_no_idle";
+    [
+      $samples[] |
+      select(
+        .completion_pool_size_before == $max_size and
+        .completion_pool_idle_before == 0
+      ) |
+      .completion_pool_acquire_us
+    ]
+  ),
+  row(
+    "idle_positive";
+    [
+      $samples[] |
+      select(.completion_pool_idle_before > 0) |
+      .completion_pool_acquire_us
+    ]
+  ),
+  row(
+    "below_observed_max_no_idle";
+    [
+      $samples[] |
+      select(
+        .completion_pool_size_before < $max_size and
+        .completion_pool_idle_before == 0
+      ) |
+      .completion_pool_acquire_us
     ]
   )
 ' "$json_log"

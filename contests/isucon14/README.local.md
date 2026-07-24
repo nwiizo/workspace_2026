@@ -52,7 +52,8 @@ git -C "$source_dir/isucon14" archive HEAD | tar -x -C contests/isucon14
 | `scripts/test-latest-location-reconciliation.sh` | commit後のcache更新欠落と同時刻tie-breakの故障注入 |
 | `scripts/test-status-notification-order.sh` | 時刻逆転時もapp / chair通知が状態遷移順になることをHTTPで確認 |
 | `scripts/test-chair-stats-consistency.sh` | 全初期chairを照合し、欠損・誤値・余分なrowを再起動で修復 |
-| `scripts/test-chair-stats-transitions.sh` | 評価の所有者認可、完了条件、決済rollback、再送時の非加算をHTTP検証 |
+| `scripts/test-chair-stats-transitions.sh` | 評価の所有者認可、完了条件、決済rollback、barrier付き並行評価、再送時の非加算をHTTP検証 |
+| `scripts/payment-barrier-handler.sh` | 2件の決済POSTが到達するまで204を返さず、評価のTOCTOU競合を決定的に作るテスト用handler |
 | `scripts/test-owner-sales-response-boundary.sh` | 遅い決済中の評価完了時刻とowner salesの`until`境界をHTTP・決済TCP accept・InnoDB行ロック・response JSON・SQLで確認 |
 | `scripts/test-username-collision.sh` | 同じusernameを2回登録し、別user・別認証・招待couponを維持した限定再試行を確認 |
 | `scripts/test-invitation-concurrency.sh` | 異なる招待コードと同一招待コードをbarrier付きで並行登録し、上限、coupon件数、MySQL 1062 / 1213の増分0を確認 |
@@ -456,6 +457,22 @@ ride lock、DB準備、決済HTTP、retry sleep、完了write、`COMMIT`へ分�
 rideを再lockする短い完了transactionへ分けます。診断runは `pass=true`・114,109点ですが、
 instrumentation付き1走なので通常得点の推定には使いません。詳細は
 [`tuning/31-evaluation-phase-diagnostics.md`](./tuning/31-evaluation-phase-diagnostics.md)を
+参照してください。
+
+Benchmark 32では、評価APIを短い準備transaction、transaction外の冪等決済、
+rideを再lock・再検証する短い完了transactionへ分けました。診断runの成功215 sampleで、
+DB connection所有の合計は平均319.754msから19.241ms、p95 695.556msから36.764msへ
+約94%短縮しました。決済平均は308.947msで変更前の302.507msとほぼ同じなので、
+決済を速く見せたのではなく、決済待ちからDB資源を外せた結果です。
+
+通常60秒3走は99,689 / 106,035 / 99,633点、推定代表値の中央値99,689点でした。
+全run `pass=true`・error map空ですが、直近中央値102,569点比-2.8%のため得点改善とは
+断定していません。遅延決済中にride row lockがないこと、同じrideへの2並行評価が
+ともに準備transactionを抜けて決済barrierへ到達した後も、200 / 400各1件かつ完了write
+1回へ収束することを回帰テストで確認しています。
+変更後も初回取得の66.5%、完了取得の66.0%でpool size 50 / idle 0だったため、次は
+CPU / memoryを変えずにSQLx pool上限だけを比較します。詳細は
+[`tuning/32-evaluation-transaction-split.md`](./tuning/32-evaluation-transaction-split.md)を
 参照してください。
 
 過去のBenchmark 19では、診断runで `CARRYING` の後に古い `PICKUP` を返す
