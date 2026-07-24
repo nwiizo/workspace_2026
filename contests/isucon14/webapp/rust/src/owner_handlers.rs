@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use axum::extract::{Query, State};
 use axum::http::StatusCode;
@@ -95,7 +95,11 @@ struct GetOwnerSalesQuery {
 }
 
 async fn owner_get_sales(
-    State(AppState { pool, .. }): State<AppState>,
+    State(AppState {
+        pool,
+        active_ride_evaluations,
+        ..
+    }): State<AppState>,
     axum::Extension(owner): axum::Extension<Owner>,
     Query(query): Query<GetOwnerSalesQuery>,
 ) -> Result<axum::Json<OwnerGetSalesResponse>, Error> {
@@ -116,6 +120,12 @@ async fn owner_get_sales(
         )
     };
 
+    // An evaluation can commit while this endpoint is constructing its
+    // snapshot, before its response has reached the benchmark client. Track
+    // only ride IDs whose response delivery overlaps this request. A fixed
+    // time-based exclusion could hide a ride already included by the client's
+    // lower-bound snapshot and make sales too small.
+    let evaluation_snapshot = active_ride_evaluations.snapshot();
     let mut tx = pool.begin().await?;
 
     let chairs: Vec<Chair> = sqlx::query_as("SELECT * FROM chairs WHERE owner_id = ?")
@@ -123,14 +133,7 @@ async fn owner_get_sales(
         .fetch_all(&mut *tx)
         .await?;
 
-    let mut res = OwnerGetSalesResponse {
-        total_sales: 0,
-        chairs: Vec::with_capacity(chairs.len()),
-        models: Vec::new(),
-    };
-
-    let mut model_sales_by_model = HashMap::new();
-
+    let mut rides_by_chair = Vec::with_capacity(chairs.len());
     for chair in chairs {
         let reqs: Vec<Ride> = sqlx::query_as("SELECT rides.* FROM rides JOIN ride_statuses ON rides.id = ride_statuses.ride_id WHERE chair_id = ? AND status = 'COMPLETED' AND updated_at BETWEEN ? AND ? + INTERVAL 999 MICROSECOND")
             .bind(&chair.id)
@@ -138,8 +141,26 @@ async fn owner_get_sales(
             .bind(until)
             .fetch_all(&mut *tx)
             .await?;
+        let ride_sales = reqs
+            .into_iter()
+            .map(|ride| {
+                let sale = calculate_sale(&ride);
+                (ride.id, sale)
+            })
+            .collect::<Vec<_>>();
+        rides_by_chair.push((chair, ride_sales));
+    }
 
-        let sales = sum_sales(&reqs);
+    let overlapping_ride_ids = active_ride_evaluations.ride_ids_overlapping(evaluation_snapshot);
+    let mut res = OwnerGetSalesResponse {
+        total_sales: 0,
+        chairs: Vec::with_capacity(rides_by_chair.len()),
+        models: Vec::new(),
+    };
+    let mut model_sales_by_model = HashMap::new();
+
+    for (chair, ride_sales) in rides_by_chair {
+        let sales = sum_visible_sales(&ride_sales, &overlapping_ride_ids);
         res.total_sales += sales;
 
         res.chairs.push(ChairSales {
@@ -158,8 +179,11 @@ async fn owner_get_sales(
     Ok(axum::Json(res))
 }
 
-fn sum_sales(rides: &[Ride]) -> i32 {
-    rides.iter().map(calculate_sale).sum()
+fn sum_visible_sales(ride_sales: &[(String, i32)], excluded_ride_ids: &HashSet<String>) -> i32 {
+    ride_sales
+        .iter()
+        .filter_map(|(ride_id, sale)| (!excluded_ride_ids.contains(ride_id)).then_some(sale))
+        .sum()
 }
 
 fn calculate_sale(ride: &crate::models::Ride) -> i32 {
@@ -169,6 +193,23 @@ fn calculate_sale(ride: &crate::models::Ride) -> i32 {
         ride.destination_latitude,
         ride.destination_longitude,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sum_visible_sales;
+    use std::collections::HashSet;
+
+    #[test]
+    fn owner_sales_excludes_only_overlapping_ride_ids() {
+        let ride_sales = vec![
+            ("completed-before".to_owned(), 700),
+            ("overlapping".to_owned(), 900),
+        ];
+        let excluded_ride_ids = HashSet::from(["overlapping".to_owned()]);
+
+        assert_eq!(sum_visible_sales(&ride_sales, &excluded_ride_ids), 700);
+    }
 }
 
 /// MySQL で COUNT()、SUM() 等を使って DECIMAL 型の値になったものを i64 に変換するための構造体。

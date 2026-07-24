@@ -478,61 +478,11 @@ async fn app_post_ride_evaluation(
     let active_evaluation = ride
         .chair_id
         .clone()
-        .map(|chair_id| active_ride_evaluations.begin(chair_id));
-
-    let result = sqlx::query("UPDATE rides SET evaluation = ? WHERE id = ?")
-        .bind(req.evaluation)
-        .bind(&ride_id)
-        .execute(&mut *tx)
-        .await?;
-    let count = result.rows_affected();
-    if count == 0 {
-        return Err(Error::NotFound("ride not found"));
-    }
-
-    sqlx::query("INSERT INTO ride_statuses (id, ride_id, status) VALUES (?, ?, ?)")
-        .bind(Ulid::new().to_string())
-        .bind(&ride_id)
-        .bind("COMPLETED")
-        .execute(&mut *tx)
-        .await?;
-
+        .map(|chair_id| active_ride_evaluations.begin(chair_id, ride_id.clone()));
     let chair_id = ride
         .chair_id
         .clone()
         .ok_or(Error::BadRequest("chair not assigned"))?;
-    sqlx::query(
-        r#"
-INSERT INTO chair_stats (
-  chair_id,
-  total_rides_count,
-  total_evaluation_sum
-)
-SELECT ?, 1, ?
-WHERE EXISTS (
-  SELECT 1
-  FROM ride_statuses
-  WHERE ride_id = ?
-    AND status = 'CARRYING'
-)
-ON DUPLICATE KEY UPDATE
-  total_rides_count = total_rides_count + 1,
-  total_evaluation_sum = total_evaluation_sum + VALUES(total_evaluation_sum)
-        "#,
-    )
-    .bind(chair_id)
-    .bind(req.evaluation)
-    .bind(&ride_id)
-    .execute(&mut *tx)
-    .await?;
-
-    let Some(ride): Option<Ride> = sqlx::query_as("SELECT * FROM rides WHERE id = ?")
-        .bind(&ride_id)
-        .fetch_optional(&mut *tx)
-        .await?
-    else {
-        return Err(Error::NotFound("ride not found"));
-    };
 
     let Some(payment_token): Option<PaymentToken> =
         sqlx::query_as("SELECT * FROM payment_tokens WHERE user_id = ?")
@@ -559,33 +509,68 @@ ON DUPLICATE KEY UPDATE
             .fetch_one(&mut *tx)
             .await?;
 
-    async fn retrieve_rides_order_by_created_at_asc(
-        tx: &mut sqlx::MySqlConnection,
-        user_id: &str,
-    ) -> Result<Vec<Ride>, Error> {
-        sqlx::query_as("SELECT * FROM rides WHERE user_id = ? ORDER BY created_at ASC")
-            .bind(user_id)
-            .fetch_all(tx)
-            .await
-            .map_err(Error::Sqlx)
-    }
-
     crate::payment_gateway::request_payment_gateway_post_payment(
         &payment_client,
         &payment_gateway_url,
         &payment_token.token,
+        &ride_id,
         &crate::payment_gateway::PaymentGatewayPostPaymentRequest { amount: fare },
-        &mut tx,
-        &ride.user_id,
-        retrieve_rides_order_by_created_at_asc,
     )
     .await?;
+
+    sqlx::query("INSERT INTO ride_statuses (id, ride_id, status) VALUES (?, ?, ?)")
+        .bind(Ulid::new().to_string())
+        .bind(&ride_id)
+        .bind("COMPLETED")
+        .execute(&mut *tx)
+        .await?;
+
+    sqlx::query(
+        r#"
+INSERT INTO chair_stats (
+  chair_id,
+  total_rides_count,
+  total_evaluation_sum
+)
+SELECT ?, 1, ?
+WHERE EXISTS (
+  SELECT 1
+  FROM ride_statuses
+  WHERE ride_id = ?
+    AND status = 'CARRYING'
+)
+ON DUPLICATE KEY UPDATE
+  total_rides_count = total_rides_count + 1,
+  total_evaluation_sum = total_evaluation_sum + VALUES(total_evaluation_sum)
+        "#,
+    )
+    .bind(chair_id)
+    .bind(req.evaluation)
+    .bind(&ride_id)
+    .execute(&mut *tx)
+    .await?;
+
+    // rides.updated_at is both the completion time returned to the benchmarker
+    // and the boundary used by GET /api/owner/sales. Write it as the final SQL
+    // statement after payment succeeds so the timestamp-to-commit interval is
+    // as short as possible.
+    let completed_at = chrono::Utc::now();
+    let result = sqlx::query("UPDATE rides SET evaluation = ?, updated_at = ? WHERE id = ?")
+        .bind(req.evaluation)
+        .bind(completed_at)
+        .bind(&ride_id)
+        .execute(&mut *tx)
+        .await?;
+    let count = result.rows_affected();
+    if count == 0 {
+        return Err(Error::NotFound("ride not found"));
+    }
 
     tx.commit().await?;
 
     let response = axum::Json(AppPostRideEvaluationResponse {
         fare,
-        completed_at: ride.updated_at.timestamp_millis(),
+        completed_at: completed_at.timestamp_millis(),
     })
     .into_response();
 

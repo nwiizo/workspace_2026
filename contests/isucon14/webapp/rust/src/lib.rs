@@ -169,7 +169,9 @@ pub struct ActiveRideEvaluationTracker {
 #[derive(Debug, Default)]
 struct ActiveRideEvaluationState {
     active_counts: HashMap<String, usize>,
+    active_ride_counts: HashMap<String, usize>,
     completed_evaluations: HashMap<String, CompletedRideEvaluation>,
+    completed_ride_evaluations: HashMap<String, CompletedRideEvaluation>,
     live_snapshot_revisions: BTreeMap<u64, usize>,
     revision: u64,
     generation: u64,
@@ -186,6 +188,7 @@ const EVALUATION_RESPONSE_DELIVERY_GRACE: Duration = Duration::from_secs(1);
 #[derive(Debug)]
 pub(crate) struct ActiveRideEvaluationGuard {
     chair_id: String,
+    ride_id: String,
     generation: u64,
     tracker: ActiveRideEvaluationTracker,
 }
@@ -194,19 +197,22 @@ pub(crate) struct ActiveRideEvaluationSnapshot {
     generation: u64,
     revision: u64,
     chair_ids: HashSet<String>,
+    ride_ids: HashSet<String>,
     tracker: ActiveRideEvaluationTracker,
 }
 
 impl ActiveRideEvaluationTracker {
-    pub(crate) fn begin(&self, chair_id: String) -> ActiveRideEvaluationGuard {
+    pub(crate) fn begin(&self, chair_id: String, ride_id: String) -> ActiveRideEvaluationGuard {
         let mut state = self
             .inner
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         *state.active_counts.entry(chair_id.clone()).or_default() += 1;
+        *state.active_ride_counts.entry(ride_id.clone()).or_default() += 1;
         let generation = state.generation;
         ActiveRideEvaluationGuard {
             chair_id,
+            ride_id,
             generation,
             tracker: self.clone(),
         }
@@ -251,6 +257,7 @@ impl ActiveRideEvaluationTracker {
                 )
                 .cloned()
                 .collect(),
+            ride_ids: state.active_ride_counts.keys().cloned().collect(),
             tracker: self.clone(),
         }
     }
@@ -296,6 +303,37 @@ impl ActiveRideEvaluationTracker {
         chair_ids
     }
 
+    pub(crate) fn ride_ids_overlapping(
+        &self,
+        mut snapshot: ActiveRideEvaluationSnapshot,
+    ) -> HashSet<String> {
+        let state = self
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if snapshot.generation != state.generation {
+            let ride_ids = std::mem::take(&mut snapshot.ride_ids);
+            drop(state);
+            return ride_ids;
+        }
+        snapshot
+            .ride_ids
+            .extend(state.active_ride_counts.keys().cloned());
+        snapshot
+            .ride_ids
+            .extend(
+                state
+                    .completed_ride_evaluations
+                    .iter()
+                    .filter_map(|(ride_id, completed)| {
+                        (completed.revision > snapshot.revision).then_some(ride_id.clone())
+                    }),
+            );
+        let ride_ids = std::mem::take(&mut snapshot.ride_ids);
+        drop(state);
+        ride_ids
+    }
+
     pub fn clear(&self) {
         let mut state = self
             .inner
@@ -317,6 +355,9 @@ impl ActiveRideEvaluationTracker {
             completed.unavailable_until > now
                 || oldest_live_snapshot.is_some_and(|revision| completed.revision > revision)
         });
+        state.completed_ride_evaluations.retain(|_, completed| {
+            oldest_live_snapshot.is_some_and(|revision| completed.revision > revision)
+        });
     }
 }
 
@@ -330,21 +371,41 @@ impl Drop for ActiveRideEvaluationGuard {
         if self.generation != state.generation {
             return;
         }
-        let Some(active_count) = state.active_counts.get_mut(&self.chair_id) else {
+        let Some(active_chair_count) = state.active_counts.get_mut(&self.chair_id) else {
             return;
         };
-        *active_count -= 1;
-        if *active_count == 0 {
+        *active_chair_count -= 1;
+        let chair_completed = *active_chair_count == 0;
+        if chair_completed {
             state.active_counts.remove(&self.chair_id);
+        }
+
+        let Some(active_ride_count) = state.active_ride_counts.get_mut(&self.ride_id) else {
+            return;
+        };
+        *active_ride_count -= 1;
+        let ride_completed = *active_ride_count == 0;
+        if ride_completed {
+            state.active_ride_counts.remove(&self.ride_id);
             state.revision = state.revision.saturating_add(1);
             let revision = state.revision;
-            state.completed_evaluations.insert(
-                self.chair_id.clone(),
+            let now = Instant::now();
+            state.completed_ride_evaluations.insert(
+                self.ride_id.clone(),
                 CompletedRideEvaluation {
                     revision,
-                    unavailable_until: Instant::now() + EVALUATION_RESPONSE_DELIVERY_GRACE,
+                    unavailable_until: now,
                 },
             );
+            if chair_completed {
+                state.completed_evaluations.insert(
+                    self.chair_id.clone(),
+                    CompletedRideEvaluation {
+                        revision,
+                        unavailable_until: now + EVALUATION_RESPONSE_DELIVERY_GRACE,
+                    },
+                );
+            }
         }
     }
 }
@@ -785,8 +846,8 @@ mod tests {
     #[test]
     fn active_ride_evaluation_is_removed_when_the_guard_drops() {
         let tracker = ActiveRideEvaluationTracker::default();
-        let first_guard = tracker.begin("chair-1".to_owned());
-        let second_guard = tracker.begin("chair-1".to_owned());
+        let first_guard = tracker.begin("chair-1".to_owned(), "ride-1".to_owned());
+        let second_guard = tracker.begin("chair-1".to_owned(), "ride-1".to_owned());
 
         assert!(tracker.chair_ids().contains("chair-1"));
         drop(first_guard);
@@ -799,13 +860,16 @@ mod tests {
     fn active_ride_evaluation_records_overlap_with_a_nearby_request() {
         let tracker = ActiveRideEvaluationTracker::default();
 
-        let completed_before_request = tracker.begin("chair-before".to_owned());
+        let completed_before_request =
+            tracker.begin("chair-before".to_owned(), "ride-before".to_owned());
         drop(completed_before_request);
         let request_snapshot =
             tracker.snapshot_at(Instant::now() + EVALUATION_RESPONSE_DELIVERY_GRACE);
 
-        let active_during_request = tracker.begin("chair-active".to_owned());
-        let completed_during_request = tracker.begin("chair-completed".to_owned());
+        let active_during_request =
+            tracker.begin("chair-active".to_owned(), "ride-active".to_owned());
+        let completed_during_request =
+            tracker.begin("chair-completed".to_owned(), "ride-completed".to_owned());
         drop(completed_during_request);
 
         let after_delivery_grace = Instant::now() + EVALUATION_RESPONSE_DELIVERY_GRACE;
@@ -818,9 +882,28 @@ mod tests {
     }
 
     #[test]
+    fn ride_overlap_excludes_only_evaluations_overlapping_the_sales_request() {
+        let tracker = ActiveRideEvaluationTracker::default();
+
+        drop(tracker.begin("chair-before".to_owned(), "ride-before".to_owned()));
+        let request_snapshot = tracker.snapshot();
+
+        let active_during_request =
+            tracker.begin("chair-active".to_owned(), "ride-active".to_owned());
+        drop(tracker.begin("chair-completed".to_owned(), "ride-completed".to_owned()));
+
+        let overlapping = tracker.ride_ids_overlapping(request_snapshot);
+        assert!(!overlapping.contains("ride-before"));
+        assert!(overlapping.contains("ride-active"));
+        assert!(overlapping.contains("ride-completed"));
+
+        drop(active_during_request);
+    }
+
+    #[test]
     fn completed_evaluation_stays_unavailable_during_response_delivery_grace() {
         let tracker = ActiveRideEvaluationTracker::default();
-        let guard = tracker.begin("chair-1".to_owned());
+        let guard = tracker.begin("chair-1".to_owned(), "ride-1".to_owned());
         drop(guard);
 
         assert!(tracker
@@ -831,7 +914,7 @@ mod tests {
     #[test]
     fn evaluation_snapshot_survives_grace_expiry_during_a_nearby_request() {
         let tracker = ActiveRideEvaluationTracker::default();
-        let guard = tracker.begin("chair-1".to_owned());
+        let guard = tracker.begin("chair-1".to_owned(), "ride-1".to_owned());
         drop(guard);
         let request_snapshot = tracker.snapshot();
 
@@ -846,7 +929,7 @@ mod tests {
     #[test]
     fn evaluation_tracker_clear_removes_previous_generation() {
         let tracker = ActiveRideEvaluationTracker::default();
-        let guard = tracker.begin("chair-1".to_owned());
+        let guard = tracker.begin("chair-1".to_owned(), "ride-1".to_owned());
         drop(guard);
         tracker.clear();
 
@@ -856,10 +939,10 @@ mod tests {
     #[test]
     fn stale_guard_cannot_remove_an_active_evaluation_from_a_new_generation() {
         let tracker = ActiveRideEvaluationTracker::default();
-        let stale_guard = tracker.begin("chair-1".to_owned());
+        let stale_guard = tracker.begin("chair-1".to_owned(), "ride-stale".to_owned());
         tracker.clear();
 
-        let current_guard = tracker.begin("chair-1".to_owned());
+        let current_guard = tracker.begin("chair-1".to_owned(), "ride-current".to_owned());
         drop(stale_guard);
         assert!(tracker.chair_ids().contains("chair-1"));
 
@@ -871,19 +954,39 @@ mod tests {
     }
 
     #[test]
+    fn stale_guard_cannot_remove_an_active_ride_from_a_new_generation() {
+        let tracker = ActiveRideEvaluationTracker::default();
+        let stale_guard = tracker.begin("chair-stale".to_owned(), "ride-1".to_owned());
+        tracker.clear();
+
+        let current_guard = tracker.begin("chair-current".to_owned(), "ride-1".to_owned());
+        drop(stale_guard);
+        assert!(tracker
+            .ride_ids_overlapping(tracker.snapshot())
+            .contains("ride-1"));
+
+        drop(current_guard);
+        assert!(tracker.ride_ids_overlapping(tracker.snapshot()).is_empty());
+    }
+
+    #[test]
     fn evaluation_tracker_prunes_expired_completed_entries() {
         let tracker = ActiveRideEvaluationTracker::default();
         for chair_number in 0..128 {
-            drop(tracker.begin(format!("chair-{chair_number}")));
+            drop(tracker.begin(
+                format!("chair-{chair_number}"),
+                format!("ride-{chair_number}"),
+            ));
         }
 
         let snapshot = tracker.snapshot_at(Instant::now() + EVALUATION_RESPONSE_DELIVERY_GRACE);
-        assert!(tracker
+        let state = tracker
             .inner
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .completed_evaluations
-            .is_empty());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        assert!(state.completed_evaluations.is_empty());
+        assert!(state.completed_ride_evaluations.is_empty());
+        drop(state);
         drop(snapshot);
     }
 
@@ -891,7 +994,7 @@ mod tests {
     fn pruning_preserves_completion_needed_by_an_older_live_snapshot() {
         let tracker = ActiveRideEvaluationTracker::default();
         let older_snapshot = tracker.snapshot();
-        drop(tracker.begin("chair-1".to_owned()));
+        drop(tracker.begin("chair-1".to_owned(), "ride-1".to_owned()));
 
         let newer_snapshot =
             tracker.snapshot_at(Instant::now() + EVALUATION_RESPONSE_DELIVERY_GRACE);
@@ -905,10 +1008,34 @@ mod tests {
             .contains("chair-1"));
     }
 
+    #[test]
+    fn ride_completion_is_retained_only_while_an_older_snapshot_needs_it() {
+        let tracker = ActiveRideEvaluationTracker::default();
+        let older_snapshot = tracker.snapshot();
+        drop(tracker.begin("chair-1".to_owned(), "ride-1".to_owned()));
+
+        let newer_snapshot =
+            tracker.snapshot_at(Instant::now() + EVALUATION_RESPONSE_DELIVERY_GRACE);
+        drop(newer_snapshot);
+        assert!(tracker
+            .ride_ids_overlapping(older_snapshot)
+            .contains("ride-1"));
+
+        let cleanup_snapshot =
+            tracker.snapshot_at(Instant::now() + EVALUATION_RESPONSE_DELIVERY_GRACE);
+        assert!(tracker
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .completed_ride_evaluations
+            .is_empty());
+        drop(cleanup_snapshot);
+    }
+
     #[tokio::test]
     async fn active_ride_evaluation_lives_until_response_body_is_consumed() {
         let tracker = ActiveRideEvaluationTracker::default();
-        let guard = tracker.begin("chair-1".to_owned());
+        let guard = tracker.begin("chair-1".to_owned(), "ride-1".to_owned());
         let response = hold_active_evaluation_until_response_drop(
             axum::Json("ok").into_response(),
             Some(guard),
@@ -925,7 +1052,7 @@ mod tests {
     #[test]
     fn active_ride_evaluation_is_removed_when_response_body_is_disconnected() {
         let tracker = ActiveRideEvaluationTracker::default();
-        let guard = tracker.begin("chair-1".to_owned());
+        let guard = tracker.begin("chair-1".to_owned(), "ride-1".to_owned());
         let response = hold_active_evaluation_until_response_drop(
             axum::Json("ok").into_response(),
             Some(guard),
