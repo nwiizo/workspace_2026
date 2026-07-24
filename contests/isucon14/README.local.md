@@ -283,8 +283,10 @@ RESET=1 ./scripts/down.sh
 | `coupons(used_by)` INDEX | 3走88,805–100,606点、中央値93,606点（直前中央値比+16.5%）、全runエラー0 |
 | nearbyの未完了ride判定 + 競合安全化 | エラー0の3走98,311–98,628点、中央値98,580点（直前採用版比+5.3%） |
 | 座標遷移queryの絞り込み | 通常座標のstatus取得を除去し、候補だけlocking read。直前版中央値92,484→98,580点（+6.6%） |
-| nearby最新座標cache + current-state表 | 評価response bodyまで保持するtrackerを含む最終3走96,888–98,483点、中央値96,926点、全runエラー0。nearby SQL平均44.859→最終run例8.079ms |
+| nearby最新座標cache + current-state表 | 評価response bodyまで保持するtrackerを含む当時の3走96,888–98,483点、中央値96,926点、全runエラー0。nearby SQL平均44.859→最終run例8.079ms |
 | statusの状態遷移順 | 時刻逆転のapp / chair HTTP回帰テスト成功。3走89,539–99,895点、中央値98,338点、全run `pass=true`、CODE=11は0件 |
+| 認証cache | 3走102,887–109,454点、中央値104,612点。認証SQL累積約99.3%減、`CODE=30`が6–20件再発 |
+| 評価response配送競合の修正 | nearby開始snapshot + completion revision + body drop起点1秒lease + initialize generation。3走96,542–105,002点、中央値103,046点、全run `pass=true`・error map空、`CODE=30` 0件 |
 
 初回の初期60秒走行ではMySQLのqueryが十数秒以上へ遅延し、ベンチマーカーの期限を
 超えました。同じ初期revisionを外部コンテナの大きな共有負荷がない条件で再計測
@@ -300,9 +302,14 @@ RESET=1 ./scripts/down.sh
 2秒ごとにDBから再同期します。active状態と割当可否は毎回DBから読みます。
 評価transactionが外部決済を待っている間はprocess内trackerで該当chairを明示的に
 nearbyから除外します。RAII guardはhandlerのローカル変数ではなく評価response bodyへ
-移し、Axumがbodyを消費し終えるか、切断でbodyをdropした時点で解除します。固定時間の
-cooldownは処理時間によって早過ぎたり遅過ぎたりするため不採用に戻しました。
-エラー0の最終3走は96,888 / 96,926 / 98,483点、中央値96,926点でした。
+移しました。ただし、認証cacheで処理量が増えた後の診断では、Axum/Hyperのbody dropから
+benchmarkerのresponse受信まで約55–677msの差があり、body lifecycleだけでは
+`CODE=30`を閉じないことが分かりました。現在はnearby開始snapshot、単調なcompletion
+revision、body drop起点の1秒delivery leaseを組み合わせています。
+`rides.updated_at` 起点の固定cooldownは外部決済時間を途中で消費するため不採用のままです。
+generationと期限切れ記録の安全なpruneを含む最終3走は
+105,002 / 103,046 / 96,542点、中央値103,046点、全run error map空、
+`CODE=30` 0件でした。
 その後、診断runで `CARRYING` の後に古い `PICKUP` を返すCODE=11を再現したため、
 通知と最新statusの順序をwall-clockではなくENUMの状態遷移順へ変更しました。
 時刻逆転のHTTP回帰テストを追加し、通常条件の3走は89,539 / 98,338 / 99,895点、
@@ -394,9 +401,9 @@ curl -sS \
 
 | 画面 | URL | 確認結果 |
 |---|---|---|
-| トップ | `/` | 3 種類の画面へのリンクを表示。最終版でconsole error 0、静的resourceを含む17 requestがすべて200 |
+| トップ | `/` | `Top | ISURIDE`、3種類の画面へのリンクを表示。console error 0 |
 | 利用者 | `/client` | 未ログインの新規sessionでは `/client/register` へ遷移し、利用者登録フォームを表示 |
-| オーナー | `/owner` | 未ログインのため `/owner/register` へ正常に遷移 |
+| オーナー | `/owner/login` | セッショントークン入力とログイン・新規登録導線を表示 |
 | 椅子シミュレーター | `/simulator` | 利用者登録iframeとChair Simulatorを左右に表示 |
 
 - [トップ画面](artifacts/playwright/top.png)
@@ -404,10 +411,10 @@ curl -sS \
 - [オーナー登録画面](artifacts/playwright/owner.png)
 - [椅子シミュレーター画面](artifacts/playwright/simulator.png)
 
-利用者、オーナー、椅子シミュレーターでは、未認証の新規ブラウザーセッションから
-認証必須APIを呼ぶため、notification、owner chairs / sales、chair activityの401が
-consoleへ記録されます。登録・ログイン前の想定どおりの応答で、トップ画面では
-console error 0件です。
+2026-07-25の最終確認では4画面の静的resource 62 requestがすべて200でした。
+未認証の利用者iframeと椅子シミュレーターから呼ばれた
+`/api/app/notification` と `/api/chair/activity` の401だけがconsoleへ記録されました。
+登録・ログイン前の想定どおりの認証拒否で、トップ画面ではconsole error 0件です。
 
 再確認するときは、サービスを起動した状態で次を実行します。
 

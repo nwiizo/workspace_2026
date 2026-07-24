@@ -102,14 +102,15 @@
   - active状態と割当可否はcacheせず、DBから毎回最新値を取得
   - 履歴とcurrent rowを同じtransactionで更新し、cacheをcommit後と2秒間隔で同期
   - canonical orderは全経路で `(created_at DESC, location_id DESC)`
-  - 評価response bodyまで保持するtrackerを含む最終エラー0の3走: 96,888 / 96,926 / 98,483点
+  - 評価response bodyまで保持するtrackerを含む当時のエラー0の3走: 96,888 / 96,926 / 98,483点
   - 観測範囲96,888–98,483点、推定代表値の中央値96,926点
   - 直前採用版中央値98,580点から-1,654点、約-1.7%。write amplificationを次のP0へ残す
   - 最終run例のnearby SQL平均8.079ms、current UPDATE平均0.744ms
   - DB直接更新の故障注入は最終再実行で1.693秒、同時刻tieは1.651秒でcacheへ収束
   - busy-chair `CODE=30` のWARN本文を特定し、評価response bodyのpoll / dropまでprocess trackerで除外
+  - 後続の認証cacheで処理量が増えると再発したため、body lifecycleだけではclient受信境界を閉じないことをBenchmark 23で再診断
   - 既存volumeの欠損rowと古いrowを起動時の冪等backfillで修復する故障注入も通過
-  - 500ms / 1秒cooldownは評価処理時間に正しさが依存するため不採用
+  - `rides.updated_at` 起点の500ms / 1秒cooldownは評価処理時間に正しさが依存するため不採用
   - initializeは全APIと再同期を共通maintenance gateで排他
   - 詳細: [`tuning/18-latest-location-cache.md`](./tuning/18-latest-location-cache.md)
 - [x] status通知と最新状態の順序を `created_at` ではなくENUMの状態遷移順へ統一する
@@ -143,6 +144,15 @@
   - 起動・initialize全置換、動的userの1回fallback、stale token削除をHTTP回帰確認
   - 全run`pass=true`だが`CODE=30`が6 / 15 / 20件あり、次のP0で原因を再計測
   - 詳細: [`tuning/22-authentication-cache.md`](./tuning/22-authentication-cache.md)
+- [x] 認証cache後に増えたnearbyの`CODE=30`をresponse配送境界まで再診断する
+  - 診断instrumentationでbody guardのみの27件すべてが、評価HTTPレスポンス待ちのphaseにあることを確認
+  - 同一rideのserver body dropからclient受信完了まで、約55–677msの差を実測
+  - nearby開始時snapshot、単調なcompletion revision、body drop起点の1秒delivery leaseを実装
+  - initialize前後はgenerationで分離し、期限切れcompletionはlive snapshotの最小revisionを見て回収
+  - generation/pruneを含む最終60秒3走105,002 / 103,046 / 96,542点、観測範囲96,542–105,002点
+  - 推定代表値の中央値103,046点、全run`pass=true`・error map空、`CODE=30`は3走合計0件
+  - generation/prune前の候補runで出た`CODE=17` 1件は別経路として再現情報の採取を継続
+  - 詳細: [`tuning/23-code30-response-delivery.md`](./tuning/23-code30-response-delivery.md)
 - [x] nearbyの集合SQL、chair statsの集約SQL、batch matcherを実装
 - [x] 上記3変更を別々のBenchmarkとして正当性・性能検証する
 
@@ -151,7 +161,7 @@
 | 優先度 | 対象 | 現在の処理 | 主な問題 |
 |---|---|---|---|
 | P0 | `internal_get_matching` | 64件batch + 近傍優先、外部pollは500ms | 空き定義の集約、500msの最小待ち |
-| P0 | `app_get_nearby_chairs` | 最新座標はcurrent-state表 + process cache、active / 割当可否はDB、評価response送信中だけtrackerで除外 | 最終run例8.079ms。ride antijoinとtracker確認の内訳を測る |
+| P0 | `app_get_nearby_chairs` | 最新座標はcurrent-state表 + process cache、active / 割当可否はDB、評価はsnapshot + revision + delivery leaseで除外 | 最終run例8.079ms。ride antijoinとtracker確認の内訳を測る |
 | P0 | 通知2経路 | 30ms pollingごとに認証、最新ride、status、表示データを取得 | 60秒で通知GET 34,360回、同じレスポンスの再計算 |
 | P0 | `get_chair_stats` | 評価時差分更新 + 主キーreadへ変更 | SQL累積は約89%減、スコア中央値は約3.5%低下したため次の通知施策と合わせて再評価 |
 | P0 | `app_post_ride_evaluation` | DB transaction中に外部決済HTTPと最大5回の100ms sleep | connection・snapshot・lockを外部I/O中も保持 |
@@ -594,14 +604,21 @@
   - 詳細: [`tuning/16-nearby-evaluation-filter.md`](./tuning/16-nearby-evaluation-filter.md)
 - [x] 座標をcurrent-state表とprocess内cacheへ置き、`is_active` と割当可否は毎回合成する
   - `LATERAL` の単発約26.4msに対し、座標を外した候補queryは約4.79ms
-- 評価response bodyまで保持するtrackerを含む最終エラー0の3走中央値96,926点、最終run例のnearby SQL平均8.079ms
+- [x] 評価response bodyまで保持する当時のtracker版3走は中央値96,926点、最終run例のnearby SQL平均8.079ms
   - 起動、initialize、動的chair、座標更新、2秒再同期、process再起動を確認
+  - 高負荷時にclient受信前の再掲載が再発したため、現在はBenchmark 23のdelivery lease版へ更新
   - 詳細: [`tuning/18-latest-location-cache.md`](./tuning/18-latest-location-cache.md)
 - [ ] nearbyレスポンス全体の3秒cacheは割当済み椅子を返すため採用しない
 - [x] `CODE=30` のWARN本文を保存し、評価commitとbenchmarker状態更新の競合と特定する
 - [x] 評価後cooldownを500ms / 1秒で比較し、処理時間依存のため両方を不採用に戻す
 - [x] 評価handler開始からresponse bodyのpoll / dropまでchairをprocess trackerへ登録し、RAII guardで全終了経路から解除する
-- [x] 60秒3走でprevalidation、`CODE=30`、error mapがすべて正常なことを再確認する
+- [x] 認証cache後の高い処理量でbody trackerだけを再診断し、client受信前に解除される反例を確認する
+- [x] nearby開始snapshot、completion revision、body drop起点1秒leaseを組み合わせる
+- [x] 最終60秒3走で`CODE=30`がすべて0件であることを確認する
+  - generation/pruneを含む105,002 / 103,046 / 96,542点、中央値103,046点、全run error map空
+  - 詳細: [`tuning/23-code30-response-delivery.md`](./tuning/23-code30-response-delivery.md)
+- [ ] `CODE=24` owner sales過大値が、評価commit後・benchmarker受信前の同種の境界かを対象ride IDと時刻で相関する
+- [ ] `CODE=17` が再発したrunで、登録request ID、MySQL error、`SHOW ENGINE INNODB STATUS`を同時採取する
 - [x] initializeのtable再作成中は、全API requestと定期再同期をmaintenance gateで待たせる
 - [ ] latest-coordinate cacheの `RwLock` read / write待機時間と保持時間を計測する
 - [x] 共有current-state表を追加し、複数processも2秒以内に収束できる経路を作る
@@ -930,7 +947,7 @@
 - [x] 公式prevalidation
 - [ ] 通知の全遷移・順序・重複許容・取りこぼし
 - [ ] chair statsが走行中は固定され、`COMPLETED` で当該評価を含むこと
-- [x] nearbyの空車判定（初期状態、負荷中3時点、60秒3走）
+- [x] nearbyの空車判定（初期状態、負荷中3時点、response配送境界修正後の60秒3走）
 - [ ] nearbyの座標・3秒猶予
 - [ ] ownerの距離・売上・0件行
 - [ ] 並行ride作成と並行matching
@@ -957,10 +974,9 @@
 
 ## 推奨する直近の実行順
 
-1. auth cache版で増えた`CODE=30`のchair IDについて、評価response、tracker解除、
-   nearby応答、ベンチマーカー検査の時刻を同じ診断runで採取する
-2. 固定cooldownの推測ではなく、response完了境界または明示的な状態versionで
-   nearby競合を閉じ、エラー0の3走を確認する
+1. `CODE=24` owner sales過大値を、評価responseとbenchmarker側snapshotの時刻を加えた
+   診断runで再現し、`CODE=30`と同じclient観測境界か切り分ける
+2. `CODE=17` が再発したrunでは、登録request IDとMySQL error / deadlock履歴を同時採取する
 3. current UPDATEのrow-lock待機とcoordinate transaction p50 / p95 / p99を診断runで採取する
 4. current rowをper-chair順序付きqueueでcoalesceし、3秒収束・全履歴・crash整合性を維持したまま
    39,013回、累積29.033秒のwrite amplificationを減らせるか単独比較する

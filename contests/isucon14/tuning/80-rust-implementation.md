@@ -934,7 +934,7 @@ integration testです。
 起動時backfillを表全体が空の場合だけに限定すると部分移行を直せません。canonical latestを
 冪等upsertし、欠損と古いrowの両方を修復する形にしています。
 
-### 固定時間より、response bodyの所有権で状態を表す
+### RAII、単調revision、期限付きleaseでresponse境界を表す
 
 評価APIはDB transaction内で外部決済を待ちます。DBのevaluation commit後からhandlerが
 responseを送り終えるまでにnearbyが走ると、DBだけを見たrequestはchairを空きと判断できます。
@@ -965,13 +965,81 @@ tracker本体は同期的な短いHashMap操作だけなので `std::sync::Mutex
 保持したまま `.await` しません。
 
 同じchairのguardが重なっても片方のdropで消さないよう、valueはboolではなく参照数です。
-nearbyはDB query後にactive chair IDのsnapshotを取り、該当chairを除外します。
-この状態は時間に依存しませんが、1 process内だけです。水平分割する場合はDB / Redis上の
-leaseとcrash回収が別途必要です。
+しかし、後続の高負荷診断ではbody guardだけの `CODE=30` が27件出て、そのすべてで
+benchmarkerは評価HTTPレスポンスをまだ待っていました。body dropからclient受信完了までを
+同じride IDで相関すると約55–677msの差がありました。Rust値の所有期間をresponse bodyへ
+延ばすことはserver内のlifecycleを表しますが、clientのapplication stateまで所有権を
+延ばすことではありません。
+
+そこでtrackerの値を次の状態へ拡張しました。
+
+```rust
+struct ActiveRideEvaluationState {
+    active_counts: HashMap<String, usize>,
+    completed_evaluations: HashMap<String, CompletedRideEvaluation>,
+    live_snapshot_revisions: BTreeMap<u64, usize>,
+    revision: u64,
+    generation: u64,
+}
+
+struct CompletedRideEvaluation {
+    revision: u64,
+    unavailable_until: Instant,
+}
+```
+
+`revision` は最後のactive guardがdropするたびに増えます。nearbyはSQLの前に
+`ActiveRideEvaluationSnapshot { revision, chair_ids }` を取り、SQL後に現在のstateと
+合成します。
+
+```text
+開始snapshotにいたchair
+  UNION 現在activeなchair
+  UNION 開始revisionより後に完了したchair
+  UNION 現在もdelivery lease中のchair
+```
+
+なぜSQL前後のactive集合だけでは足りないのでしょうか。SQLがpool connectionを待っている
+間に評価が開始し、bodyまで送り終わると、前後どちらのactive集合にも現れません。
+completion revisionが開始revisionより大きいことを見れば、その区間内で完結した評価も
+拾えます。開始snapshotへ入ったleaseはSQL中に期限が切れても残すため、確認時点と
+response構築時点のTOCTOUも避けます。
+
+body guardのdrop時には、`Instant::now() + Duration::from_secs(1)` を期限として保存します。
+`Instant` は経過時間用の単調時計であり、NTP補正やwall-clock変更で逆戻りしません。
+UTC日時をlogへ出す用途には向きませんが、「今から1秒」のleaseには適しています。
+1秒は診断最大約677msへ約323msの余裕を加えた実測値であり、protocol上の保証では
+ありません。
+
+この1秒は以前不採用にした `rides.updated_at` 起点のcooldownとは異なります。
+`updated_at` は外部決済より前に決まるため、決済中に期限を消費します。新しいleaseは
+body drop時に始まり、評価処理時間ではなくserver→clientの配送差だけを対象にします。
+
+`completed_evaluations` は評価イベントごとに増やさず、chair IDごとに最新記録を上書き
+します。さらにliveなnearby snapshotの最小revisionを参照数付き `BTreeMap` で追跡し、
+lease期限切れかつ全snapshotから不要になった記録を次のsnapshot開始時に回収します。
+snapshot自身が開始時のchair IDを所有するため、開始前に完了した記録は期限後にmapから
+消しても安全です。開始後に完了した記録はcompletion revisionが最小revisionより大きい間
+だけ残します。
+
+initializeでDBを全置換するときは、maintenance write lock内でtrackerも `clear()` します。
+ここにはRustの所有権だけでは防げない世代交差があります。middlewareのread lockはhandlerが
+`Response` を返すまでで、body内の旧guardはその後も生存できます。旧guardのdropが同じ
+chair IDの新guardを減らさないよう、state、guard、snapshotへgenerationを持たせ、現在の
+generationと一致するdropだけを反映します。
 
 serverが観測できるのはbody lifecycleまでで、clientがJSON decode後に更新するatomic flagの
-ACKではありません。完全なend-to-end ACKが必要ならprotocol変更が必要です。この境界を
-曖昧に「解消」とせず、body消費・dropのunit testと60秒3走エラー0を採用根拠にしました。
+application ACKではありません。完全なend-to-end ACKが必要ならprotocol変更が必要です。
+現在の1秒leaseは単一process、固定4 CPU / 4 GiB環境での実測に基づきます。水平分割する
+場合はDB / Redis上の共有lease、世代、process crash後の回収を設計します。
+
+unit testでは、参照数、正常body消費、切断相当のbody drop、開始中に完結した評価、
+lease期限、SQL中に期限が切れるsnapshot、initialize相当のclear、旧guardと新guardの
+世代交差、期限切れ記録の回収を個別に確認します。
+generationとpruneを含む公式60秒ベンチ3走は105,002 / 103,046 / 96,542点、
+中央値103,046点で、全run error map空、`CODE=30`は3走すべて0件でした。
+詳細な時系列と代替案は
+[Benchmark 23](./23-code30-response-delivery.md)を参照してください。
 
 ### maintenance gateでinitializeと通常APIを分ける
 

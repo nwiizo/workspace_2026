@@ -4,8 +4,11 @@
 
 ## 結果
 
-最終採用対象は、current-state表、2秒ごとの再同期、評価response bodyのlifecycleまで
-chairを保持するtracker、initialize用maintenance gateをすべて含む60秒ベンチ3走です。
+このBenchmarkでの採用対象は、current-state表、2秒ごとの再同期、評価response bodyの
+lifecycleまでchairを保持するtracker、initialize用maintenance gateをすべて含む
+60秒ベンチ3走です。後続の高負荷ではbody lifecycle後にもclient受信まで競合窓があると
+分かり、trackerはBenchmark 23でsnapshot・revision・delivery leaseへ拡張しました。
+現在の最終結果は[Benchmark 23](./23-code30-response-delivery.md)を参照してください。
 
 | run | pass | score | 最終評価数 | matching不満 | pickup不満 | drive不満 | error map |
 |---:|---|---:|---:|---:|---:|---:|---|
@@ -469,6 +472,18 @@ body wrapperが説明できる境界は「Axum/Hyperがresponse bodyを消費ま
 ありません。今回は元の長いtransaction/handler窓をbody lifecycleまで狭め、
 3走で再発しなかったことを採用根拠とします。完全なACKが必要ならAPIへack endpointを
 追加するか、DB/Redisの期限付きleaseを比較する必要があります。
+
+### 後続計測で分かったこと
+
+この節の3走は当時の処理量では再発しなかったという履歴です。Benchmark 22で認証SQLを
+cache化して評価・nearbyの並行数が増えると、`CODE=30` が6–20件再発しました。追加した
+phase診断では、body guardのみのrunで出た27件すべてが、benchmarker側ではまだ評価HTTP
+レスポンスを待っていました。serverのbody dropからclient受信完了までは約55–677msの差が
+あり、「body lifecycleまで保持すればclient観測まで閉じる」という仮説は棄却しました。
+
+最終版はnearby開始snapshot、completion revision、body drop起点の1秒delivery leaseを
+組み合わせています。公式3走の`CODE=30`は0件でした。新しい因果・実装・スコアは
+[Benchmark 23](./23-code30-response-delivery.md)を参照してください。
 
 ### response extensionへguardを移す案を採らなかった理由
 

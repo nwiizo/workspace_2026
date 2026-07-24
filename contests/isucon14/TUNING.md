@@ -73,7 +73,7 @@
 | 改善対象 | 現在の状態 | 次の検証 |
 |---|---|---|
 | 高頻度検索へのINDEX | 主要INDEX、`coupons(code)`、`coupons(used_by)` を追加済み。`users(access_token)` と `users(invitation_code)` は既存の `UNIQUE` INDEXで充足 | prepared statement統計で次の全件走査を探し、未使用INDEXを増やさない |
-| nearbyの2N+1解消 | 最新座標はcurrent-state表 + process cache、active / 割当可否はDBで合成。評価response bodyの終了までtrackerで除外 | ride antijoinとtracker確認の内訳を計測 |
+| nearbyの2N+1解消 | 最新座標はcurrent-state表 + process cache、active / 割当可否はDBで合成。評価は開始snapshot・completion revision・response body drop後1秒leaseで除外し、initialize世代をgenerationで分離 | ride antijoinとtracker確認の内訳を計測 |
 | owner椅子一覧をownerで先に絞る | 実装・単独ベンチ済み | 最新位置と累積距離のcurrent-state化 |
 | 最新位置をcurrent-state表で管理 | 履歴INSERTと同じtransactionで更新し、cacheを2秒ごとに再同期 | current UPDATEのrow-lock待ちとwrite amplificationを削減 |
 | pending rideと空き椅子のbatch matching | 最大64件、近傍優先まで実装済み | 地域間の距離上限、実行間隔、二部マッチングを比較 |
@@ -407,6 +407,40 @@ sequenceまたはcurrent-state表へ移行します。
 避けられます。詳細と実際に再現した時刻逆転は
 [Benchmark 19](./tuning/19-status-semantic-order.md) に記録しています。
 
+#### response lifecycle・application ACK・delivery lease
+
+server handlerがHTTP responseを返したこと、server runtimeがbodyをsocketへ渡したこと、
+clientがbodyを受信・decodeしたことは別の時点です。DB commitが成功しても、その成功を
+clientがまだ知らない短い区間があります。別endpointがclient側の状態変更を前提にした
+結果を先に返すと、DB単体では整合していてもAPI全体では順序が逆転します。
+
+response body lifecycleは、server runtimeがbodyをpollし、消費またはdropするまでの
+生存期間です。Axumのbody wrapperでRAII guardを所有するとhandler scopeより長く状態を
+保持できますが、clientがJSONをdecodeしたことまでは分かりません。
+
+application ACKは、clientが処理を終えたとserverへ明示的に返す確認です。TCPのACKは
+byte受信を扱いますが、client内部の状態更新完了を表しません。protocolにapplication ACKが
+ない場合は、serverが観測できる最後の境界を起点に短いdelivery leaseを置き、対象だけを
+保守的に非公開にする選択肢があります。lease時間は推測で決めず、server側body終了と
+client側受信完了を同じrequest IDで相関して決めます。
+
+Benchmark 23ではbody dropからclient受信まで約55–677msを観測し、body drop起点の1秒leaseを
+採用しました。`rides.updated_at` 起点の1秒とは意味が異なります。前者は配送差へ対応し、
+後者は途中の外部決済時間まで消費するため、必要な時点で期限切れになり得ます。
+
+#### snapshot・revision・TOCTOU
+
+snapshotは、処理開始時点の状態を固定して後から比較するための写しです。revisionは
+イベントごとに増える単調な番号です。nearbyのSQL前後でactive集合を1回ずつ見るだけでは、
+SQL待機中に始まって終わった評価を両方の観測点で見落とせます。開始時revisionより大きい
+completion revisionを拾えば、その区間に完結した評価も除外できます。
+
+TOCTOU（time of check to time of use）は、状態を確認してから結果を利用するまでに状態が
+変わる競合です。snapshotだけでは変更後を拾えず、終了時の値だけでは途中で完結した変更を
+拾えません。開始snapshot、単調revision、現在activeな集合を合成し、どの時間区間を
+保護するかを明示します。今回の実装と時系列は
+[Benchmark 23](./tuning/23-code30-response-delivery.md) に記録しています。
+
 #### 全件走査
 
 条件に合う行を探すため、tableまたはINDEXの広い範囲を先頭から確認する処理です。
@@ -511,7 +545,7 @@ ISUCON14の `chair_locations` はownerの累積距離に全履歴が必要です
 共有current: chair_current_locations -> matcher、cache再同期元
 process cache                      -> nearbyの最新座標
 即時判定: chairs / rides           -> active、割当可否
-処理中状態: ActiveRideEvaluationTracker -> 評価response body lifecycleまで再掲載を抑制
+処理中状態: ActiveRideEvaluationTracker -> 開始snapshot、completion revision、body drop後delivery leaseで再掲載を抑制
 ```
 
 同じ履歴から高頻度に現在状態を再構成すると、INDEXがあってもloop、sort、decodeが
@@ -845,6 +879,7 @@ retryは一時的な通信失敗時に同じ処理を再試行すること、bac
 | [20-chair-stats-current-state.md](./tuning/20-chair-stats-current-state.md) | chair statsを評価時差分更新 + 主キーreadへ変更 | 最終3走98,386–99,944点、中央値98,452点、全runエラー0。stats SQL累積は約89%減 | 実測n=3。旧中央値101,984点から約3.5%低下したためスコア寄与は未確定 |
 | [21-notification-status-query.md](./tuning/21-notification-status-query.md) | 未送信statusと最新status fallbackをCTEで1 SQL化 | `pass=true`、94,573点。対象SQL累積が変更前約32秒から53.756秒へ増え不採用 | 実測n=1・未推定。ソースは変更前へ復元 |
 | [22-authentication-cache.md](./tuning/22-authentication-cache.md) | user / owner / chair認証をprocess内cacheから解決 | 3走102,887–109,454点、中央値104,612点。認証SQL累積約99.3%減 | 実測n=3。全run `pass=true`、`CODE=30` 6–20件を次のP0へ継続 |
+| [23-code30-response-delivery.md](./tuning/23-code30-response-delivery.md) | nearby開始snapshot・completion revision・body drop起点1秒leaseで評価responseの配送競合を抑制 | generation/pruneを含む3走96,542–105,002点、中央値103,046点、全run `pass=true`・error map空、`CODE=30` 0件 | 実測n=3。body drop→client受信差を約55–677msと相関し、1秒leaseを選択。候補runで観測した`CODE=17`は再発時に継続調査 |
 | [80-rust-implementation.md](./tuning/80-rust-implementation.md) | Rust / sqlxとrelease buildの知識 | 再build 30分52秒→11.02秒 | build時間の実測。スコア推定対象外 |
 | [81-evaluation-authorization.md](./tuning/81-evaluation-authorization.md) | 評価rideを認証ユーザー所有へ制限 | 公式prevalidation `pass=true`、別ユーザーHTTP回帰成功 | 正当性修正。60秒スコアはBenchmark 20から更新しない |
 | [90-local-environment.md](./tuning/90-local-environment.md) | build context、BuildKit、固定Colima資源 | context 467MB→32.5KB | sizeの実測。スコア推定対象外 |
