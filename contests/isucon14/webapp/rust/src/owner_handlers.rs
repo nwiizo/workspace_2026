@@ -215,13 +215,10 @@ impl From<MysqlDecimal> for i64 {
 #[derive(Debug, sqlx::FromRow)]
 struct ChairWithDetail {
     id: String,
-    owner_id: String,
     name: String,
-    access_token: String,
     model: String,
     is_active: bool,
     created_at: DateTime<Utc>,
-    updated_at: DateTime<Utc>,
     total_distance: MysqlDecimal,
     total_distance_updated_at: Option<DateTime<Utc>>,
 }
@@ -247,28 +244,34 @@ async fn owner_get_chairs(
     State(AppState { pool, .. }): State<AppState>,
     axum::Extension(owner): axum::Extension<Owner>,
 ) -> Result<axum::Json<OwnerGetChairResponse>, Error> {
-    let chairs: Vec<ChairWithDetail> = sqlx::query_as(r#"SELECT id,
-       owner_id,
-       name,
-       access_token,
-       model,
-       is_active,
-       created_at,
-       updated_at,
+    let chairs: Vec<ChairWithDetail> = sqlx::query_as(r#"SELECT chairs.id,
+       chairs.name,
+       chairs.model,
+       chairs.is_active,
+       chairs.created_at,
        IFNULL(total_distance, 0) AS total_distance,
        total_distance_updated_at
 FROM chairs
        LEFT JOIN (SELECT chair_id,
                           SUM(IFNULL(distance, 0)) AS total_distance,
                           MAX(created_at)          AS total_distance_updated_at
-                   FROM (SELECT chair_id,
-                                created_at,
-                                ABS(latitude - LAG(latitude) OVER (PARTITION BY chair_id ORDER BY created_at)) +
-                                ABS(longitude - LAG(longitude) OVER (PARTITION BY chair_id ORDER BY created_at)) AS distance
-                         FROM chair_locations) tmp
+                   FROM (SELECT chair_locations.chair_id,
+                                chair_locations.created_at,
+                                ABS(chair_locations.latitude - LAG(chair_locations.latitude)
+                                  OVER (PARTITION BY chair_locations.chair_id ORDER BY chair_locations.created_at)) +
+                                ABS(chair_locations.longitude - LAG(chair_locations.longitude)
+                                  OVER (PARTITION BY chair_locations.chair_id ORDER BY chair_locations.created_at)) AS distance
+                         FROM chair_locations
+                         INNER JOIN chairs AS owner_chairs
+                                 ON owner_chairs.id = chair_locations.chair_id
+                         WHERE owner_chairs.owner_id = ?) tmp
                    GROUP BY chair_id) distance_table ON distance_table.chair_id = chairs.id
-WHERE owner_id = ?
-    "#).bind(owner.id).fetch_all(&pool).await?;
+WHERE chairs.owner_id = ?
+    "#)
+    .bind(&owner.id)
+    .bind(&owner.id)
+    .fetch_all(&pool)
+    .await?;
 
     Ok(axum::Json(OwnerGetChairResponse {
         chairs: chairs
