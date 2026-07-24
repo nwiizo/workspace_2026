@@ -148,6 +148,327 @@
   - 全面autocommit化ではなく、rideなしの分岐だけをtransaction外へ出している
   - `chair_get_notification` の `FOR SHARE` は残っている
 
+## Phase 0.5: 計測ツールを選定・検証する
+
+ツールの導入自体は高速化ではありません。ボトルネックの層を特定し、変更前後の差を同じ条件で説明できたツールだけを残します。
+
+### 運用ルール
+
+- [ ] profile採取run、ツールのoverhead測定run、最終スコアrunを分離する
+- [ ] 各ツールのversion、実行コマンド、sampling間隔、開始・終了時刻を記録する
+- [ ] macOSホスト、Colima Linux VM、Docker containerのどこで採取した値かを必ず明記する
+- [ ] 計測用package・capability・debug symbolは通常imageへ入れず、profile用DockerfileまたはCompose overrideへ分離する
+- [ ] ツールあり／なしで同一revisionを各3回走らせ、スコア中央値とCPU使用率の差から計測overheadを確認する
+- [ ] 認証token、Cookie、決済情報をaccess log、packet capture、profile artifactへ残さない
+- [ ] artifactはrun IDでまとめ、HTTP、SQL、CPU、I/Oを同じ時刻範囲で照合できるようにする
+
+### 現在の利用可否
+
+| 優先度 | ツール | 現在の状態 | 主な用途 |
+|---|---|---|---|
+| P0 | `alp 1.0.21` | macOSホストへ導入済み。現在のnginx logには時間項目なし | endpoint別件数、p50 / p95 / p99、総処理時間 |
+| P0 | MySQL `performance_schema` / `sys` schema | `performance_schema=ON` | SQL fingerprint別の回数、累積時間、lock・I/O |
+| P0 | `docker stats` / `docker top` | 利用可能 | container別CPU、memory、block I/O、process |
+| P0 | `hyperfine 1.20.0` | macOSホストへ導入済み | build、initialize、起動、補助scriptの反復比較 |
+| P0 | `vegeta` | macOS arm64版を導入済み | 単一endpointのrate別micro load |
+| P0 | `k6 2.1.0` | macOS arm64版を導入済み | 複数endpointをまたぐstateful scenario、threshold、custom metric |
+| P0 | nginx `stub_status` | nginx 1.27.5へ組込み済み、endpoint未設定 | active / reading / writing / waiting connection、accept / request数 |
+| P1 | `pt-query-digest` | 未導入。MySQL slow logもOFF | slow queryのfingerprint、p95、lock time、rows examined |
+| P1 | `pt-stalk` | 未導入 | MySQLのThreads_running急増や短いstall発生時の自動証拠採取 |
+| P1 | `sysbench` | 未導入、aarch64対応 | MySQL設定やdisk / mutexの合成負荷比較 |
+| P1 | `perf` / `cargo-flamegraph` | Colima VMへ未導入、`perf_event_paranoid=4` | release binaryのCPU sample、cycles、cache miss |
+| P1 | `pprof-rs` | 未導入、診断featureの組込みが必要 | `perf`権限を使わないin-process CPU sampling |
+| P1 | `samply` / macOS Instruments | `samply`未導入、`xctrace`等はホストに存在 | native実行時のsampling profile |
+| P1 | `tokio-console` / `tokio-metrics` | 未導入、診断用buildが必要 | taskのbusy / idle、poll時間、wake、resource待ち |
+| P1 | `tracing-chrome` / Perfetto | 未導入、既存`tracing`へLayer追加が必要 | handler、pool取得、SQL、外部HTTPの時系列表示 |
+| P1 | `vmstat` / `pidstat` / `iostat` | VMには`vmstat`のみ、macOSには`iostat` | CPU runnable、context switch、process I/O、disk待ち |
+| P1 | Criterion | 未導入 | matcher、距離計算、payload生成のRust microbenchmark |
+| P1 | [Gungraun](https://github.com/gungraun/gungraun) | 未導入。旧Iai-Callgrind、Linux診断imageへValgrindが必要 | instructions、estimated cycles、cache miss、branchの安定した相対比較 |
+| P2 | `sccache` | 未導入、BuildKit cacheとrelease incrementalは利用中 | source変更後のRust再build短縮 |
+| P2 | [`cargo-pgo`](https://github.com/Kobzol/cargo-pgo) / `llvm-profdata` | 未導入。Rust 1.83 toolchainに`llvm-tools-preview`なし | 代表負荷で学習したPGO binaryの生成 |
+| P2 | `cargo build --timings` / `rustc -Z self-profile` | `--timings`は実施済み、self-profile用nightlyは未導入 | Cargo依存graphとrustc内部のcompile時間 |
+| P2 | `strace -c` | VM・containerへ未導入、ptrace権限が必要 | syscall回数と時間、connect / write / fsync / futex |
+| P2 | `tcpdump` / `tshark` / `ss` | macOSに`tcpdump`あり。Docker bridge内captureは未検証 | connection再利用、再接続、TIME_WAIT、再送 |
+| P2 | `bpftrace` / BCC tools | VMへ未導入、kernel capability検証が必要 | off-CPU、block I/O、TCP、scheduler待ち |
+| P2 | `heaptrack` / Valgrind Massif | 未導入 | heap allocation量、peak memory、allocation hotspot |
+| P2 | `dhat-rs` | 未導入、実験的な診断crate | Rust関数単位のallocation回数、bytes、peak heap |
+| P2 | `cargo-show-asm` | 未導入 | CPU hotspotのassembly / LLVM IR確認 |
+
+### Rust performance tuning How To
+
+現在のwebappは`rustc 1.83.0 (aarch64-unknown-linux-gnu)`でbuildされ、macOSホストは別version・別targetです。`Cargo.toml`に独自profileはなく、通常releaseはCargo既定の`opt-level=3`、`lto=false`、`codegen-units=16`です。Docker buildだけ`CARGO_INCREMENTAL=1`とLLDを追加しています。ホスト上の結果は補助情報とし、採否はwebappと同じLinux target、依存version、compiler、RUSTFLAGSで判断します。
+
+#### 0. 計測契約を固定する
+
+- [ ] 変更前に次をrun manifestへ保存する
+  - Git revisionとdirty diffの有無
+  - `rustc -vV`、`cargo -V`、target triple、`Cargo.lock`のhash
+  - `RUSTFLAGS`、Cargo profile、binaryのSHA-256、image ID
+  - Colima CPU / memory、MySQL設定、benchmark seedと実行時刻
+- [ ] 正当性を満たす同一revisionを3回実行し、score、成功request数、endpoint別p95、webapp CPU・RSSの中央値をbaselineにする
+- [ ] Rustだけの改善目標を「score中央値」「CPU time / request」「対象endpoint p95」「allocation回数」のうち少なくとも1つで数値化する
+- [ ] compiler、依存更新、SQL、Rustロジック、build flagを同じrunで同時変更しない
+- [ ] 先に次の分岐で使うツールを1つに絞る
+
+| 観測した症状 | 最初のRust向けツール | 確認する値 | 次の判断 |
+|---|---|---|---|
+| webapp CPUが先に飽和 | `perf` / `pprof-rs` | on-CPU symbol、cycles、IPC | hot symbolをmicrobenchmarkへ切り出す |
+| CPUに余裕があるのにp95が高い | `tokio-console` / `tracing-chrome` | busy / idle、poll、wake、pool・I/O待ち | scheduler、lock、DB、networkを分離する |
+| `malloc` / `free`やRSSが目立つ | `dhat-rs` / heaptrack | allocation回数、bytes、peak、stack | hotな所有・clone・bufferだけ直す |
+| pure Rust関数の候補比較 | Criterion | wall time、throughput、95% CI | 明確な差だけ全体benchmarkへ進める |
+| 小差がnoiseへ埋もれる | Gungraun | instructions、estimated cycles、cache / branch event | wall timeと同方向か確認する |
+| CPU hotspotの理由が不明 | `cargo-show-asm` | bounds check、分岐、vectorization、clone / format call | source上の仮説を1つ作る |
+| 実装を詰めた最終binary | `cargo-pgo` | non-PGO対PGOのscore・CPU・p95 | 代表負荷でのみ改善する偏りを除外する |
+| 反復buildが遅い | `cargo build --timings` / `sccache` | critical path、重複crate、cache hit率 | runtime改善と別に管理する |
+
+#### 1. release相当の診断binaryを作る
+
+- [ ] 通常releaseを変更せず、次のcustom profileを診断用branchまたはprofile用patchに追加する
+
+  ```toml
+  [profile.profiling]
+  inherits = "release"
+  debug = "line-tables-only"
+  strip = "none"
+  ```
+
+- [ ] stackが欠ける場合だけ`RUSTFLAGS`へ`-C force-frame-pointers=yes`を追加し、現在の`-C link-arg=-fuse-ld=lld`を消さない
+- [ ] `cargo build --profile profiling --locked --frozen`の実際のrustc引数をverbose logで保存する
+- [ ] 通常releaseとprofiling buildを各3回比較し、debug line / frame pointer自体のscore・CPU overheadを記録する
+- [ ] symbols、profiler、診断crate、追加capabilityを通常imageと最終binaryへ残さない
+
+#### 2. 全体profileからhot pathを1つ選ぶ
+
+- [ ] 60秒benchmark全体をprofileし、warm-up直後やinitializeだけでなく定常区間を含める
+- [ ] flame graphの上位を次の5分類で集計する
+  - SQL / sqlx decodeとconnection pool待ち
+  - Tokio scheduler、wake、lock、channel
+  - serde、JSON、文字列format
+  - allocation、clone、collection growth
+  - matcher、距離・料金・集計などpure Rust計算
+- [ ] sample数が少ないsymbol、inlined frame、unknown frameはすぐ最適化せず、sampling時間・debug line・frame pointerを見直す
+- [ ] CPU samplingはI/O待ち時間を直接示さないため、CPUが低い遅延を`tokio-console`なしで「Rust計算が遅い」と結論付けない
+- [ ] 上位1〜3 symbolの合計CPU比率とrequest当たり呼出回数を記録し、最大寄与の1件だけを次の検証へ進める
+
+#### 3. pure Rust処理をCriterionで比較する
+
+- [ ] `calculate_distance`、`calculate_fare`、`sum_sales`、`get_chair_stats`の純粋部分、matcher候補生成・rankingをDB / networkから分離してbenchから呼べる形にする
+- [ ] 実データ分布を匿名化したfixtureを固定し、matcherは1 / 8 / 32 / 64 rides × chairs、疎・密・同距離・地域偏りを分ける
+- [ ] `BenchmarkId`で実装と入力sizeを識別し、`Throughput::Elements`で1秒当たり候補数またはride数を出す
+- [ ] 入出力を`std::hint::black_box`へ通し、compilerが処理全体を消すのを防ぐ
+- [ ] fixture生成を測らないbenchは`iter_batched`でsetupとmeasurementを分け、allocation込み／buffer再利用の2種類を意図的に分ける
+- [ ] 最初はwarm-up 3秒、measurement 10秒、sample 100以上を基準にし、実行時間が長いmatcherはsample数を下げた理由を記録する
+- [ ] 変更前baselineを保存し、同じtarget・compilerで変更後と比較する
+
+  ```bash
+  cargo bench --bench matcher -- --save-baseline before
+  cargo bench --bench matcher -- --baseline before
+  ```
+
+- [ ] p値だけで採用せず、95%信頼区間が実用上のnoise幅を越え、3回の実行で方向が一致することを確認する
+- [ ] microbenchmarkで改善しても、profile上の寄与率から全体改善上限を見積もり、60秒benchmarkでscoreと正当性を再確認する
+
+#### 4. 小差をGungraunで命令・cache単位に分解する
+
+- [ ] Linux profile imageへValgrindを追加し、通常imageには入れない
+- [ ] Gungraun libraryと`gungraun-runner`を同一versionへ固定し、Rust 1.83でcompileできるversionを診断image内で確認する
+- [ ] Criterionと同じpure function・fixtureを`cargo bench --bench matcher-callgrind`で1回実行する
+- [ ] instructions、estimated cycles、L1 / LL cache event、branch eventを変更前後で保存する
+- [ ] Valgrindのsimulated eventはwall timeではなく安定した相対指標として使い、network・DB込みのAxum endpoint速度を代用させない
+- [ ] 命令数が減ってもCriterionのwall timeと全体benchmarkが悪化した変更は採用しない
+
+#### 5. allocationを関数単位で削る
+
+- [ ] CPU profileでallocatorがhot、またはRSS / allocation rateが高い場合だけ`dhat-rs`用の診断testを作る
+- [ ] 通知payload、matcher候補Vec、chair stats集計ごとにtotal allocation、total bytes、peak bytesを固定fixtureで保存する
+- [ ] `SELECT *`削減、`Vec::with_capacity`、buffer再利用、不要な`clone` / `format!`の削減を1件ずつ比較する
+- [ ] `SmallVec`、別allocator、unsafe、複雑なborrow化はallocation減少だけで採用せず、CPU profileと全体scoreの改善を必須にする
+- [ ] `dhat-rs`は実験的な診断crateとしてfeatureまたはtestへ閉じ込め、最終binaryからglobal allocatorとprofilerを除く
+
+#### 6. asyncの「遅い」と「待っている」を分離する
+
+- [ ] `diagnostics` featureを作り、`tokio_unstable`、Tokio `tracing`、`console-subscriber`、`tracing-chrome`を診断buildだけで有効にする
+- [ ] notification long polling、coordinate更新、matcher、payment retryへ固定名のspan / task名を付ける
+- [ ] taskごとのbusy時間、scheduled時間、poll回数・時間、wake回数を採取する
+- [ ] handler spanを「pool acquire」「SQL」「serde」「外部HTTP」へ分け、長いspan内にどの待ちがあるかをPerfettoで確認する
+- [ ] 過剰wakeはpoll loop・短すぎるtick、長いbusy pollはCPU処理・blocking処理、長いidleはI/O・resource待ちとして別仮説にする
+- [ ] `spawn_blocking`はCPU処理を消さず別threadへ移すだけなので、Tokio worker starvationを解消し全体throughputも上がる場合だけ採用する
+- [ ] instrumentation有無を比較し、final runでは`diagnostics` featureをOFFにする
+
+#### 7. 生成コードとrelease設定を最後に比較する
+
+- [ ] profilerでhotと判明した関数だけを`cargo asm --lib --rust <function>`または`--llvm`で確認する
+- [ ] 小さすぎてinlineされた関数はbench用のmonomorphic wrapperで確認し、製品コードへ`#[inline(never)]`を残さない
+- [ ] bounds check、panic path、vectorization、不要なcopy / allocation callをsource上の仮説と対応させる
+- [ ] 現在のreleaseを対照に、`opt-level=2`、`codegen-units=1`、`lto="thin"`をまず1項目ずつ比較する
+- [ ] 単独で改善した設定だけを組み合わせ、build時間、binary size、起動時間、CPU、60秒scoreを各3回記録する
+- [ ] `target-cpu=native`は本番サーバー上でbuildして同じCPUだけで実行する場合に限り比較し、Apple Siliconで作ったbinaryをamd64へ持ち込まない
+- [ ] `panic="abort"`はhandler panic時にprocess全体が終了する意味変更を伴うため、速度目的の候補から外す
+- [ ] `cargo clippy --release --all-targets --all-features -- -W clippy::perf -D warnings`を低コストな候補抽出に使い、lint解消を速度改善の証拠にしない
+
+#### 8. PGOを最終候補binaryへ適用する
+
+- [ ] SQL回数、pool待ち、ログ、上位CPU hotspotを解消した後だけPGOへ進む
+- [ ] Rust 1.83のprofile imageへ`llvm-tools-preview`を追加し、`llvm-profdata`のpathとversionを保存する
+- [ ] `cargo-pgo`を使う場合は`cargo pgo info`で環境を確認し、現在のLLD用RUSTFLAGSとPGO flagが両方rustcへ渡ることをverbose logで確認する
+- [ ] instrumented binaryを通常stackへ組み込み、native rustc方式では`LLVM_PROFILE_FILE`を診断volume上の絶対pathへ設定する。`cargo-pgo`方式ではtool管理のprofile directory自体を永続化する
+- [ ] initialize、主要app / chair / owner API、notification、matcher、paymentを含む代表的な60秒benchmarkでprofileを収集する
+- [ ] `.profraw`を`llvm-profdata merge`し、`llvm-profdata show`でprofileが空でなく主要経路を含むことを確認する
+- [ ] 最適化buildでは`-Cprofile-use=<absolute-path>`と`-Cllvm-args=-pgo-warn-missing-function`を使い、profile欠落を記録する
+- [ ] 簡易手順を使う場合も「instrument → 代表負荷で学習 → optimize」の3段階を分ける
+
+  ```bash
+  cargo pgo info
+  cargo pgo build
+  # instrumented isurideを通常stackで起動し、代表benchmarkを実行する
+  cargo pgo optimize
+  ```
+
+- [ ] 学習に使ったrunとは別の3回でnon-PGO対PGOを比較し、score中央値、最小値、p95、CPU、全エラーコードを確認する
+- [ ] 特定seedだけ速く別seed・別初期状態で悪化する場合はprofile偏りとして不採用にする
+- [ ] BOLTはDocker対応が実験的で導入・symbol要件も増えるため、PGO単独の改善を確認するまで追加しない
+
+### HTTP: `alp` とnginx access log
+
+- [ ] nginxへ診断用LTSVまたはJSON `log_format` を追加する
+  - method、正規化可能なURI、status、`request_time`
+  - `upstream_response_time`、`upstream_connect_time`
+  - request / response bytes、connection ID、`connection_requests`
+- [ ] path parameterのride IDなどを `alp --matching-groups` でまとめ、同一endpointを別行へ分散させない
+- [ ] `alp` でcount、sum、avg、p50、p95、p99、max、5xx / 499件数をendpoint別に出す
+- [ ] `request_time - upstream_response_time` からnginx・socket・client側の待ちを推定する
+- [ ] `alp --dump` と `alp diff` で変更前後を機械比較できる形にする
+- [ ] access logをtmpfsまたは診断用volumeへ出す場合と無効化した場合を比較し、log I/Oのscore overheadを測る
+- [ ] localhostまたはDocker network内だけから参照できる`stub_status` endpointを診断構成へ追加する
+- [ ] `stub_status`のactive、reading、writing、waiting、accepts、handled、requestsを1秒間隔で採取する
+- [ ] `handled < accepts`、active connection上限、writingの継続増加をnginx側の飽和兆候として扱う
+- [ ] 採用条件: 30ms超過を作るendpointと回数を特定でき、ツール有効時のスコア低下が許容範囲または別runへ分離できる
+
+### SQL: `performance_schema`、`sys` schema、`pt-query-digest`
+
+- [ ] benchmark直前にstatement digestをresetし、終了直後に回数、合計、平均、最大、rows examinedを保存する
+- [ ] `sys.statement_analysis`、`sys.statements_with_full_table_scans`、`sys.schema_table_statistics` を同じrunで保存する
+- [ ] transaction、data lock、metadata lock、pool待ちを同じ時刻軸へ載せる
+- [ ] slow logを診断runだけ有効化し、30ms目標より短い `long_query_time=0.01` から開始する
+- [ ] [`pt-query-digest`](https://docs.percona.com/percona-toolkit/pt-query-digest.html) でfingerprint別のQuery time、Lock time、Rows examined、p95を集計する
+- [ ] slow logのthresholdを10 / 30 / 100msで比較し、log量とMySQL CPU・I/O overheadを測る
+- [ ] `performance_schema`のdigestと`pt-query-digest`で上位SQLが一致するか照合する
+- [ ] [`pt-stalk`](https://docs.percona.com/percona-toolkit/pt-stalk.html) をまず`--no-stalk`の1回採取で試し、収集ファイル・時間・負荷を確認する
+- [ ] baselineの`Threads_running`分布からtrigger thresholdと連続cycle数を決め、瞬間的なDB stallだけを捕捉する
+- [ ] `pt-stalk`のGDB、strace、tcpdump collectorはMySQLを停止・減速させ得るため既定で無効にする
+- [ ] MySQL認証情報はcommand lineへ渡さず、診断containerだけのoption fileを使う
+- [ ] `sysbench`はISURIDE表を直接更新せず、別schemaでbuffer pool、redo、fsync設定の候補を比較する
+- [ ] 合成OLTPの改善だけでは採用せず、同じMySQL設定を公式benchmarkで再検証する
+- [ ] final runではslow logをOFFへ戻し、`performance_schema`も必要なconsumerだけに絞る
+- [ ] 採用条件: SQLの「単発の遅さ」と「回数による累積負荷」を分離し、改善対象のfingerprintを一意に示せる
+
+### 資源: `docker stats`、`vmstat`、`pidstat`、`iostat`
+
+- [ ] 1秒間隔でwebapp、MySQL、nginx、matcher、benchmarkerのCPU、memory、block I/O、PID数を保存する
+- [ ] Colima VMの`vmstat 1`を同時取得し、run queue、context switch、CPU idle / iowaitを記録する
+- [ ] profile用VMへ`sysstat`を導入できるか確認し、`pidstat -urd`と`iostat -xz 1`を採取する
+- [ ] macOSの`iostat`はホスト全体、Linuxの`iostat`はColima VM内の値として分けて記録する
+- [ ] cgroupのCPU throttlingとmemory pressureを確認し、単なるCPU使用率100%とquota待ちを区別する
+- [ ] 採用条件: webapp CPU、MySQL CPU、I/O、CPU quotaのどれが先に飽和したかを時系列で説明できる
+
+### CPU profile: `perf`、`cargo-flamegraph`、`samply`、Instruments
+
+- [ ] Colima VMへ対応kernelの`perf`を導入できるか確認する
+- [ ] `kernel.perf_event_paranoid=4`、Docker seccomp、`CAP_PERFMON` / `CAP_SYS_PTRACE`のどれが採取を阻害するか切り分ける
+- [ ] 通常構成の権限を広げず、profile用Compose overrideだけへ必要最小限のcapabilityを付与する
+- [ ] release binaryへline tableとframe pointerを付けた診断用buildを作り、通常releaseとの速度差を記録する
+- [ ] `perf stat`でcycles、instructions、IPC、context switches、cache missを採取する
+- [ ] [`cargo-flamegraph`](https://github.com/flamegraph-rs/flamegraph) または[`samply`](https://github.com/mstange/samply) で60秒runのCPU flame graphを作る
+- [ ] `perf`権限の準備が高コストなら、profile featureで[`pprof-rs`](https://github.com/tikv/pprof-rs)を組み込み、SIGPROF samplingを先に試す
+- [ ] `pprof-rs`はsampling frequencyを100 / 250 / 500Hzで比較し、drop sample、CPU overhead、stack解決率を記録する
+- [ ] signal handlerのunwind riskを避けるblocklistを設定し、診断endpointを外部公開せずprofile artifactをvolumeへ出す
+- [ ] macOS Instrumentsはcontainerへ直接attachせず、webappをnative起動した補助実験だけに使い、Docker runと同一視しない
+- [ ] flame graphでDB/socket待ち、serde、allocation、tracing、matcher計算の比率を分類する
+- [ ] pure Rust関数がCPU hotspotと判明した場合だけ`cargo-show-asm`でbounds check、vectorization、不要なclone / formatを確認する
+- [ ] assemblyの短さだけで採用せず、Criterionと全体benchmarkの両方で改善を確認する
+- [ ] 採用条件: wall timeの大きいsymbolまたは待ち境界を特定でき、profileから直接1つの改善仮説を作れる
+
+### Rust async: `tokio-console` と `tokio-metrics`
+
+- [ ] `tokio_unstable`、Tokioの`tracing` feature、`console-subscriber`をprofile buildだけで有効にする
+- [ ] [`tokio-console`](https://tokio.rs/tokio/topics/tracing-next-steps) でtaskのpoll時間、busy時間、wake回数、resource待ちを確認する
+- [ ] notification long polling、coordinate queue、background matcherをtask名付きでinstrumentする
+- [ ] sqlx pool取得待ちとTokio scheduler starvationを区別できるspan / metricを追加する
+- [ ] `tracing-chrome`をprofile buildへ追加し、handler → pool acquire → SQL → payment HTTPを同一traceへ出す
+- [ ] span名はendpoint / operation単位に固定し、ride IDやtokenを名前へ含めずartifactの高cardinalityと秘密情報を防ぐ
+- [ ] Chrome trace JSONをPerfetto UIで開き、30ms tickを越えるcritical pathと並行taskの重なりを確認する
+- [ ] flush guardをshutdown時まで保持し、途中で欠けたtraceを正常な結果として扱わない
+- [ ] instrumentationあり／なしでCPU、memory、スコアを比較し、最終binaryから診断featureを外す
+- [ ] 採用条件: 長時間poll、過剰wake、mutex / semaphore待ち、scheduler遅延のいずれかを再現可能に示せる
+
+### Microbenchmark: Criterion、`hyperfine`、`vegeta`
+
+- [ ] Criterion用bench targetを追加し、64×64 matcher候補生成、貪欲法、二部マッチングを同じfixtureで比較する
+- [ ] 距離 / speed cost、地域bucket、通知payload生成、chair stats集計の純粋処理をmicrobenchmark化する
+- [ ] microbenchmarkはDB・network・lock待ちを含まないため、公式benchmarkの採否を置き換えない
+- [ ] `hyperfine`でclean / warm build、initialize、container起動時間をprepare / cleanup付きで比較する
+- [ ] `vegeta`では読み取りendpointから始め、固定Cookieを含むtarget fileでrateを段階的に上げる
+- [ ] `k6`ではuser登録 → ride作成 → notificationのような複数API scenarioを、setupで毎run初期化して再現する
+- [ ] endpoint名をtagへ固定し、動的IDをmetric tagへ入れてcardinalityを増やさない
+- [ ] `http_req_failed == 0`、endpoint別p95 < 30msをthresholdとして明示する
+- [ ] constant-arrival-rateと固定VUを比較し、server遅延でload generatorの送信率まで落ちる問題を区別する
+- [ ] k6 / Vegeta自体のCPUがColima 4 CPUを奪わないようhost実行とbenchmark container実行を比較する
+- [ ] nginx経由とDocker network内のwebapp直結を比較し、proxyとアプリのlatencyを分離する
+- [ ] 更新endpointは毎run initializeし、同じuser / chairへの非現実的な並行更新で仕様を壊さないload modelにする
+- [ ] 採用条件: 変更前後の差が分布として再現し、60秒benchmarkの改善・悪化と方向が一致する
+
+### 深掘り用: `strace`、packet capture、eBPF、heap profiler
+
+- [ ] `strace -c -f`をprofile containerだけで実行し、`connect`、`write`、`fsync`、`futex`、`epoll_wait`の回数と時間を見る
+- [ ] `tcpdump`はColima VMまたは同一network namespaceで採取し、Host側interfaceだけのcaptureで結論を出さない
+- [ ] `ss -s` / `ss -tanp`でnginx↔webapp↔MySQLのESTABLISHED、TIME_WAIT、再接続を確認する
+- [ ] packetにはtokenやpayloadが含まれ得るため、port・header中心の最小captureにしてartifactを公開しない
+- [ ] `bpftrace --info`とprobe一覧でColima kernelのBTF、tracepoint、uprobe対応を確認してから導入判断する
+- [ ] eBPFではoff-CPU、block I/O latency、TCP retransmitのうち、既存指標で説明できない1項目だけを調べる
+- [ ] allocationがflame graphへ現れた場合だけ`heaptrack`またはMassifを使い、bytes、回数、peak、stackを採取する
+- [ ] 採用条件: P0 / P1ツールで原因を絞れない待ちやallocationを説明し、権限追加とoverheadに見合う情報が得られる
+
+### Allocation: `dhat-rs` とheap profiler
+
+- [ ] CPU flame graphまたはmemory増加でallocationが疑われた場合だけallocation profileへ進む
+- [ ] [`dhat-rs`](https://github.com/nnethercote/dhat-rs) は実験的なため、全アプリではなく通知payloadやmatcher fixtureの診断testから試す
+- [ ] allocation回数、総bytes、peak heapをbaselineとして固定し、`SELECT *`削減やbuffer再利用前後を比較する
+- [ ] `heaptrack` / Massifは診断containerで短いloadだけに使い、60秒スコアrunへ混ぜない
+- [ ] leak判定ではinitializeによるcache世代切替後に古い世代が解放されることを確認する
+- [ ] 採用条件: allocation stackと対象処理を結び付け、変更後に回数またはbytesと全体CPUの両方が減る
+
+### 反復開発: `sccache`
+
+- [ ] `cargo build --timings`の`target/cargo-timings/cargo-timing.html`からcritical path、同時実行数、codegen時間、build script時間を保存する
+- [ ] `cargo tree --duplicates`で複数versionのcrateを抽出し、feature・target差による正当な重複と、依存整理で統合できる重複を分ける
+- [ ] isuride自身のcompileがcritical pathなら、別nightly toolchainの`rustc -Z self-profile`とmeasureme toolsでquery / codegen / LLVM時間を診断する
+- [ ] self-profileのために`RUSTC_BOOTSTRAP`で通常Rust 1.83 buildへunstable flagを混ぜず、nightlyの結果はcompile-time仮説だけに使う
+- [ ] BuildKit target cacheだけの現在値と、[`sccache`](https://github.com/mozilla/sccache)追加時のclean / warm / 1ファイル変更buildを比較する
+- [ ] Rustのincremental compilation artifactはsccache対象外なので、`CARGO_INCREMENTAL=1`の現状と`CARGO_INCREMENTAL=0 + sccache`を別条件で比較する
+- [ ] `sccache --show-stats`でcompile request、hit率、cache write、non-cacheable reasonを保存する
+- [ ] linkerと最終binaryはcacheされない前提で、現在11.02秒のDocker buildを実測で下回る場合だけ採用する
+- [ ] cache volumeの上限と削除手順を決め、Colima disk圧迫でruntime benchmarkを悪化させない
+- [ ] build高速化の結果はruntime score改善と分けて記録する
+
+### 現時点では追加しないツール
+
+- [ ] `oha` / `wrk` / `hey`: Vegetaとk6で単一endpoint・stateful scenarioを覆えるため、必要なload modelが不足した場合だけ再検討する
+- [ ] Prometheus + Grafana、cAdvisor、PMM: 60秒runには構築・常駐overheadが大きいため、CLI採取で時系列を説明できない場合だけ再検討する
+- [ ] `mysqltuner`: 一般的な設定推奨をそのまま採用せず、`performance_schema`と同一workloadの根拠を優先する
+- [ ] `cargo-bloat` / `dive`: binary・image sizeは起動や配布には効くが現在のruntime bottleneckを直接示さないため後回しにする
+- [ ] OpenTelemetry collector: `tracing-chrome`のローカルtraceでcritical pathを確認できない場合だけ再検討する
+
+### 最初に実施するツール検証順
+
+1. nginxへ時間付き診断logを追加し、導入済み`alp`でendpoint別p95 / p99を取得する
+2. 同じrunの`performance_schema` / `sys` schemaと`docker stats` / `vmstat`を保存する
+3. 上位endpointとSQLが決まった後に、slow log + `pt-query-digest`を短い診断runで比較する
+4. 再現しにくいDB stallがあれば`pt-stalk`、statefulな局所負荷が必要ならk6を使う
+5. CPUが律速なら`pprof-rs`または`perf`、async critical pathが不明なら`tracing-chrome` / `tokio-console`を使う
+6. matcher algorithmだけはCriterionで候補を絞り、小差だけGungraunで命令・cache eventへ分解してから全体benchmarkで判断する
+7. SQL・待ち・CPU hotspotを解消した最終候補だけPGOを学習用とは別runで比較する
+8. `strace`、packet capture、eBPF、heap profilerは既存計測で説明できない場合だけ使う
+
 ## Phase 1: 小さな変更で待ち行列を減らす
 
 ### owner椅子一覧
@@ -413,7 +734,12 @@
 - [ ] `chairs.model` の `TEXT` を上限付き `VARCHAR` へ変える
 - [ ] buffer pool hit率、temporary table、sort、redo量を採取する
 - [ ] datasetに合わせて `innodb_buffer_pool_size` を調整する
-- [ ] `SELECT @@log_bin` でbinary logの実状態を確認する
+- [x] `SELECT @@log_bin` でbinary logが有効、`SHOW REPLICAS` が空であることを確認する
+- [x] `innodb_flush_log_at_trx_commit=2` を単独比較する
+  - fsyncは減ったが52,606点で対照53,198点を上回らず、redo側だけでは不十分
+- [x] `sync_binlog=0` を追加して2回確認する
+  - 60,102–66,167点、中央値63,134.5点、エラー0
+  - COMMIT平均は1.722 / 1.859msで、対照3.349msから低下
 - [ ] binary logが有効かつ複製・復旧に不要な環境だけ、`--skip-log-bin` を別runで比較する
 - [ ] binary log停止は運用・復旧特性を変えるため、通常のSQL改善と分離する
 - [ ] durabilityを変える設定は通常施策と分け、再起動試験とデータ損失リスクを明記する
