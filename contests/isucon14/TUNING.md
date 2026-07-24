@@ -105,7 +105,7 @@ matcherは単純なマンハッタン距離だけでなく、椅子モデルのs
 
 | 記録 | 変更 | 60秒結果 |
 |---|---|---|
-| [00-baseline.md](./tuning/00-baseline.md) | 公式Rust初期実装 | `pass=false`、スコア0 |
+| [00-baseline.md](./tuning/00-baseline.md) | 公式Rust初期実装 | 共有負荷時は失敗・0点、静穏時再計測は`pass=true`・5,906点 |
 | [01-indexes.md](./tuning/01-indexes.md) | 高頻度SQLへB-tree INDEX追加 | `pass=false`、スコア364 |
 | [02-notification-transactions.md](./tuning/02-notification-transactions.md) | 空通知pollingのtransaction削減 | `pass=true`、スコア2,357 |
 | [03-owner-chairs.md](./tuning/03-owner-chairs.md) | owner対象へ絞ってから距離集計 | `pass=true`、スコア5,601、エラー0 |

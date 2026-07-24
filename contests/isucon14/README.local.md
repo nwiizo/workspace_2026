@@ -200,7 +200,8 @@ RESET=1 ./scripts/down.sh
 |---|---|
 | `./scripts/smoke-test.sh` | `GET /` が 200、`POST /api/initialize` が `{"language":"rust"}` |
 | `./scripts/benchmark.sh 10` | `pass=true`（最終確認時のスコア 394） |
-| 初期状態の `./scripts/benchmark.sh 60` | `pass=false`、スコア0、`CODE=32` |
+| 初期状態の `./scripts/benchmark.sh 60`（共有負荷あり） | `pass=false`、スコア0、`CODE=32` |
+| 同じ初期revisionの静穏時再計測 | `pass=true`、スコア5,906、`CODE=26` 1件 |
 | INDEX追加後 | `pass=false`、スコア364 |
 | 空通知polling改善後 | `pass=true`、スコア2,357 |
 | owner距離集計改善後 | `pass=true`、スコア5,601、エラー0 |
@@ -212,7 +213,14 @@ RESET=1 ./scripts/down.sh
 | coupon code INDEX追加後 | `pass=true`、スコア15,415、エラー0 |
 | 通知polling間隔比較 | 30msを維持。100msは14,611、50msは6,986・`CODE=31` 1件 |
 
-初期60秒走行ではMySQLのqueryが十数秒以上へ遅延し、ベンチマーカーの期限を超えました。INDEX、空通知polling、owner距離集計、N+1削減、matcherを1変更ずつ計測しました。観測した最高値は16,909です。最新走行はホストとColimaを4 CPU / 4 GiBのまま、coupon検索のdeadlock原因を修正した状態で15,415、エラー0で完走しました。スコアには走行ごとの揺れがあるため、変更の判断には実行計画とエラーログも併用しています。詳細は [TUNING.md](./TUNING.md) からベンチマーク単位の記録を参照してください。
+初回の初期60秒走行ではMySQLのqueryが十数秒以上へ遅延し、ベンチマーカーの期限を
+超えました。同じ初期revisionを外部コンテナの大きな共有負荷がない条件で再計測
+すると5,906点で完走しました。この差をコード改善の効果とは扱いません。INDEX、
+空通知polling、owner距離集計、N+1削減、matcherを1変更ずつ計測しました。
+最新改善版の静穏時実測は53,198点です。スコアには走行ごとの揺れがあるため、
+変更の判断には実行計画、エラーログ、HTTP件数、transaction累積時間も併用して
+います。詳細は [TUNING.md](./TUNING.md) からベンチマーク単位の記録を参照して
+ください。
 
 ## 構成
 
