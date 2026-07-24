@@ -54,16 +54,11 @@ FOR UPDATE SKIP LOCKED
     let mut available_chairs: Vec<AvailableChair> = sqlx::query_as(
         r#"
 SELECT chairs.id,
-       latest_location.latitude,
-       latest_location.longitude
+       chair_current_locations.latitude,
+       chair_current_locations.longitude
 FROM chairs
-INNER JOIN LATERAL (
-    SELECT latitude, longitude
-    FROM chair_locations
-    WHERE chair_id = chairs.id
-    ORDER BY created_at DESC
-    LIMIT 1
-) AS latest_location ON TRUE
+INNER JOIN chair_current_locations
+        ON chair_current_locations.chair_id = chairs.id
 WHERE chairs.is_active = TRUE
   AND NOT EXISTS (
       SELECT 1

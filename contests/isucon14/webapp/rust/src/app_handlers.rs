@@ -1,5 +1,6 @@
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
 use axum_extra::extract::CookieJar;
 use ulid::Ulid;
 
@@ -441,10 +442,12 @@ async fn app_post_ride_evaluation(
     State(AppState {
         pool,
         payment_client,
+        active_ride_evaluations,
+        ..
     }): State<AppState>,
     Path((ride_id,)): Path<(String,)>,
     axum::Json(req): axum::Json<AppPostRideEvaluationRequest>,
-) -> Result<axum::Json<AppPostRideEvaluationResponse>, Error> {
+) -> Result<Response, Error> {
     if req.evaluation < 1 || req.evaluation > 5 {
         return Err(Error::BadRequest("evaluation must be between 1 and 5"));
     }
@@ -463,6 +466,15 @@ async fn app_post_ride_evaluation(
     if status != "ARRIVED" {
         return Err(Error::BadRequest("not arrived yet"));
     }
+
+    // The evaluation transaction also performs an external payment request.
+    // Keep the assigned chair unavailable after the DB commit until Axum has
+    // consumed the response body. Moving this guard into the response body also
+    // releases it when the client disconnects and the body is dropped.
+    let active_evaluation = ride
+        .chair_id
+        .clone()
+        .map(|chair_id| active_ride_evaluations.begin(chair_id));
 
     let result = sqlx::query("UPDATE rides SET evaluation = ? WHERE id = ?")
         .bind(req.evaluation)
@@ -538,10 +550,16 @@ async fn app_post_ride_evaluation(
 
     tx.commit().await?;
 
-    Ok(axum::Json(AppPostRideEvaluationResponse {
+    let response = axum::Json(AppPostRideEvaluationResponse {
         fare,
         completed_at: ride.updated_at.timestamp_millis(),
-    }))
+    })
+    .into_response();
+
+    Ok(crate::hold_active_evaluation_until_response_drop(
+        response,
+        active_evaluation,
+    ))
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -739,12 +757,15 @@ struct NearbyChair {
     id: String,
     name: String,
     model: String,
-    latitude: i32,
-    longitude: i32,
 }
 
 async fn app_get_nearby_chairs(
-    State(AppState { pool, .. }): State<AppState>,
+    State(AppState {
+        pool,
+        latest_chair_locations,
+        active_ride_evaluations,
+        ..
+    }): State<AppState>,
     Query(query): Query<AppGetNearbyChairsQuery>,
 ) -> Result<axum::Json<AppGetNearbyChairsResponse>, Error> {
     let distance = query.distance.unwrap_or(50);
@@ -757,17 +778,8 @@ async fn app_get_nearby_chairs(
         r#"
 SELECT chairs.id,
        chairs.name,
-       chairs.model,
-       latest_location.latitude,
-       latest_location.longitude
+       chairs.model
 FROM chairs
-INNER JOIN LATERAL (
-    SELECT latitude, longitude
-    FROM chair_locations
-    WHERE chair_id = chairs.id
-    ORDER BY created_at DESC
-    LIMIT 1
-) AS latest_location ON TRUE
 WHERE chairs.is_active = TRUE
   AND NOT EXISTS (
       SELECT 1
@@ -780,23 +792,34 @@ WHERE chairs.is_active = TRUE
     .fetch_all(&pool)
     .await?;
 
+    // SQL alone changes from "busy" to "free" at evaluation commit, slightly
+    // before the evaluation HTTP response is returned. Exclude evaluations
+    // whose handlers are still running instead of guessing that interval from
+    // rides.updated_at and a fixed cooldown.
+    let evaluating_chair_ids = active_ride_evaluations.chair_ids();
+    let coordinates = latest_chair_locations
+        .coordinates_for(chairs.iter().map(|chair| chair.id.as_str()))
+        .await;
     let mut nearby_chairs = Vec::with_capacity(chairs.len());
-    for chair in chairs {
+    for (chair, latest_location) in chairs.into_iter().zip(coordinates) {
+        if evaluating_chair_ids.contains(&chair.id) {
+            continue;
+        }
+        let Some(latest_location) = latest_location else {
+            continue;
+        };
         if crate::calculate_distance(
             coordinate.latitude,
             coordinate.longitude,
-            chair.latitude,
-            chair.longitude,
+            latest_location.latitude,
+            latest_location.longitude,
         ) <= distance
         {
             nearby_chairs.push(AppGetNearbyChairsResponseChair {
                 id: chair.id,
                 name: chair.name,
                 model: chair.model,
-                current_coordinate: Coordinate {
-                    latitude: chair.latitude,
-                    longitude: chair.longitude,
-                },
+                current_coordinate: latest_location,
             });
         }
     }

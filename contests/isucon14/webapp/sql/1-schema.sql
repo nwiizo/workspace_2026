@@ -39,6 +39,7 @@ CREATE TABLE chairs
 )
   COMMENT = '椅子情報テーブル';
 
+DROP TABLE IF EXISTS chair_current_locations;
 DROP TABLE IF EXISTS chair_locations;
 CREATE TABLE chair_locations
 (
@@ -51,6 +52,17 @@ CREATE TABLE chair_locations
   INDEX idx_chair_locations_chair_created_at (chair_id, created_at)
 )
   COMMENT = '椅子の現在位置情報テーブル';
+
+CREATE TABLE chair_current_locations
+(
+  chair_id    VARCHAR(26) NOT NULL COMMENT '椅子ID',
+  location_id VARCHAR(26) NOT NULL COMMENT 'chair_locationsのID',
+  latitude    INTEGER     NOT NULL COMMENT '経度',
+  longitude   INTEGER     NOT NULL COMMENT '緯度',
+  created_at  DATETIME(6) NOT NULL COMMENT '登録日時',
+  PRIMARY KEY (chair_id)
+)
+  COMMENT = '椅子ごとの最新位置テーブル';
 
 DROP TABLE IF EXISTS users;
 CREATE TABLE users

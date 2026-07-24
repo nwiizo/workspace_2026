@@ -114,8 +114,70 @@ struct ChairPostCoordinateResponse {
     recorded_at: i64,
 }
 
+async fn upsert_chair_current_location(
+    tx: &mut sqlx::MySqlConnection,
+    chair_id: &str,
+    location_id: &str,
+    coordinate: &Coordinate,
+    recorded_at: chrono::NaiveDateTime,
+) -> sqlx::Result<()> {
+    sqlx::query(
+        r#"
+INSERT INTO chair_current_locations (
+    chair_id,
+    location_id,
+    latitude,
+    longitude,
+    created_at
+)
+VALUES (?, ?, ?, ?, ?) AS new
+ON DUPLICATE KEY UPDATE
+    latitude = IF(
+        new.created_at > chair_current_locations.created_at
+            OR (
+                new.created_at = chair_current_locations.created_at
+                AND new.location_id > chair_current_locations.location_id
+            ),
+        new.latitude,
+        chair_current_locations.latitude
+    ),
+    longitude = IF(
+        new.created_at > chair_current_locations.created_at
+            OR (
+                new.created_at = chair_current_locations.created_at
+                AND new.location_id > chair_current_locations.location_id
+            ),
+        new.longitude,
+        chair_current_locations.longitude
+    ),
+    location_id = IF(
+        new.created_at > chair_current_locations.created_at
+            OR (
+                new.created_at = chair_current_locations.created_at
+                AND new.location_id > chair_current_locations.location_id
+            ),
+        new.location_id,
+        chair_current_locations.location_id
+    ),
+    created_at = GREATEST(new.created_at, chair_current_locations.created_at)
+        "#,
+    )
+    .bind(chair_id)
+    .bind(location_id)
+    .bind(coordinate.latitude)
+    .bind(coordinate.longitude)
+    .bind(recorded_at)
+    .execute(tx)
+    .await?;
+    Ok(())
+}
+
 async fn chair_post_coordinate(
-    State(AppState { pool, .. }): State<AppState>,
+    State(AppState {
+        pool,
+        latest_chair_locations,
+        ..
+    }): State<AppState>,
     axum::Extension(chair): axum::Extension<Chair>,
     axum::Json(req): axum::Json<Coordinate>,
 ) -> Result<axum::Json<ChairPostCoordinateResponse>, Error> {
@@ -129,6 +191,7 @@ async fn chair_post_coordinate(
         destination_longitude: i32,
     }
 
+    let current_location_exists = latest_chair_locations.contains(&chair.id).await;
     let mut tx = pool.begin().await?;
 
     let chair_location_id = Ulid::new().to_string();
@@ -143,6 +206,52 @@ async fn chair_post_coordinate(
     .bind(recorded_at)
     .execute(&mut *tx)
     .await?;
+
+    if current_location_exists {
+        let current_location_update = sqlx::query(
+            r#"
+UPDATE chair_current_locations
+SET location_id = ?,
+    latitude = ?,
+    longitude = ?,
+    created_at = ?
+WHERE chair_id = ?
+  AND (
+      created_at < ?
+      OR (created_at = ? AND location_id < ?)
+  )
+        "#,
+        )
+        .bind(&chair_location_id)
+        .bind(req.latitude)
+        .bind(req.longitude)
+        .bind(recorded_at)
+        .bind(&chair.id)
+        .bind(recorded_at)
+        .bind(recorded_at)
+        .bind(&chair_location_id)
+        .execute(&mut *tx)
+        .await?;
+
+        if current_location_update.rows_affected() == 0 {
+            // A stale cache or a concurrent newer update can make the guarded
+            // UPDATE affect zero rows. The atomic fallback repairs both cases.
+            upsert_chair_current_location(
+                &mut tx,
+                &chair.id,
+                &chair_location_id,
+                &req,
+                recorded_at,
+            )
+            .await?;
+        }
+    } else {
+        // Updating a missing row under REPEATABLE READ acquires a gap lock. Many
+        // first-coordinate transactions can then deadlock when they all insert.
+        // Start with one atomic upsert when the cache says no current row exists.
+        upsert_chair_current_location(&mut tx, &chair.id, &chair_location_id, &req, recorded_at)
+            .await?;
+    }
 
     let ride: Option<CurrentRide> = sqlx::query_as(
         r#"
@@ -202,6 +311,15 @@ LIMIT 1
     }
 
     tx.commit().await?;
+    latest_chair_locations
+        .update(
+            chair.id,
+            chair_location_id,
+            req.latitude,
+            req.longitude,
+            recorded_at,
+        )
+        .await;
 
     Ok(axum::Json(ChairPostCoordinateResponse {
         recorded_at: recorded_at.and_utc().timestamp_millis(),

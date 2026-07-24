@@ -1,8 +1,13 @@
 use anyhow::Context;
-use axum::extract::State;
-use isuride::{AppState, Error};
+use axum::extract::{Request, State};
+use axum::middleware::Next;
+use axum::response::Response;
+use isuride::{ActiveRideEvaluationTracker, AppState, Error, LatestChairLocationCache};
 use std::net::SocketAddr;
+use std::sync::Arc;
 use tokio::net::TcpListener;
+use tokio::sync::RwLock;
+use tokio::time::{Duration, MissedTickBehavior};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -35,19 +40,33 @@ async fn main() -> anyhow::Result<()> {
         )
         .await?;
 
+    let latest_chair_locations = LatestChairLocationCache::load(&pool)
+        .await
+        .context("failed to load latest chair locations")?;
     let app_state = AppState {
         pool,
         payment_client: reqwest::Client::builder()
             .build()
             .context("failed to initialize payment HTTP client")?,
+        latest_chair_locations,
+        active_ride_evaluations: ActiveRideEvaluationTracker::default(),
+        maintenance_lock: Arc::new(RwLock::new(())),
     };
 
-    let app = axum::Router::new()
-        .route("/api/initialize", axum::routing::post(post_initialize))
+    spawn_latest_chair_location_reconciliation(&app_state);
+
+    let api_routes = axum::Router::new()
         .merge(isuride::app_handlers::app_routes(app_state.clone()))
         .merge(isuride::owner_handlers::owner_routes(app_state.clone()))
         .merge(isuride::chair_handlers::chair_routes(app_state.clone()))
         .merge(isuride::internal_handlers::internal_routes())
+        .route_layer(axum::middleware::from_fn_with_state(
+            app_state.clone(),
+            wait_for_maintenance,
+        ));
+    let app = axum::Router::new()
+        .route("/api/initialize", axum::routing::post(post_initialize))
+        .merge(api_routes)
         .with_state(app_state)
         .layer(tower_http::trace::TraceLayer::new_for_http());
 
@@ -62,6 +81,25 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
+fn spawn_latest_chair_location_reconciliation(app_state: &AppState) {
+    let pool = app_state.pool.clone();
+    let latest_chair_locations = app_state.latest_chair_locations.clone();
+    let maintenance_lock = app_state.maintenance_lock.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(2));
+        interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
+        interval.tick().await;
+
+        loop {
+            interval.tick().await;
+            let _maintenance_guard = maintenance_lock.read().await;
+            if let Err(error) = latest_chair_locations.reconcile(&pool).await {
+                tracing::warn!(%error, "failed to reconcile latest chair locations");
+            }
+        }
+    });
+}
+
 #[derive(Debug, serde::Deserialize)]
 struct PostInitializeRequest {
     payment_server: String,
@@ -73,9 +111,18 @@ struct PostInitializeResponse {
 }
 
 async fn post_initialize(
-    State(AppState { pool, .. }): State<AppState>,
+    State(AppState {
+        pool,
+        latest_chair_locations,
+        maintenance_lock,
+        ..
+    }): State<AppState>,
     axum::Json(req): axum::Json<PostInitializeRequest>,
 ) -> Result<axum::Json<PostInitializeResponse>, Error> {
+    // Wait for in-flight API requests and keep new requests/reconciliation out
+    // while init.sh drops and recreates tables. This also prevents a coordinate
+    // request from observing an old cache with an empty current-state table.
+    let _maintenance_guard = maintenance_lock.write().await;
     let output = tokio::process::Command::new("../sql/init.sh")
         .output()
         .await?;
@@ -90,6 +137,18 @@ async fn post_initialize(
         .bind(req.payment_server)
         .execute(&pool)
         .await?;
+    latest_chair_locations.refresh(&pool).await?;
 
     Ok(axum::Json(PostInitializeResponse { language: "rust" }))
+}
+
+async fn wait_for_maintenance(
+    State(AppState {
+        maintenance_lock, ..
+    }): State<AppState>,
+    request: Request,
+    next: Next,
+) -> Response {
+    let _maintenance_guard = maintenance_lock.read().await;
+    next.run(request).await
 }
