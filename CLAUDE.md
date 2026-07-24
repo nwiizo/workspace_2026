@@ -68,7 +68,7 @@ uv run --frozen ruff format . && uv run --frozen ruff check . && uv run --frozen
 - **Senior engineer test**: 過剰実装と言われないか
 - **Traceability test**: diff の全行がユーザ要求に直接トレースできるか
 
-詳細は skill `karpathy-guidelines`。自明なタスクには適用しない（caution > speed の tradeoff）。
+詳細は skill `home-karpathy-guidelines`。自明なタスクには適用しない（caution > speed の tradeoff）。
 
 ## Security (on demand)
 
