@@ -203,19 +203,26 @@ async fn chair_get_notification(
     State(AppState { pool, .. }): State<AppState>,
     axum::Extension(chair): axum::Extension<Chair>,
 ) -> Result<axum::Json<ChairGetNotificationResponse>, Error> {
-    let mut tx = pool.begin().await?;
-
-    let Some(ride): Option<Ride> =
-        sqlx::query_as("SELECT * FROM rides WHERE chair_id = ? ORDER BY updated_at DESC LIMIT 1")
+    let ride_exists: Option<(String,)> =
+        sqlx::query_as("SELECT id FROM rides WHERE chair_id = ? ORDER BY updated_at DESC LIMIT 1")
             .bind(&chair.id)
-            .fetch_optional(&mut *tx)
-            .await?
-    else {
+            .fetch_optional(&pool)
+            .await?;
+    if ride_exists.is_none() {
         return Ok(axum::Json(ChairGetNotificationResponse {
             data: None,
             retry_after_ms: Some(30),
         }));
-    };
+    }
+
+    // ライドがある場合は、通知対象の読み取りから通知済み更新までを
+    // 同じトランザクションに閉じ込める。
+    let mut tx = pool.begin().await?;
+    let ride: Ride =
+        sqlx::query_as("SELECT * FROM rides WHERE chair_id = ? ORDER BY updated_at DESC LIMIT 1")
+            .bind(&chair.id)
+            .fetch_one(&mut *tx)
+            .await?;
 
     let yet_sent_ride_status: Option<RideStatus> =
         sqlx::query_as("SELECT * FROM ride_statuses WHERE ride_id = ? AND chair_sent_at IS NULL ORDER BY created_at ASC LIMIT 1")
