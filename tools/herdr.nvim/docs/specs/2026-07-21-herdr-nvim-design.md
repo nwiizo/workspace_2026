@@ -115,7 +115,7 @@ Required agent fields are `terminal_id`, `agent_status`, `workspace_id`, `tab_id
 Mutation methods wrap:
 
 - `herdr agent start`
-- `herdr agent send`
+- `herdr pane run` for atomic text-plus-Enter submission
 - `herdr agent attach`
 
 Only one snapshot request may be in flight. Each process has a finite timeout and a callback that is scheduled before using Neovim APIs.
@@ -171,11 +171,11 @@ Closing or wiping that buffer ends only the attach client. It must not close the
 
 Selection context is limited to 500 lines and 65,536 bytes by default. Diagnostics are limited by the same byte ceiling. Oversized context fails visibly and is never silently truncated. `SendFile` rejects unnamed or unsaved buffers.
 
-Context is sent as one argv element to `herdr agent send`; no shell quoting is involved.
+Context is sent as one argv element to `herdr pane run`, which submits text plus Enter atomically; no shell quoting is involved. `herdr agent send` is not used because it writes literal text without submitting it.
 
 ### Notifications
 
-`notifier.lua` listens to accepted state transitions. By default it uses `vim.notify()` only when an existing agent enters `blocked` or `done`. It deduplicates notifications by `terminal_id`, status, and revision. Existing states discovered during bootstrap do not notify.
+`notifier.lua` listens to accepted state transitions. By default it uses `vim.notify()` when an agent enters `blocked` or `done`, including an attention-requiring agent first observed after bootstrap. It deduplicates notifications by `terminal_id`, status, and revision. Existing states discovered during the initial bootstrap do not notify.
 
 ### Health checks
 
@@ -216,7 +216,8 @@ Default font-independent state markers are `!`, `*`, `✓`, `·`, and `?`; they 
 - `:HerdrRefresh` requests an immediate snapshot.
 - `:HerdrStart [codex|claude]` starts an agent in the current project root.
 - `:HerdrAttach[!] [target]` attaches to an agent; bang explicitly permits takeover.
-- `:[range]HerdrSend [target]` sends the visual/range selection; without a range it asks for instruction text with `vim.ui.input()`.
+- `:[range]HerdrSend [target]` sends complete lines from an explicit Ex range; without a range it asks for instruction text with `vim.ui.input()`.
+- `:'<,'>HerdrSendVisual [target]` sends the exact character-, line-, or blockwise visual selection. A separate command avoids guessing whether a generic Ex range originated in Visual mode.
 - `:HerdrSendFile [target]` sends the current file reference.
 - `:HerdrSendDiagnostics [target]` sends diagnostics for the current buffer.
 - `:HerdrHealth` opens `:checkhealth herdr`.
@@ -315,7 +316,7 @@ Tests run with headless Neovim and require no testing plugin at runtime. A small
 - attention-priority sorting and workspace grouping;
 - stable selection across board renders;
 - first snapshot does not notify;
-- only transitions into `blocked` and `done` notify;
+- transitions and post-bootstrap newly observed agents in `blocked` or `done` notify;
 - event data for `HerdrUpdated` and `HerdrAgentStatusChanged`;
 - file, range, selection, and diagnostic prompt formatting;
 - one-based line reporting and byte/line limits;
