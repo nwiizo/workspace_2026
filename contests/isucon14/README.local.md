@@ -50,6 +50,8 @@ git -C "$source_dir/isucon14" archive HEAD | tar -x -C contests/isucon14
 | `scripts/smoke-test.sh` | トップ画面と初期化 API の疎通確認 |
 | `scripts/test-latest-location-reconciliation.sh` | commit後のcache更新欠落と同時刻tie-breakの故障注入 |
 | `scripts/test-status-notification-order.sh` | 時刻逆転時もapp / chair通知が状態遷移順になることをHTTPで確認 |
+| `scripts/test-chair-stats-consistency.sh` | 全初期chairを照合し、欠損・誤値・余分なrowを再起動で修復 |
+| `scripts/test-chair-stats-transitions.sh` | 評価時の完了条件、決済rollback、再送時の非加算をHTTP検証 |
 | `scripts/benchmark.sh` | 決済モックを含む公式ベンチマーカーの実行 |
 | `.dockerignore` / `webapp/rust/.dockerignore` | Dockerへ不要なソース・`target/` を送らない |
 
@@ -195,6 +197,14 @@ cd contests/isucon14
 # 注意: POST /api/initializeを呼び、ローカルデータを初期化する
 ./scripts/test-status-notification-order.sh
 
+# chair statsを照合し、故障注入後のwebapp再起動repairを確認
+# 注意: 開始時と終了時にPOST /api/initializeを呼び、ローカルデータを初期化する
+./scripts/test-chair-stats-consistency.sh
+
+# 評価APIの差分更新、決済失敗rollback、再送の非加算を確認
+# 注意: 一時決済mock containerを起動し、終了時にローカルデータを初期化する
+./scripts/test-chair-stats-transitions.sh
+
 # 公式ベンチマーカーによる短い動作確認
 ./scripts/benchmark.sh 10
 
@@ -203,9 +213,13 @@ cd contests/isucon14
 ```
 
 走行時間は引数または環境変数で指定します。省略時は公式と同じ 60 秒です。
-`test-latest-location-reconciliation.sh` と `test-status-notification-order.sh` は
-DBを公式初期データへ戻すため、保持したいローカルデータがある環境では実行しないで
-ください。使い捨てのISUCON検証stackを対象にします。
+上記4つの `test-*.sh` はDBを公式初期データへ戻すため、保持したいローカルデータが
+ある環境では実行しないでください。使い捨てのISUCON検証stackを対象にします。
+
+chair stats照合は初期500 chairで差分0、公式prevalidationと60秒終了時の動的chairでも
+差分0でした。実装と計測は
+[`tuning/20-chair-stats-current-state.md`](./tuning/20-chair-stats-current-state.md) に
+記録しています。
 
 ```sh
 ./scripts/benchmark.sh 10

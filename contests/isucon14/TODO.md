@@ -118,6 +118,15 @@
   - 未送信通知INDEXを `(ride_id, *_sent_at, status)` へ変更し、`Using filesort` を除去
   - 60秒3走89,539 / 98,338 / 99,895点、中央値98,338点、全run `pass=true`、CODE=11は0件
   - 詳細: [`tuning/19-status-semantic-order.md`](./tuning/19-status-semantic-order.md)
+- [x] chair statsを1 chair 1 rowのcurrent-state表へ事前集計する
+  - 旧履歴集計46,876回・22.299秒・平均0.476msを、主キーread
+    39,326回・2.477秒・平均0.063msへ短縮
+  - 評価確定と同じtransactionの差分writeは868回・0.119秒・平均0.137ms
+  - 初期500 chair、公式prevalidation、60秒終了時の旧履歴集計との差はすべて0件
+  - 欠損・誤値・余分なrowの再起動repairと、決済失敗rollback・再送非加算を回帰確認
+  - 最終3走98,386 / 98,452 / 99,944点、中央値98,452点、全run `pass=true`・エラー0
+  - 直前通常3走中央値101,984点から-3,532点のため、スコア寄与は未確定
+  - 詳細: [`tuning/20-chair-stats-current-state.md`](./tuning/20-chair-stats-current-state.md)
 - [x] nearbyの集合SQL、chair statsの集約SQL、batch matcherを実装
 - [x] 上記3変更を別々のBenchmarkとして正当性・性能検証する
 
@@ -128,7 +137,7 @@
 | P0 | `internal_get_matching` | 64件batch + 近傍優先、外部pollは500ms | 空き定義の集約、500msの最小待ち |
 | P0 | `app_get_nearby_chairs` | 最新座標はcurrent-state表 + process cache、active / 割当可否はDB、評価response送信中だけtrackerで除外 | 最終run例8.079ms。ride antijoinとtracker確認の内訳を測る |
 | P0 | 通知2経路 | 30ms pollingごとに認証、最新ride、status、表示データを取得 | 60秒で通知GET 34,360回、同じレスポンスの再計算 |
-| P0 | `get_chair_stats` | 1集約SQLを実装・ベンチ検証済み | 初期データ全件の旧実装との照合は未実施 |
+| P0 | `get_chair_stats` | 評価時差分更新 + 主キーreadへ変更 | SQL累積は約89%減、スコア中央値は約3.5%低下したため次の通知施策と合わせて再評価 |
 | P0 | `app_post_ride_evaluation` | DB transaction中に外部決済HTTPと最大5回の100ms sleep | connection・snapshot・lockを外部I/O中も保持 |
 | P0 | `chair_post_coordinate` | 履歴INSERT + current UPDATE、遷移候補だけride lock + 最新status再読 | current UPDATE平均0.744msとrow-lock待ち。write amplificationを減らす |
 | P1 | `app_get_rides` | rideごとにstatus、coupon、chair、ownerを取得 | 履歴増加に比例するN+1 |
@@ -551,7 +560,12 @@
 - [ ] `retrieved_at` は現行benchmarkerの判定に未使用なので、性能施策ではなく仕様準拠として検証する
 - [x] 集合SQLだけをBenchmark 04として60秒計測する
 - [x] nearbyの内容不一致とtimeoutがないことを60秒ベンチで確認する
-- [ ] `CODE=26` 1件との因果を切り分けるため、同一revisionを3回以上走らせる
+- [x] `CODE=26` 1件との因果を切り分けるため、同一revisionを3回以上走らせる
+  - 変更前の通常3走101,984 / 102,498 / 98,444点と、Performance Schema履歴を
+    有効にした100,732点ではCODE=26を再現しなかった
+  - 終了時87,107座標で同時刻、ID順の時刻逆転、順序による距離差、
+    current-state不整合はすべて0件
+  - chair stats変更後の6走でもCODE=26は0件。推測修正は入れず再発時のID採取を残す
 - [x] 未完了ride判定のstatus相関subqueryを `rides.evaluation IS NULL` へ置き換え、実行計画と結果を比較する
   - 旧新のride判定とnearby結果を負荷中3時点で比較し、差分0件
   - `EXPLAIN ANALYZE`: 28.2ms→10.1ms、status subquery 1,671 loopsを除去
@@ -580,8 +594,12 @@
 - [ ] 未送信statusがない場合は高価なpayloadを再構築せず `data: null` を返せるかprevalidationで確認する
 - [ ] 未送信status、ride、user/chair、fareを1 SQLで取得する
 - [x] `get_chair_stats` を集約SQL1回へ置き換える
-- [ ] 初期データの全椅子で旧loop実装と集約SQLの結果を比較する
-- [ ] `ARRIVED` / `CARRYING` / `COMPLETED` の一部が欠けるrideを同じように除外する
+- [x] 初期データの全椅子で旧履歴集約とcurrent-state表の結果を比較する
+  - `./scripts/test-chair-stats-consistency.sh` で500 chairの件数・評価合計の差0件
+- [x] `ARRIVED` / `CARRYING` / `COMPLETED` の一部が欠けるrideを同じように除外する
+  - 評価差分SQLも `CARRYING` の存在を要求し、backfillと完了条件を統一
+  - `./scripts/test-chair-stats-transitions.sh` で欠損ride、決済rollback、再送をHTTP検証
+  - `./scripts/test-chair-stats-consistency.sh` で故障注入後の再起動repairを検証
 - [ ] 通知対象のclaimとsent時刻更新は、まず条件付きUPDATEで競合安全にする
 - [ ] 同一recipientへの並行pollingが発生する構成になった場合だけ `FOR UPDATE SKIP LOCKED` を比較する
 - [ ] transactionは未送信statusのclaimからsent更新までの最短区間だけにする
@@ -741,11 +759,11 @@
 
 ### 集計の事前計算
 
-- [ ] chairの完了ride数と評価合計を保持し、完了時に差分更新する
-- [ ] 通知のchair statsをO(1)で返す
+- [x] chairの完了ride数と評価合計を保持し、完了時に差分更新する
+- [x] 通知のchair statsをO(1)で返す
 - [ ] ownerのchair別・model別売上を完了時に差分更新する案を比較する
 - [ ] 更新失敗時に履歴から再構築できる手順を用意する
-- [ ] chair statsは評価・`COMPLETED` と同時commitし、通知遷移点で厳密に一致させる
+- [x] chair statsは評価・`COMPLETED` と同時commitし、通知遷移点で厳密に一致させる
 - [ ] 3秒の整合性猶予はowner累積距離だけへ適用する
 
 ## Phase 4: pollingとmatcherの上限を外す
@@ -908,22 +926,20 @@
 
 ## 推奨する直近の実行順
 
-1. owner椅子一覧のCODE=26を同じchair IDで再現し、DB座標列、owner API snapshot、
-   ベンチマーカーの送信済み座標を突き合わせる
-2. current UPDATEのrow-lock待機とcoordinate transaction p50 / p95 / p99を診断runで採取する
-3. current rowをper-chair順序付きqueueでcoalesceし、3秒収束・全履歴・crash整合性を維持したまま
+1. current UPDATEのrow-lock待機とcoordinate transaction p50 / p95 / p99を診断runで採取する
+2. current rowをper-chair順序付きqueueでcoalesceし、3秒収束・全履歴・crash整合性を維持したまま
 39,013回、累積29.033秒のwrite amplificationを減らせるか単独比較する
-4. latest-coordinate cacheの `RwLock` とmaintenance gateの待機・保持時間を計測し、
+3. latest-coordinate cacheの `RwLock` とmaintenance gateの待機・保持時間を計測し、
    2秒再同期時のglobal stallを定量化する
-5. chair statsと最新statusを含む通知payload cacheを実装し、30ms pollingよりDB負荷と通知遅延が減るか確認する
-6. matcherへ地域間の距離上限を追加し、500 / 100 / 30msの実行間隔と組み合わせて比較する
-7. 決済へ `Idempotency-Key` を導入してGET照合をなくす
-8. 外部決済HTTPをDB transactionの外へ出し、障害時の二重決済・欠落を回復できるようにする
-9. app history、owner sales、ride作成のN+1を順に除去する
-10. current-state別表で最新status・statsをO(1)化する
-11. JSON long pollingで不足する場合だけSSEへ移し、状態変更時の即時pushまで実装する
-12. 貪欲matcherと最小費用二部マッチングを比較する
-13. 最後にpool、MySQL、nginx、compiler設定をprofileに基づいて調整する
+4. 最新statusをcurrent-state化し、未送信statusがない通知pollの履歴lookupとpayload再構築をなくす
+5. matcherへ地域間の距離上限を追加し、500 / 100 / 30msの実行間隔と組み合わせて比較する
+6. 決済へ `Idempotency-Key` を導入してGET照合をなくす
+7. 外部決済HTTPをDB transactionの外へ出し、障害時の二重決済・欠落を回復できるようにする
+8. app history、owner sales、ride作成のN+1を順に除去する
+9. current-state別表で最新statusをO(1)化する
+10. JSON long pollingで不足する場合だけSSEへ移し、状態変更時の即時pushまで実装する
+11. 貪欲matcherと最小費用二部マッチングを比較する
+12. 最後にpool、MySQL、nginx、compiler設定をprofileに基づいて調整する
 
 ## 記録ルール
 

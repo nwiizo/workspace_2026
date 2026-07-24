@@ -842,6 +842,7 @@ retryは一時的な通信失敗時に同じ処理を再試行すること、bac
 | [17-coordinate-transition-query.md](./tuning/17-coordinate-transition-query.md) | 通常座標のstatus取得を除き、遷移候補だけlock後にcurrent read | 3走98,311–98,628点、中央値98,580点。直前版比+6.6% | 実測n=3、中央値を推定代表値に使用 |
 | [18-latest-location-cache.md](./tuning/18-latest-location-cache.md) | 最新座標をcurrent-state表 + process cacheへ分離し、2秒再同期・評価response body tracker・initialize gateを追加 | 最終3走96,888–98,483点、中央値96,926点。nearby SQLは最終run例8.079ms | エラー0の実測n=3。時間依存cooldown、handler-scope guard、暫定cache中央値103,683点は正当性反例により不採用 |
 | [19-status-semantic-order.md](./tuning/19-status-semantic-order.md) | 通知と最新statusをwall-clock順からENUMの状態遷移順へ変更 | 3走89,539–99,895点、中央値98,338点。CODE=11は0件 | 実測n=3。診断runのCODE=11を回帰テストで再現し、app / chair両経路を検証 |
+| [20-chair-stats-current-state.md](./tuning/20-chair-stats-current-state.md) | chair statsを評価時差分更新 + 主キーreadへ変更 | 最終3走98,386–99,944点、中央値98,452点、全runエラー0。stats SQL累積は約89%減 | 実測n=3。旧中央値101,984点から約3.5%低下したためスコア寄与は未確定 |
 | [80-rust-implementation.md](./tuning/80-rust-implementation.md) | Rust / sqlxとrelease buildの知識 | 再build 30分52秒→11.02秒 | build時間の実測。スコア推定対象外 |
 | [90-local-environment.md](./tuning/90-local-environment.md) | build context、BuildKit、固定Colima資源 | context 467MB→32.5KB | sizeの実測。スコア推定対象外 |
 

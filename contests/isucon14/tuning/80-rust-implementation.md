@@ -1018,6 +1018,43 @@ interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
 task内のDB errorはprocessをpanicさせずwarnへ記録します。ただしwarnを握りつぶして
 正しいとは扱いません。3秒収束を超える連続失敗を検知するmetricsは今後必要です。
 
+## 頻繁に読む集計値は変更点で更新する
+
+Benchmark 20では、app通知のたびに履歴をJOINしていたchair statsを
+`chair_stats` の主キー1行へ移しました。Rust handler側で重要なのは、単に
+`HashMap` へcacheすることではなく、どのtransactionで値が変わるかを見つけることです。
+
+この実装では次を同じMySQL transactionに置いています。
+
+1. `rides.evaluation` の確定
+2. `COMPLETED` statusの追加
+3. `chair_stats` の件数と評価合計の加算
+
+途中の決済やSQLが失敗すれば3つともrollbackされます。commit後にTokio taskへ更新を
+投げる方式はHTTPを早く返せますが、process停止やtask失敗で履歴と集計がずれるため、
+厳密一致が必要な値には使いませんでした。
+
+差分更新の条件もbackfillと揃える必要があります。評価APIは最新statusが `ARRIVED`
+であることを確認しますが、それだけでは履歴途中の `CARRYING` が必ず存在するとは
+限りません。差分SQLでも `CARRYING` の存在を確認し、同じtransactionで追加する
+`COMPLETED` と合わせて、再構築時と同じ3 statusを完了条件にしました。
+
+起動時のrepairもUPSERTだけでは不十分です。履歴集計に現れない余分なrowはUPSERTの
+対象にならず残るためです。transaction内の `DELETE` と履歴からの `INSERT` で全体を
+置換すると、欠損、誤値、余分なrowを同じ定義へ戻せます。回帰scriptではこれらの故障と
+決済失敗時rollback、再送時の非加算を実際に注入して確認しています。
+
+平均をcacheするときは平均そのものではなく、整数の件数と合計を持つと再計算できます。
+
+```text
+average = total_evaluation_sum / total_rides_count
+```
+
+これにより浮動小数点の丸めを更新ごとに累積せず、履歴からのbackfillとも整数で
+比較できます。RustではSQLから `i64` と `f64` を受ける型を分け、最後にAPI型の
+`i32` へ変換しています。件数が `i32` の上限へ近づく運用では、API schemaを含めて
+overflow方針を先に決める必要があります。
+
 ## 避けるショートカット
 
 - N+1を無制限の `tokio::spawn` で隠す
