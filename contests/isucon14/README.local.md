@@ -135,6 +135,28 @@ Rust DockerfileはBuildKitのcache mountへ次を保存します。
 
 詳細な理由と計測値は [ローカル環境の最適化記録](./tuning/90-local-environment.md) に記載しています。
 
+#### MySQLのcommit耐久性
+
+ローカル既定値は `innodb_flush_log_at_trx_commit=2`、`sync_binlog=0` です。
+replicationを使わず、`POST /api/initialize` で初期データへ戻せる競技環境で
+commit待ちを減らす設定です。各設定を60秒ベンチで3回ずつ比較したところ、
+完全同期 `1 / 1` の中央値53,198点に対して `2 / 0` は60,102点で、約13.0%
+改善しました。得点範囲は一部重なるため、確定的な差ではなく同じホストでの
+採用判断です。MySQLは8.4.10のimage digestへ固定しています。
+
+この設定ではOS・電源障害時に直近のcommit済みtransactionやbinary logを失う
+可能性があります。業務データを保持するDB向けの既定値ではありません。
+完全なcommit耐久性を優先して起動する場合は次のように上書きします。
+
+```sh
+MYSQL_INNODB_FLUSH_LOG_AT_TRX_COMMIT=1 \
+MYSQL_SYNC_BINLOG=1 \
+./scripts/up.sh
+```
+
+設定値、COMMITログ、リスク、他の選択肢は
+[MySQLのCOMMIT永続化](./tuning/13-mysql-commit-durability.md) に記録しています。
+
 ### 2. ビルドと起動
 
 ```sh
@@ -214,12 +236,14 @@ RESET=1 ./scripts/down.sh
 | 通知polling間隔比較 | 30msを維持。100msは14,611、50msは6,986・`CODE=31` 1件 |
 | matcher間隔比較 | 500msを維持。100ms中央値53,943.5、30msは41,016 |
 | 最新statusのcovering INDEX | 実行計画は改善したが45,075点のため不採用 |
+| MySQL commit同期の緩和 | 3走中央値53,198→60,102点（+13.0%）、`COMMIT`平均中央値48.6%減 |
 
 初回の初期60秒走行ではMySQLのqueryが十数秒以上へ遅延し、ベンチマーカーの期限を
 超えました。同じ初期revisionを外部コンテナの大きな共有負荷がない条件で再計測
 すると5,906点で完走しました。この差をコード改善の効果とは扱いません。INDEX、
 空通知polling、owner距離集計、N+1削減、matcherを1変更ずつ計測しました。
-最新改善版の静穏時実測は53,198点です。スコアには走行ごとの揺れがあるため、
+最新改善版の `2 / 0` は3走で58,220–66,167点、中央値60,102点です。スコアには
+走行ごとの揺れがあるため、
 変更の判断には実行計画、エラーログ、HTTP件数、transaction累積時間も併用して
 います。詳細は [TUNING.md](./TUNING.md) からベンチマーク単位の記録を参照して
 ください。

@@ -118,6 +118,7 @@ matcherは単純なマンハッタン距離だけでなく、椅子モデルのs
 | [10-notification-retry-interval.md](./tuning/10-notification-retry-interval.md) | 通知pollingを30 / 50 / 100msで比較 | 30msを維持、50 / 100msは不採用 |
 | [11-matcher-interval.md](./tuning/11-matcher-interval.md) | matcherを500 / 100 / 30msで比較 | 500msを維持、30msは41,016点へ悪化 |
 | [12-status-covering-index.md](./tuning/12-status-covering-index.md) | 最新status検索をcovering INDEX化 | 実行計画は改善、45,075点のため不採用 |
+| [13-mysql-commit-durability.md](./tuning/13-mysql-commit-durability.md) | redo / binary logのcommit同期を緩和 | 3走中央値53,198→60,102点、`COMMIT`平均中央値48.6%減 |
 | [80-rust-implementation.md](./tuning/80-rust-implementation.md) | Rust / sqlxとrelease buildの知識 | 再build 30分52秒→11.02秒 |
 | [90-local-environment.md](./tuning/90-local-environment.md) | build context、BuildKit、固定Colima資源 | context 467MB→32.5KB |
 
