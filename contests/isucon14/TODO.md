@@ -2,7 +2,7 @@
 
 公式 Rust 実装へ最初の INDEX と通知 polling の改善を加えた現在の作業ツリーを、正当性を維持したまま最大スコアまで段階的に改善するためのバックログです。
 
-最終ソース監査日: 2026-07-24
+最終ソース監査日: 2026-07-25
 
 ## 最適化の目的と制約
 
@@ -97,6 +97,21 @@
   - pickupとdestinationが同一のrideも `PICKUP -> CARRYING -> ARRIVED` へ進むことを統合確認
   - 2本の並行座標更新を同じride lockで待たせても `PICKUP` は1行だけ
   - 詳細: [`tuning/17-coordinate-transition-query.md`](./tuning/17-coordinate-transition-query.md)
+- [x] nearby用の最新座標をcurrent-state表とprocess内cacheへ分離
+  - 変更前の `LATERAL` は候補42台ごとに平均166履歴を読みsortし、単発約26.4ms
+  - active状態と割当可否はcacheせず、DBから毎回最新値を取得
+  - 履歴とcurrent rowを同じtransactionで更新し、cacheをcommit後と2秒間隔で同期
+  - canonical orderは全経路で `(created_at DESC, location_id DESC)`
+  - 評価response bodyまで保持するtrackerを含む最終エラー0の3走: 96,888 / 96,926 / 98,483点
+  - 観測範囲96,888–98,483点、推定代表値の中央値96,926点
+  - 直前採用版中央値98,580点から-1,654点、約-1.7%。write amplificationを次のP0へ残す
+  - 最終run例のnearby SQL平均8.079ms、current UPDATE平均0.744ms
+  - DB直接更新の故障注入は最終再実行で1.693秒、同時刻tieは1.651秒でcacheへ収束
+  - busy-chair `CODE=30` のWARN本文を特定し、評価response bodyのpoll / dropまでprocess trackerで除外
+  - 既存volumeの欠損rowと古いrowを起動時の冪等backfillで修復する故障注入も通過
+  - 500ms / 1秒cooldownは評価処理時間に正しさが依存するため不採用
+  - initializeは全APIと再同期を共通maintenance gateで排他
+  - 詳細: [`tuning/18-latest-location-cache.md`](./tuning/18-latest-location-cache.md)
 - [x] nearbyの集合SQL、chair statsの集約SQL、batch matcherを実装
 - [x] 上記3変更を別々のBenchmarkとして正当性・性能検証する
 
@@ -105,11 +120,11 @@
 | 優先度 | 対象 | 現在の処理 | 主な問題 |
 |---|---|---|---|
 | P0 | `internal_get_matching` | 64件batch + 近傍優先、外部pollは500ms | 空き定義の集約、500msの最小待ち |
-| P0 | `app_get_nearby_chairs` | `evaluation IS NULL` + `LATERAL` の集合SQL、writer直列化済み | 最終runでも1,838回・累積82.451秒・平均44.859ms。最新位置履歴を100行超/chair読み、sortが残る |
+| P0 | `app_get_nearby_chairs` | 最新座標はcurrent-state表 + process cache、active / 割当可否はDB、評価response送信中だけtrackerで除外 | 最終run例8.079ms。ride antijoinとtracker確認の内訳を測る |
 | P0 | 通知2経路 | 30ms pollingごとに認証、最新ride、status、表示データを取得 | 60秒で通知GET 34,360回、同じレスポンスの再計算 |
 | P0 | `get_chair_stats` | 1集約SQLを実装・ベンチ検証済み | 初期データ全件の旧実装との照合は未実施 |
 | P0 | `app_post_ride_evaluation` | DB transaction中に外部決済HTTPと最大5回の100ms sleep | connection・snapshot・lockを外部I/O中も保持 |
-| P0 | `chair_post_coordinate` | 通常2 SQL、遷移候補だけride lock + 最新status再読 | HTTP応答と永続化が同期し、全椅子の高頻度INSERTが残る |
+| P0 | `chair_post_coordinate` | 履歴INSERT + current UPDATE、遷移候補だけride lock + 最新status再読 | current UPDATE平均0.744msとrow-lock待ち。write amplificationを減らす |
 | P1 | `app_get_rides` | rideごとにstatus、coupon、chair、ownerを取得 | 履歴増加に比例するN+1 |
 | P1 | `owner_get_sales` | ownerのchairごとに完了rideを取得 | N+1、read transactionが暗黙ROLLBACK |
 | P1 | `app_post_rides` | userの全rideとride別最新statusを取得 | ライド作成ごとに履歴全体を再走査 |
@@ -537,8 +552,21 @@
   - queryだけの中央値100,310点は競合反例があるため不採用
   - 全status writerをride row lockへ合流させ、statusもcurrent/locking readする最終版はエラー0の3走中央値98,580点
   - 詳細: [`tuning/16-nearby-evaluation-filter.md`](./tuning/16-nearby-evaluation-filter.md)
-- [ ] 座標だけを最大3秒cacheし、`is_active` と割当可否は毎回最新状態を合成する案を比較する
+- [x] 座標をcurrent-state表とprocess内cacheへ置き、`is_active` と割当可否は毎回合成する
+  - `LATERAL` の単発約26.4msに対し、座標を外した候補queryは約4.79ms
+- 評価response bodyまで保持するtrackerを含む最終エラー0の3走中央値96,926点、最終run例のnearby SQL平均8.079ms
+  - 起動、initialize、動的chair、座標更新、2秒再同期、process再起動を確認
+  - 詳細: [`tuning/18-latest-location-cache.md`](./tuning/18-latest-location-cache.md)
 - [ ] nearbyレスポンス全体の3秒cacheは割当済み椅子を返すため採用しない
+- [x] `CODE=30` のWARN本文を保存し、評価commitとbenchmarker状態更新の競合と特定する
+- [x] 評価後cooldownを500ms / 1秒で比較し、処理時間依存のため両方を不採用に戻す
+- [x] 評価handler開始からresponse bodyのpoll / dropまでchairをprocess trackerへ登録し、RAII guardで全終了経路から解除する
+- [x] 60秒3走でprevalidation、`CODE=30`、error mapがすべて正常なことを再確認する
+- [x] initializeのtable再作成中は、全API requestと定期再同期をmaintenance gateで待たせる
+- [ ] latest-coordinate cacheの `RwLock` read / write待機時間と保持時間を計測する
+- [x] 共有current-state表を追加し、複数processも2秒以内に収束できる経路を作る
+- [ ] current UPDATEのrow-lock待機時間とcoordinate transaction p95 / p99を計測する
+- [ ] current row更新のcoalescing / queue化で3秒収束と履歴完全性を維持できるか比較する
 
 ### JSON通知の短期改善
 
@@ -871,11 +899,12 @@
 
 ## 推奨する直近の実行順
 
-1. nearbyの最新位置で、既存 `(chair_id, created_at)` のbackward scan可否とsortが残る理由を
-   `EXPLAIN ANALYZE` で特定し、必要ならprojectionを狭めたcovering案を単独比較する
-2. INDEXだけで不足する場合、chairごとのcurrent location別表と履歴tableを同じtransactionで更新する
-3. chair statsと最新statusを含む通知payload cacheを実装し、30ms pollingよりDB負荷と通知遅延が減るか確認する
-4. 座標更新の非同期queueとbulk INSERTを単独実験し、3秒制約とstatus遷移を検証する
+1. current UPDATEのrow-lock待機とcoordinate transaction p50 / p95 / p99を診断runで採取する
+2. current rowをper-chair順序付きqueueでcoalesceし、3秒収束・全履歴・crash整合性を維持したまま
+39,013回、累積29.033秒のwrite amplificationを減らせるか単独比較する
+3. latest-coordinate cacheの `RwLock` とmaintenance gateの待機・保持時間を計測し、
+   2秒再同期時のglobal stallを定量化する
+4. chair statsと最新statusを含む通知payload cacheを実装し、30ms pollingよりDB負荷と通知遅延が減るか確認する
 5. matcherへ地域間の距離上限を追加し、500 / 100 / 30msの実行間隔と組み合わせて比較する
 6. 決済へ `Idempotency-Key` を導入してGET照合をなくす
 7. 外部決済HTTPをDB transactionの外へ出し、障害時の二重決済・欠落を回復できるようにする

@@ -48,6 +48,7 @@ git -C "$source_dir/isucon14" archive HEAD | tar -x -C contests/isucon14
 | `scripts/compose.sh` | Compose plugin / standalone Compose の差を吸収 |
 | `scripts/up.sh` / `down.sh` | 起動、停止、DBを含む完全初期化 |
 | `scripts/smoke-test.sh` | トップ画面と初期化 API の疎通確認 |
+| `scripts/test-latest-location-reconciliation.sh` | commit後のcache更新欠落と同時刻tie-breakの故障注入 |
 | `scripts/benchmark.sh` | 決済モックを含む公式ベンチマーカーの実行 |
 | `.dockerignore` / `webapp/rust/.dockerignore` | Dockerへ不要なソース・`target/` を送らない |
 
@@ -57,9 +58,12 @@ git -C "$source_dir/isucon14" archive HEAD | tar -x -C contests/isucon14
 
 - Docker Engine または Docker Desktop
 - Docker Compose v2（`docker compose` または `docker-compose`）
+- `curl`（疎通確認）、`jq`とTime::HiResを含むPerl（最新位置の故障注入テスト）
 - 初回ビルド用のインターネット接続
 
 Rust、Go、Node.js、pnpm をホストへインストールする必要はありません。
+ただし、後述のPlaywright CLIによる任意の画面確認にはNode.jsとnpmの
+`npx`を使用します。Docker環境の起動とベンチマークだけなら不要です。
 
 この環境が取得するコンテナイメージはすべて公開イメージです。操作スクリプトは `docker/client-config/config.json` を使うため、ホスト側のレジストリ認証情報を読み込んだり変更したりしません。
 
@@ -182,6 +186,10 @@ cd contests/isucon14
 # フロントエンドと Rust 初期化 API の疎通確認
 ./scripts/smoke-test.sh
 
+# DBだけが更新された状態から2秒再同期で復旧できることを確認
+# 注意: 開始時と終了時にPOST /api/initializeを呼び、ローカルデータを初期化する
+./scripts/test-latest-location-reconciliation.sh
+
 # 公式ベンチマーカーによる短い動作確認
 ./scripts/benchmark.sh 10
 
@@ -190,6 +198,9 @@ cd contests/isucon14
 ```
 
 走行時間は引数または環境変数で指定します。省略時は公式と同じ 60 秒です。
+`test-latest-location-reconciliation.sh` は故障注入前後にDBを公式初期データへ戻すため、
+保持したいローカルデータがある環境では実行しないでください。使い捨てのISUCON
+検証stackを対象にします。
 
 ```sh
 ./scripts/benchmark.sh 10
@@ -216,7 +227,7 @@ RESET=1 ./scripts/down.sh
 
 ## ローカルでの検証結果
 
-2026-07-24 に Colima（Apple Silicon、4 CPU / 4 GiB）で次を確認しました。スコアはホスト性能に依存します。
+2026-07-24〜25 に Colima（Apple Silicon、4 CPU / 4 GiB）で次を確認しました。スコアはホスト性能に依存します。
 
 | 確認 | 結果 |
 |---|---|
@@ -241,6 +252,7 @@ RESET=1 ./scripts/down.sh
 | `coupons(used_by)` INDEX | 3走88,805–100,606点、中央値93,606点（直前中央値比+16.5%）、全runエラー0 |
 | nearbyの未完了ride判定 + 競合安全化 | エラー0の3走98,311–98,628点、中央値98,580点（直前採用版比+5.3%） |
 | 座標遷移queryの絞り込み | 通常座標のstatus取得を除去し、候補だけlocking read。直前版中央値92,484→98,580点（+6.6%） |
+| nearby最新座標cache + current-state表 | 評価response bodyまで保持するtrackerを含む最終3走96,888–98,483点、中央値96,926点、全runエラー0。nearby SQL平均44.859→最終run例8.079ms |
 
 初回の初期60秒走行ではMySQLのqueryが十数秒以上へ遅延し、ベンチマーカーの期限を
 超えました。同じ初期revisionを外部コンテナの大きな共有負荷がない条件で再計測
@@ -250,10 +262,19 @@ RESET=1 ./scripts/down.sh
 `coupons(used_by)` INDEXを維持し、nearbyの未完了ride判定から最新statusの
 相関subqueryを除いています。完了後の遅延status追記を防ぐため、状態を変更する
 全writerをride row lockへ合流させ、座標更新はpickup / destination候補だけlock後に
-最新statusをlocking readで再読します。エラー0の3走は98,311–98,628点、
-中央値98,580点でした。
+最新statusをlocking readで再読します。さらに、全位置履歴はDBへ残したまま、
+最新座標を1 chair 1 rowの `chair_current_locations` とprocess内cacheへ分離しました。
+履歴とcurrent rowは同じtransactionで更新し、cacheはcommit後に即時更新したうえで
+2秒ごとにDBから再同期します。active状態と割当可否は毎回DBから読みます。
+評価transactionが外部決済を待っている間はprocess内trackerで該当chairを明示的に
+nearbyから除外します。RAII guardはhandlerのローカル変数ではなく評価response bodyへ
+移し、Axumがbodyを消費し終えるか、切断でbodyをdropした時点で解除します。固定時間の
+cooldownは処理時間によって早過ぎたり遅過ぎたりするため不採用に戻しました。
+エラー0の最終3走は96,888 / 96,926 / 98,483点、中央値96,926点でした。
 queryだけを変えた暫定版の中央値100,310点は競合反例があるため、採用スコアには
 含めていません。
+process cacheだけの暫定版中央値103,683点も、`CODE=30` とcommit後cache更新欠落の
+反例があるため、最終採用値には含めていません。
 これは今回の3走から推定した代表値で、最小値–最大値は観測範囲であり、将来の
 保証範囲ではありません。
 同一条件が1走だけの過去スコアは実測値として残し、典型値は推定していません。

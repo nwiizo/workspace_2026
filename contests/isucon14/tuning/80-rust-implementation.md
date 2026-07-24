@@ -854,6 +854,162 @@ cacheの有無で数字の意味が変わるため、最低3種類を分けま�
 9. 最後にrelease profileを1設定ずつ比較する
 10. Docker buildはsource rebuild、dependency rebuild、final image sizeを別々に測る
 
+## `Arc<RwLock<HashMap>>` とDB current-state表を組み合わせる
+
+Benchmark 18では、nearbyのたびに `chair_locations` 履歴をsortする代わりに、
+最新座標1件をprocess内へ保持しました。ただしprocess cacheだけではcommit後のtask
+cancellationで更新を失うため、DBにも1 chair 1 rowのcurrent-state表を持ちます。
+
+### `Arc` が共有するもの
+
+`AppState` はAxumのrouter、middleware、handlerへcloneされます。`HashMap` 自体を
+cloneすると、それぞれ別のcacheになり更新が伝わりません。
+
+```rust
+#[derive(Clone)]
+struct LatestChairLocationCache {
+    inner: Arc<RwLock<HashMap<String, LatestChairLocation>>>,
+}
+```
+
+`Arc` のcloneはHashMap全体を複製せず、同じallocationを参照する所有者数を増やします。
+thread間共有に必要なatomic reference countを使うため、単なる `Rc` ではありません。
+
+### `RwLock` を選んだ理由
+
+nearbyはread、座標更新はwriteです。`RwLock` は複数readerを同時に許し、writerだけを
+排他にします。今回のcritical sectionはHashMap lookupまたは1 entryの更新だけです。
+
+```rust
+let coordinates = cache
+    .coordinates_for(chairs.iter().map(|chair| chair.id.as_str()))
+    .await;
+```
+
+呼び出し側へ `RwLockReadGuard` やHashMapを公開せず、copy可能な `Coordinate` だけを
+返します。型の境界でlockの保持範囲を狭めると、handlerがguardを持ったままsqlx query、
+外部HTTP、sleepをawaitする誤用を防げます。
+
+起動とinitializeはmaintenance gateで通常requestを止めたうえで全置換します。定期再同期は
+MySQL待ちの間にwrite lockを持たず、DB snapshot取得後にwrite lockを取ります。その間に
+commit後cache更新された値はversion比較でsnapshotへmergeします。これなら古いsnapshotで
+更新を消さず、DB await中に全nearby readerを止めません。再同期元は履歴8万行ではなく、
+current-state表のchair数だけで、最終run 3の観測平均は1.039msでした。このinterleavingは
+「古いDB snapshotを取得した後に新しいcache更新が入る」順序のunit testで固定しています。
+
+### commit順と記録順は同じではない
+
+2本の座標requestが同時に動くと、先に記録時刻を作ったrequestが後からcommitすることが
+あります。cache write lockを取った順だけで上書きすると、古い座標へ戻り得ます。
+
+```text
+A: recorded_at=10 ───────── commit ─ cache update
+B: recorded_at=20 ─ commit ─ cache update
+```
+
+そこで `recorded_at`、同一時刻ならlocation IDを比較し、新しいversionだけを採用します。
+DB backfill、matcher、cacheをすべて `(created_at DESC, location_id DESC)` に統一し、
+この性質をunit testで固定しました。
+
+### cacheは永続化ではない
+
+process内cacheは再起動で消え、`Arc` もprocessを越えません。そこで履歴INSERTと
+`chair_current_locations` の更新を同じtransactionに入れ、commit後は同processを
+即時更新、全processは2秒ごとにDBから収束する構成にしました。
+
+故障注入ではAPIのcache更新を通さずDBだけを更新し、最終再実行で1.693秒以内に
+nearbyへ反映されました。同一時刻のtie-breakも1.651秒で高いlocation IDへ収束しました。
+これは「通常APIが成功した」テストと異なり、commit後にfutureが止まる反例を直接試す
+integration testです。
+
+同じscriptでcurrent rowを1件削除し、別の1件を古い値へ変えてwebappだけを再起動しました。
+起動時backfillを表全体が空の場合だけに限定すると部分移行を直せません。canonical latestを
+冪等upsertし、欠損と古いrowの両方を修復する形にしています。
+
+### 固定時間より、response bodyの所有権で状態を表す
+
+評価APIはDB transaction内で外部決済を待ちます。DBのevaluation commit後からhandlerが
+responseを送り終えるまでにnearbyが走ると、DBだけを見たrequestはchairを空きと判断できます。
+最初は `rides.updated_at` から1秒待つ方法を試しましたが、更新時刻は外部HTTPより前に
+決まるため、決済が遅ければcommit時点で期限切れになります。
+
+`ActiveRideEvaluationTracker` とRAII guardを使い、成功時はguardをresponse bodyへ
+moveします。
+
+```rust
+let active_evaluation = ride
+    .chair_id
+    .clone()
+    .map(|chair_id| tracker.begin(chair_id));
+
+let response = Json(result).into_response();
+hold_active_evaluation_until_response_drop(response, active_evaluation)
+```
+
+handlerローカルだけに置く試作は、handlerが `Json` を返した時点でguardがdropし、
+その後の `IntoResponse`、body送信、client decodeまでを保持できませんでした。最終版の
+`ActiveRideEvaluationBody` は内側のAxum bodyへ `poll_frame`、`is_end_stream`、
+`size_hint` を委譲しつつguardを所有します。正常消費ではbody処理後、client切断では
+body drop時にcleanupされます。commit前の `?` による早期returnでもhandler側のguardが
+dropするため、分岐ごとにcleanupを書きません。
+
+tracker本体は同期的な短いHashMap操作だけなので `std::sync::Mutex` を使い、そのguardを
+保持したまま `.await` しません。
+
+同じchairのguardが重なっても片方のdropで消さないよう、valueはboolではなく参照数です。
+nearbyはDB query後にactive chair IDのsnapshotを取り、該当chairを除外します。
+この状態は時間に依存しませんが、1 process内だけです。水平分割する場合はDB / Redis上の
+leaseとcrash回収が別途必要です。
+
+serverが観測できるのはbody lifecycleまでで、clientがJSON decode後に更新するatomic flagの
+ACKではありません。完全なend-to-end ACKが必要ならprotocol変更が必要です。この境界を
+曖昧に「解消」とせず、body消費・dropのunit testと60秒3走エラー0を採用根拠にしました。
+
+### maintenance gateでinitializeと通常APIを分ける
+
+`POST /api/initialize` はtableをdropして作り直すため、単なるcache refreshではありません。
+通常requestや定期再同期と並行すると、旧cacheと空のcurrent-state表を同時に観測できます。
+
+全通常APIは `Arc<tokio::sync::RwLock<()>>` のread guard、initializeはwrite guardを取り、
+resetからcache再読込までを排他します。read同士は並行できるため、通常時に全APIを
+直列化しません。定期再同期もread guardを先に取り、lock順序を
+`maintenance -> reconciliation -> cache` に揃えます。
+
+このgateは安全性を上げますが、read lock取得とinitialize待ちを全APIへ追加します。
+無視できると推定せず、Tokio Consoleまたはmetricsで待機時間を次の診断対象にします。
+
+### `UPDATE 0 rows -> INSERT` がdeadlockした理由
+
+存在しないcurrent rowへ `UPDATE` すると、MySQLのREPEATABLE READでは検索範囲のgap lockを
+取ります。多数の新規chair transactionがgap lockを持ったままINSERTへ進むと、PRIMARY
+INDEXのsupremumに対するinsert intentionが循環待ちになりました。
+
+```text
+transaction A: missing key UPDATE -> gap lock -> INSERT wait
+transaction B: missing key UPDATE -> gap lock -> INSERT wait
+```
+
+短時間ベンチではMySQL error 1213が24件出ました。新規chairは最初からatomic upsert、
+既存とcacheで分かるchairだけ主キーUPDATEに分けるとdeadlockは消えました。
+
+ここから得られる一般則は、「影響行数0ならINSERT」は単一requestでは自然でも、
+REPEATABLE READのgap lockと多数の並行transactionを含めると安全とは限らないことです。
+SQLの行数だけでなく、lockを取る順序を `SHOW ENGINE INNODB STATUS` で確認します。
+
+### 定期taskの作り方
+
+再同期は `tokio::time::interval` を使い、`MissedTickBehavior::Skip` を指定します。
+DB遅延で1回遅れたとき、溜まったtickを連続実行してさらにDBへ負荷をかけず、古いtickを
+飛ばして次の周期へ戻すためです。
+
+```rust
+let mut interval = tokio::time::interval(Duration::from_secs(2));
+interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
+```
+
+task内のDB errorはprocessをpanicさせずwarnへ記録します。ただしwarnを握りつぶして
+正しいとは扱いません。3秒収束を超える連続失敗を検知するmetricsは今後必要です。
+
 ## 避けるショートカット
 
 - N+1を無制限の `tokio::spawn` で隠す

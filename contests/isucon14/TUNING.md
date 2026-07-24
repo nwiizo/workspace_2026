@@ -19,7 +19,7 @@
 
 | 項目 | 内容 |
 |---|---|
-| 日時 | 2026-07-24 |
+| 日時 | 2026-07-25 |
 | ホスト | Apple Silicon macOS / Colima |
 | Colima | 4 CPU / 4 GiB |
 | 構成 | Rust、MySQL、nginx、matcher、benchmarkを同一Dockerホストで実行 |
@@ -73,9 +73,9 @@
 | 改善対象 | 現在の状態 | 次の検証 |
 |---|---|---|
 | 高頻度検索へのINDEX | 主要INDEX、`coupons(code)`、`coupons(used_by)` を追加済み。`users(access_token)` と `users(invitation_code)` は既存の `UNIQUE` INDEXで充足 | prepared statement統計で次の全件走査を探し、未使用INDEXを増やさない |
-| nearbyの2N+1解消 | `LATERAL` と `NOT EXISTS` で1 SQL化。未完了判定を `rides.evaluation IS NULL` へ単純化し、全status writerをride row lockで直列化済み | 最新位置の履歴走査とsortが残る理由を実行計画から特定 |
+| nearbyの2N+1解消 | 最新座標はcurrent-state表 + process cache、active / 割当可否はDBで合成。評価response bodyの終了までtrackerで除外 | ride antijoinとtracker確認の内訳を計測 |
 | owner椅子一覧をownerで先に絞る | 実装・単独ベンチ済み | 最新位置と累積距離のcurrent-state化 |
-| 最新位置と累積距離をUPSERT管理 | 未実装 | 履歴INSERTと同じtransactionでcurrent-stateを更新 |
+| 最新位置をcurrent-state表で管理 | 履歴INSERTと同じtransactionで更新し、cacheを2秒ごとに再同期 | current UPDATEのrow-lock待ちとwrite amplificationを削減 |
 | pending rideと空き椅子のbatch matching | 最大64件、近傍優先まで実装済み | 地域間の距離上限、実行間隔、二部マッチングを比較 |
 | JSON通知のcache | 未実装 | 同じpayloadの再計算をなくし、long pollingをSSEより先に比較 |
 | 座標更新の非同期・bulk INSERT | 通常経路を4 SQLから2 SQLへ削減。pickup / destination候補だけlockし、statusをcurrent readする | per-chair順序付きqueueと3秒以内のbulk反映を実験 |
@@ -481,6 +481,48 @@ subqueryやCTEの途中結果を一時的な表として作る処理です。同
 その後どれだけ再利用されるかを見ます。相関subqueryの内側で何千回もmaterialize
 される場合と、request中に一度だけ小さな表を作る場合では意味が異なります。
 
+#### 履歴table・current state・cache
+
+履歴tableは過去の変更をすべて残し、current stateは現在必要な1件だけを表します。
+ISUCON14の `chair_locations` はownerの累積距離に全履歴が必要ですが、nearbyとmatcherは
+最新座標1件だけを使います。
+
+```text
+履歴: chair_locations             -> 全移動、永続化、初期backfill
+共有current: chair_current_locations -> matcher、cache再同期元
+process cache                      -> nearbyの最新座標
+即時判定: chairs / rides           -> active、割当可否
+処理中状態: ActiveRideEvaluationTracker -> 評価response body lifecycleまで再掲載を抑制
+```
+
+同じ履歴から高頻度に現在状態を再構成すると、INDEXがあってもloop、sort、decodeが
+繰り返されます。current stateを別に持つとreadは短くなりますが、更新漏れ、順序逆転、
+初期化、process再起動、複数process間の共有を設計する必要があります。
+
+cacheは「DBより速いHashMap」だけではありません。何を古くしてよいか、正解データは
+どこか、cache miss時にどうするか、いつinvalidateまたは更新するかを定義した仕組みです。
+Benchmark 18では座標だけをcacheし、即時性が必要なactive状態と割当可否は毎回DBから
+読みます。DB commit後にrequest taskが止まっても、共有current-state表から2秒ごとに
+全置換して3秒以内の自己修復経路を持ちます。
+
+#### cacheの復元・更新順序・process境界
+
+process内cacheはprocess終了で消えます。履歴とcurrent-state表を同じtransactionで更新し、
+起動時と `POST /api/initialize` 後にcurrent-state表から復元します。DB commit成功後だけ
+cacheを即時更新し、rollbackした座標を公開しません。
+
+並行requestは記録時刻順にcommitするとは限りません。新しい座標Bが先にcacheへ入り、
+古い座標Aが後から到着しても、`recorded_at` とlocation IDを比較してBを維持します。
+これはlast writer winsを「lock取得順」ではなく、明示したversion順で決める考え方です。
+
+`Arc<RwLock<HashMap<...>>>` の `Arc` は同じcacheの所有権をhandler間で共有し、
+`RwLock` は複数readまたは1 writeを許します。lock guardを保持したままDBやHTTPを
+awaitすると待ち行列を広げるため、通常経路ではHashMap操作だけに限定します。
+
+process内cacheは別processへ即時伝播しません。今回追加したDB current-state表から
+2秒ごとに収束しますが、即時共有が必要ならRedisや更新eventを比較します。単一processの
+即時更新だけを、水平分割後の正しさへ一般化しません。
+
 #### window関数
 
 行をgroup内で並べ、前後の行を参照しながら順位や累積値を計算する機能です。
@@ -778,6 +820,7 @@ retryは一時的な通信失敗時に同じ処理を再試行すること、bac
 | [15-coupon-used-by-index.md](./tuning/15-coupon-used-by-index.md) | rideに適用済みのcoupon検索をB-tree lookup化 | 3走88,805–100,606点、中央値93,606点、エラー0 | 実測n=3、中央値を推定代表値に使用 |
 | [16-nearby-evaluation-filter.md](./tuning/16-nearby-evaluation-filter.md) | nearbyのstatus相関subqueryを除去し、全status writerをride row lockで直列化 | エラー0の3走98,311–98,628点、中央値98,580点 | 実測n=3、中央値を推定代表値に使用。queryだけの100,310点は競合反例により不採用 |
 | [17-coordinate-transition-query.md](./tuning/17-coordinate-transition-query.md) | 通常座標のstatus取得を除き、遷移候補だけlock後にcurrent read | 3走98,311–98,628点、中央値98,580点。直前版比+6.6% | 実測n=3、中央値を推定代表値に使用 |
+| [18-latest-location-cache.md](./tuning/18-latest-location-cache.md) | 最新座標をcurrent-state表 + process cacheへ分離し、2秒再同期・評価response body tracker・initialize gateを追加 | 最終3走96,888–98,483点、中央値96,926点。nearby SQLは最終run例8.079ms | エラー0の実測n=3。時間依存cooldown、handler-scope guard、暫定cache中央値103,683点は正当性反例により不採用 |
 | [80-rust-implementation.md](./tuning/80-rust-implementation.md) | Rust / sqlxとrelease buildの知識 | 再build 30分52秒→11.02秒 | build時間の実測。スコア推定対象外 |
 | [90-local-environment.md](./tuning/90-local-environment.md) | build context、BuildKit、固定Colima資源 | context 467MB→32.5KB | sizeの実測。スコア推定対象外 |
 
