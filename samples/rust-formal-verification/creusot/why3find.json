@@ -1,0 +1,13 @@
+{
+  "fast": 0.2,
+  "time": 1,
+  "depth": 6,
+  "packages": ["creusot"],
+  "provers": ["alt-ergo"],
+  "tactics": ["compute_specified", "split_vc"],
+  "drivers": [],
+  "warnoff": ["unused_variable", "axiom_abstract"],
+  "profile": [
+    { "prover": "alt-ergo", "size": 16, "time": 0.232 }
+  ]
+}

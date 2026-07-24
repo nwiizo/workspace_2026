@@ -1,0 +1,18 @@
+[package]
+name = "kani-discount-verification"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace]
+members = ["service"]
+resolver = "3"
+
+[features]
+failing = []
+
+[dev-dependencies]
+proptest = "1.11.0"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)"] }

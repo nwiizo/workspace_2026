@@ -11,6 +11,7 @@ The laboratory. Expect explosions.
 | [ory-kratos-verification](./ory-kratos-verification/) | Identity management verification with Ory Kratos | Docker, Ory Kratos, Hydra |
 | [ory-keto-verification](./ory-keto-verification/) | Authorization (Zanzibar) verification with Ory Keto | Docker, Ory Keto |
 | [cargo-mutants-sample](./cargo-mutants-sample/) | Mutation testing experiments | Rust, cargo-mutants |
+| [rust-formal-verification](./rust-formal-verification/) | Rust formal verification tool evaluation with executable examples | Rust, Kani, Creusot, Prusti, Verus, Flux |
 | [thirty-seconds-silence](./thirty-seconds-silence/) | Blog sample code: hypothesis-driven problem solving | Python |
 
 ## Highlights

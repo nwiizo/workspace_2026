@@ -1,0 +1,18 @@
+[package]
+name = "flux-discount-service"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+axum = "0.8.8"
+flux-discount-verification = { path = ".." }
+serde = { version = "1.0", features = ["derive"] }
+tokio = { version = "1.49", features = ["macros", "net", "rt-multi-thread"] }
+
+[dev-dependencies]
+serde_json = "1.0"
+tower = { version = "0.5.2", features = ["util"] }
+
+[package.metadata.flux]
+enabled = false

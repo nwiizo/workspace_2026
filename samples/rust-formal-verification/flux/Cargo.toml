@@ -1,0 +1,24 @@
+[package]
+name = "flux-discount-verification"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace]
+members = ["service"]
+resolver = "3"
+
+[dependencies]
+flux-rs = { git = "https://github.com/flux-rs/flux.git", rev = "85ae8dca62b561bd49ed0a96d057625451539ad1" }
+
+[package.metadata.flux]
+enabled = true
+check_overflow = "strict"
+
+[features]
+failing = []
+
+[[bin]]
+name = "failing"
+path = "src/bin/failing.rs"
+required-features = ["failing"]
