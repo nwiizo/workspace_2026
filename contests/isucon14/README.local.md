@@ -48,6 +48,7 @@ git -C "$source_dir/isucon14" archive HEAD | tar -x -C contests/isucon14
 | `scripts/compose.sh` | Compose plugin / standalone Compose の差を吸収 |
 | `scripts/up.sh` / `down.sh` | 起動、停止、DBを含む完全初期化 |
 | `scripts/smoke-test.sh` | トップ画面と初期化 API の疎通確認 |
+| `scripts/test-auth-cache.sh` | 初期token、動的登録、initialize失敗・成功後の認証cacheをHTTPとSQL回数で確認 |
 | `scripts/test-latest-location-reconciliation.sh` | commit後のcache更新欠落と同時刻tie-breakの故障注入 |
 | `scripts/test-status-notification-order.sh` | 時刻逆転時もapp / chair通知が状態遷移順になることをHTTPで確認 |
 | `scripts/test-chair-stats-consistency.sh` | 全初期chairを照合し、欠損・誤値・余分なrowを再起動で修復 |

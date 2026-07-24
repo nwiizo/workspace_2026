@@ -136,6 +136,13 @@
   - 変更前の関連query全体は約32秒だったため、実装は元へ戻して不採用
   - 単発`EXPLAIN ANALYZE`と高並行時の累積costが逆転した理由を記録
   - 詳細: [`tuning/21-notification-status-query.md`](./tuning/21-notification-status-query.md)
+- [x] user / owner / chairの認証主体をprocess内cacheへ置く
+  - 60秒3走109,454 / 102,887 / 104,612点、中央値104,612点
+  - 直前中央値98,452点から+6,160点、約+6.3%
+  - 認証SQLは139,690回・9.761秒から657回・0.069秒へ削減
+  - 起動・initialize全置換、動的userの1回fallback、stale token削除をHTTP回帰確認
+  - 全run`pass=true`だが`CODE=30`が6 / 15 / 20件あり、次のP0で原因を再計測
+  - 詳細: [`tuning/22-authentication-cache.md`](./tuning/22-authentication-cache.md)
 - [x] nearbyの集合SQL、chair statsの集約SQL、batch matcherを実装
 - [x] 上記3変更を別々のBenchmarkとして正当性・性能検証する
 
@@ -745,13 +752,17 @@
 
 ### 認証
 
-- [ ] middlewareのtoken検索回数と累積時間を利用者・椅子・owner別に計測する
+- [x] middlewareのtoken検索回数と累積時間を利用者・椅子・owner別に計測する
+  - 変更前合計139,690回・9.761秒、cache版run 3は657回・0.069秒
 - [ ] queryはレスポンスに必要な列だけ取得する
-- [ ] tokenからIDと最小属性を引くプロセス内cacheを導入する
-- [ ] initialize時に初期tokenをcacheへ再構築する
-- [ ] 動的登録時にcacheへ追加する
+- [x] tokenから認証主体を引くプロセス内cacheを導入する
+- [x] initialize時に初期tokenをcacheへ再構築する
+- [x] 動的登録された主体を最初のcache missで追加する
 - [ ] activityやowner情報更新で古いsnapshotを使わないよう、可変属性は分離する
-- [ ] cache miss時だけDBへfallbackし、再起動後も正しく復元する
+- [x] cache miss時だけDBへfallbackし、再起動後も正しく復元する
+  - 初期userはDB queryなし、動的userは最初の1回だけDB、initialize後は旧tokenを401
+  - initialize失敗時もcacheを空のままにして、前世代だけのtokenを認証しない
+  - 複数processのinitialize invalidationは未対応なので、単一webappを検証範囲とする
 
 ## Phase 3: 現在状態を履歴検索から分離する
 
@@ -946,20 +957,24 @@
 
 ## 推奨する直近の実行順
 
-1. current UPDATEのrow-lock待機とcoordinate transaction p50 / p95 / p99を診断runで採取する
-2. current rowをper-chair順序付きqueueでcoalesceし、3秒収束・全履歴・crash整合性を維持したまま
-39,013回、累積29.033秒のwrite amplificationを減らせるか単独比較する
-3. latest-coordinate cacheの `RwLock` とmaintenance gateの待機・保持時間を計測し、
+1. auth cache版で増えた`CODE=30`のchair IDについて、評価response、tracker解除、
+   nearby応答、ベンチマーカー検査の時刻を同じ診断runで採取する
+2. 固定cooldownの推測ではなく、response完了境界または明示的な状態versionで
+   nearby競合を閉じ、エラー0の3走を確認する
+3. current UPDATEのrow-lock待機とcoordinate transaction p50 / p95 / p99を診断runで採取する
+4. current rowをper-chair順序付きqueueでcoalesceし、3秒収束・全履歴・crash整合性を維持したまま
+   39,013回、累積29.033秒のwrite amplificationを減らせるか単独比較する
+5. latest-coordinate cacheの `RwLock` とmaintenance gateの待機・保持時間を計測し、
    2秒再同期時のglobal stallを定量化する
-4. 最新statusをcurrent-state化し、未送信statusがない通知pollの履歴lookupとpayload再構築をなくす
-5. matcherへ地域間の距離上限を追加し、500 / 100 / 30msの実行間隔と組み合わせて比較する
-6. 決済へ `Idempotency-Key` を導入してGET照合をなくす
-7. 外部決済HTTPをDB transactionの外へ出し、障害時の二重決済・欠落を回復できるようにする
-8. app history、owner sales、ride作成のN+1を順に除去する
-9. current-state別表で最新statusをO(1)化する
-10. JSON long pollingで不足する場合だけSSEへ移し、状態変更時の即時pushまで実装する
-11. 貪欲matcherと最小費用二部マッチングを比較する
-12. 最後にpool、MySQL、nginx、compiler設定をprofileに基づいて調整する
+6. 最新statusをcurrent-state化し、未送信statusがない通知pollの履歴lookupとpayload再構築をなくす
+7. matcherへ地域間の距離上限を追加し、500 / 100 / 30msの実行間隔と組み合わせて比較する
+8. 決済へ `Idempotency-Key` を導入してGET照合をなくす
+9. 外部決済HTTPをDB transactionの外へ出し、障害時の二重決済・欠落を回復できるようにする
+10. app history、owner sales、ride作成のN+1を順に除去する
+11. current-state別表で最新statusをO(1)化する
+12. JSON long pollingで不足する場合だけSSEへ移し、状態変更時の即時pushまで実装する
+13. 貪欲matcherと最小費用二部マッチングを比較する
+14. 最後にpool、MySQL、nginx、compiler設定をprofileに基づいて調整する
 
 ## 記録ルール
 

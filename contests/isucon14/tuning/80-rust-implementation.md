@@ -1055,6 +1055,85 @@ average = total_evaluation_sum / total_rides_count
 `i32` へ変換しています。件数が `i32` の上限へ近づく運用では、API schemaを含めて
 overflow方針を先に決める必要があります。
 
+## 認証のcache-asideをRustで実装する
+
+Benchmark 22では、middlewareが毎request発行していたtoken検索を、`AppState` が共有する
+`AuthCache` へ移しました。60秒で約13.9万回あった認証SQLは657回まで減り、3走中央値は
+98,452点から104,612点へ約6.3%上がりました。
+
+### `Arc<RwLock<HashMap<...>>>` の役割を分けて考える
+
+```rust
+struct AuthCache {
+    users: Arc<StdRwLock<HashMap<String, User>>>,
+    owners: Arc<StdRwLock<HashMap<String, Owner>>>,
+    chairs: Arc<StdRwLock<HashMap<String, Chair>>>,
+}
+```
+
+- `HashMap`: access tokenから認証主体を探す
+- `RwLock`: 多数の同時readと、miss・refresh時の排他的writeを調整する
+- `Arc`: Axumがcloneする `AppState` 間で同じmapを共有する
+
+このlockを同期版にしたのは、guard中の処理が `get + clone` または `insert` だけだからです。
+DB queryはcache missを確認してread guardをdropしたあとに `.await` します。同期lockの
+guardを保持したまま `.await` すると、I/O待ちの間も他requestを止めるので避けます。
+
+### cache missを正本確認へ戻す
+
+```rust
+let user = if let Some(user) = auth_cache.user(access_token) {
+    user
+} else {
+    let user = query_user_by_token(pool, access_token).await?;
+    auth_cache.insert_user(user.clone());
+    user
+};
+```
+
+cache-asideでは、cacheにないことを「認証失敗」と決めず、MySQLへfallbackします。
+これによりprocess起動後に動的登録された主体や、別processが登録した主体も最初の1回で
+認証できます。
+
+同じ新tokenへ完全に同時に複数requestが来ると、複数がmissして同じSQLを発行する
+cache stampedeは残ります。ただし登録直後の最初の短い区間だけで、同じ値のinsertは
+最終状態を変えません。singleflightを入れて全tokenの通常hitへlock負荷を追加する前に、
+実際の重複miss回数を測ります。
+
+### refresh失敗時は前世代へ戻さない
+
+initializeはtableを作り直すため、途中失敗時に前のcacheを残すと、DBから消えたtokenを
+cache hitだけで認証できます。maintenance write lock取得後、初期化scriptより前に
+cacheを空へ切り替えます。
+
+scriptまたはrefreshが失敗しても旧entryは復元しません。通常APIが再開したあとはcache
+missとなり、現在DBに存在する主体だけを認証します。故障注入testでは動的userをDBから
+削除し、初期化scriptを意図的に起動失敗させても、旧cookieが401になることを確認しました。
+
+3つのmapは1命令で同時置換されません。しかしinitializeはmaintenance write lockを持ち、
+通常APIはread lockを取得できません。外側のgateにより、clientはusersだけ新しく
+chairsが古い途中状態を観測しません。
+
+cache単体のmethodだけを見て「atomic refresh」と判断せず、呼出し側のlock順序と
+公開タイミングまで追う必要があります。複数processではこのprocess内gateを共有できない
+ため、世代管理や共有invalidateが別途必要です。
+
+### `Debug` でcredentialを漏らさない
+
+`HashMap` を含む構造体に自動 `Debug` を付けると、keyのaccess tokenとモデル内tokenを
+すべて表示できます。`AuthCache` は独自 `Debug` で3種類の件数だけを出します。
+diagnostic logへstateを追加する将来変更でも、credential本文を出さないためです。
+
+### 可変データを認証identityと混ぜない
+
+既存のextension型を保つため今回はモデル全体をcacheしていますが、chairの
+`is_active` は更新されます。現在のhandlerはcached chairからIDだけを使い、active判定は
+DBで行うため正しさへ影響しません。
+
+将来cache値から `is_active` を認可判断するとstale snapshotになります。長期的には
+`AuthenticatedChair { id }` のような不変identityへ縮め、可変属性は必要なhandlerで
+正本から読む方が境界を明確にできます。
+
 ## 避けるショートカット
 
 - N+1を無制限の `tokio::spawn` で隠す
