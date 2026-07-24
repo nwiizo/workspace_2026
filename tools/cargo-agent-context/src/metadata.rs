@@ -292,9 +292,22 @@ fn first_lines(text: &str, max: usize) -> String {
         return "(empty file)".to_string();
     }
     for line in &mut lines {
-        if line.len() > 120 {
-            *line = &line[..120];
+        if let Some((end, _)) = line.char_indices().nth(120) {
+            *line = &line[..end];
         }
     }
     lines.join(" / ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::first_lines;
+
+    #[test]
+    fn convention_summary_truncates_at_utf8_boundaries() {
+        let input = "あ".repeat(121);
+        let summary = first_lines(&input, 1);
+        assert_eq!(summary.chars().count(), 120);
+        assert!(summary.chars().all(|character| character == 'あ'));
+    }
 }
