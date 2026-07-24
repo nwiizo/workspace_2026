@@ -190,6 +190,10 @@ cd contests/isucon14
 # フロントエンドと Rust 初期化 API の疎通確認
 ./scripts/smoke-test.sh
 
+# 初期token、動的user、initialize失敗・成功後の認証cacheを確認
+# 注意: DBを初期化し、故障注入中だけwebapp/sql/init.shを一時名へ退避する
+./scripts/test-auth-cache.sh
+
 # DBだけが更新された状態から2秒再同期で復旧できることを確認
 # 注意: 開始時と終了時にPOST /api/initializeを呼び、ローカルデータを初期化する
 ./scripts/test-latest-location-reconciliation.sh
@@ -214,8 +218,14 @@ cd contests/isucon14
 ```
 
 走行時間は引数または環境変数で指定します。省略時は公式と同じ 60 秒です。
-上記4つの `test-*.sh` はDBを公式初期データへ戻すため、保持したいローカルデータが
+上記5つの `test-*.sh` はDBを公式初期データへ戻すため、保持したいローカルデータが
 ある環境では実行しないでください。使い捨てのISUCON検証stackを対象にします。
+
+`test-auth-cache.sh` はinitialize失敗を再現する短い区間だけ、
+`webapp/sql/init.sh` を `init.sh.auth-cache-test-<PID>` へ退避し、通常終了とsignal trapで
+元へ戻します。`SIGKILL` やホスト停止ではtrapを実行できません。退避名が残った場合は、
+そのファイルが本来の `init.sh` であることを確認してから元の名前へ戻し、webappを
+再起動してください。退避ファイルを確認せず別の内容で上書きしないでください。
 
 chair stats照合は初期500 chairで差分0、公式prevalidationと60秒終了時の動的chairでも
 差分0でした。実装と計測は

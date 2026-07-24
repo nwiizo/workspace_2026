@@ -160,7 +160,7 @@
 | P1 | `owner_get_sales` | ownerのchairごとに完了rideを取得 | N+1、read transactionが暗黙ROLLBACK |
 | P1 | `app_post_rides` | userの全rideとride別最新statusを取得 | ライド作成ごとに履歴全体を再走査 |
 | P1 | `app_post_users` | `coupons(code)` INDEXは追加済みだが、招待回数確認で該当行全体を取得 | `COUNT` / counter化とlock範囲の縮小が未実施 |
-| P1 | 認証middleware | 全APIリクエストでtokenからDB検索 | pollingと座標送信のたびに追加SQL |
+| P1 | 認証middleware | 初期tokenはprocess cache、動的主体は最初のmissだけDB検索 | DB外のtoken失効と複数processのcache invalidationは未対応 |
 | P1 | `payment_gateway` | process共有の `reqwest::Client` へ変更済み | TCP connect回数と再利用率の直接計測は未実施 |
 | P2 | nginx / Rustログ | stock設定のまま全リクエストを処理 | 高頻度経路のログI/Oとproxy overheadが未計測 |
 | P2 | MySQL / sqlx pool | stock MySQL、pool上限50固定 | 実負荷に対するbuffer・接続数が未調整 |

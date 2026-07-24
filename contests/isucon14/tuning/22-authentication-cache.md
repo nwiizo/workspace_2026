@@ -154,6 +154,17 @@ nearbyとmatcherのactive判定は毎回DBの `chairs.is_active` を読みます
 今後handlerが可変属性を使う場合は、この前提を暗黙に広げません。cache値をIDなどの
 不変な認証identityへ縮めるか、更新時に全processへinvalidateする必要があります。
 
+### DBを直接変更した場合の失効
+
+cache hitでは毎回DBを再確認しません。そのため、運用者がSQLで主体を削除したり
+access tokenをrotationしたりしても、現在のprocessが持つ旧tokenは次のinitializeまで
+cache hitできます。現行APIには主体削除やtoken rotation endpointがなく、公式ベンチ中に
+この変更は起きないため、今回の競技スコープでは採用しました。
+
+一般運用で失効を即時反映するには、削除・rotation経路からcache entryを消すか、短いTTL、
+世代番号、共有invalidate eventのいずれかが必要です。「MySQLが正本」という説明は
+cache missと再構築時には成立しますが、hit中の即時失効まで保証する意味ではありません。
+
 ## 複数processでの注意
 
 今回検証した構成はwebapp 1 processです。別processで新しい主体が登録されても、
