@@ -203,11 +203,27 @@
   - 全run `pass=true`、`CODE=17`は0件
   - `CODE=26`は0 / 136 / 142件で、後半2走はerror予算の68% / 71%を消費
   - 詳細: [`tuning/28-username-collision-retry.md`](./tuning/28-username-collision-retry.md)
+- [x] 招待登録のcoupon gap deadlockとreward code衝突を分離して修正する
+  - 追加診断runの `CODE=17` は `POST /api/app/users` のMySQL 1213だった
+  - `SHOW ENGINE INNODB STATUS` で、異なる `INV_...` codeのtransaction同士が
+    `idx_coupons_code` の同じgapを保持し、互いのinsert intentionを待つcycleを確認
+  - 招待者の `users.invitation_code` UNIQUE行を `FOR UPDATE` し、同一codeの上限判定だけを直列化
+  - coupon全rowの `SELECT *` を `COUNT(*)` へ、招待者全列をID 1列へ縮小
+  - 最初の修正版で `NOW(3)` が同じミリ秒になったreward couponの1062を再現し、
+    一意部分を新規user IDへ変更
+  - 異なる24 codeの同時登録は全件201。同一codeの4並行登録は201が3件、400が1件
+  - 回帰テスト区間の `ER_DUP_ENTRY` と `ER_LOCK_DEADLOCK` は増分0
+  - 60秒3走99,775 / 105,304 / 102,569点、観測範囲99,775–105,304点
+  - 推定代表値の中央値102,569点、Benchmark 28比-1.6%のため高速化とは扱わない
+  - 全run `pass=true`、error map空、終了後のMySQL 1062 / 1213は0件
+  - 詳細: [`tuning/29-invitation-concurrency.md`](./tuning/29-invitation-concurrency.md)
 - [ ] `CODE=26` のowner累積距離が座標responseの受信境界より先へ進む競合を検証する
   - 期待値より実値が4–40程度大きく、直近1回の移動距離に近い例を確認
   - ベンチマーカーのcoordinate POST、world更新、owner検証の順序を同じchairで追う
   - server側はowner request開始時の座標watermarkを固定できるか検討する
   - username再試行が実行されなかったrun 3でも142件出たため、Benchmark 28の分岐とは分離する
+  - Benchmark 29前の診断3走と通常3走では再現しなかった。解決とは扱わず、
+    再発時に座標request / responseとowner集計を同じchair IDで採取する
 - [x] nearbyの集合SQL、chair statsの集約SQL、batch matcherを実装
 - [x] 上記3変更を別々のBenchmarkとして正当性・性能検証する
 
@@ -224,7 +240,7 @@
 | P1 | `app_get_rides` | rideごとにstatus、coupon、chair、ownerを取得 | 履歴増加に比例するN+1 |
 | P1 | `owner_get_sales` | ownerのchairごとに完了rideを取得し、評価responseと重なったride IDを除外 | N+1、read transactionが暗黙ROLLBACK。複数processではtracker共有が必要 |
 | P1 | `app_post_rides` | userの全rideとride別最新statusを取得 | ライド作成ごとに履歴全体を再走査 |
-| P1 | `app_post_users` | `coupons(code)` INDEXは追加済みだが、招待回数確認で該当行全体を取得 | `COUNT` / counter化とlock範囲の縮小が未実施 |
+| P2 | `app_post_users` | 招待者UNIQUE行を直列化地点にし、couponは `COUNT(*)`、rewardは新規user IDで一意化 | 現在の上限3では十分。上限や同一code集中が増えた場合だけcounterの条件付きUPDATEを比較 |
 | P1 | 認証middleware | 初期tokenはprocess cache、動的主体は最初のmissだけDB検索 | DB外のtoken失効と複数processのcache invalidationは未対応 |
 | P1 | `payment_gateway` | process共有client + ride IDの冪等POST。エラー時の履歴GETは削除済み | TCP connect回数、retry status別回数、connection再利用率の直接計測は未実施 |
 | P2 | nginx / Rustログ | stock設定のまま全リクエストを処理 | 高頻度経路のログI/Oとproxy overheadが未計測 |
@@ -839,8 +855,15 @@
 
 ### 招待とcoupon
 
-- [ ] `SELECT * FROM coupons WHERE code = ?` を `COUNT` または存在確認へ縮小する
+- [x] `SELECT * FROM coupons WHERE code = ?` を `COUNT(*)` 1値へ縮小する
+  - 招待者のUNIQUE行を先に `FOR UPDATE` し、同じcodeの並行登録だけを直列化
+  - 異なる24 codeと同一code 4件のbarrier付き回帰テストで1213増分0を確認
+  - 詳細: [`tuning/29-invitation-concurrency.md`](./tuning/29-invitation-concurrency.md)
 - [ ] 招待回数をcoupon全件から数えず、inviterのcounterを条件付きUPDATEする案を比較する
+  - 上限3の現在は最大3 rowのCOUNTなので優先度をP2へ下げる
+  - schema変更、列名なし初期dump、backfill、coupon INSERT失敗時rollbackを先に設計する
+- [x] reward coupon codeのミリ秒時刻を新規user IDへ置き換える
+  - row-lock版の並行テストで同一ミリ秒の主キー1062を再現し、変更後は1062増分0
 - [ ] 先行追加した `coupons(code)` の利用回数とwrite costを再評価する
 - [ ] 未使用coupon検索用 `(user_id, used_by, created_at)` を比較する
 - [x] `WHERE used_by = ?` 用の非unique INDEXを比較する
@@ -1037,6 +1060,8 @@
 - [ ] ownerの距離・売上・0件行
 - [ ] 並行ride作成と並行matching
 - [ ] 決済retryとexactly-once相当の結果
+- [x] 招待登録の異なる24 code同時実行、同一codeの3成功・1拒否、
+  coupon件数、MySQL 1062 / 1213増分0
 - [ ] `rides.updated_at` と履歴 `completed_at` が完全一致すること
 - [ ] 既存表へ列を追加しても列名なし初期ダンプをロードできること
 - [ ] initialize直後とwebapp再起動後

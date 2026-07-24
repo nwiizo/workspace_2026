@@ -55,6 +55,7 @@ git -C "$source_dir/isucon14" archive HEAD | tar -x -C contests/isucon14
 | `scripts/test-chair-stats-transitions.sh` | 評価の所有者認可、完了条件、決済rollback、再送時の非加算をHTTP検証 |
 | `scripts/test-owner-sales-response-boundary.sh` | 遅い決済中の評価完了時刻とowner salesの`until`境界をHTTP・決済TCP accept・InnoDB行ロック・response JSON・SQLで確認 |
 | `scripts/test-username-collision.sh` | 同じusernameを2回登録し、別user・別認証・招待couponを維持した限定再試行を確認 |
+| `scripts/test-invitation-concurrency.sh` | 異なる招待コードと同一招待コードをbarrier付きで並行登録し、上限、coupon件数、MySQL 1062 / 1213の増分0を確認 |
 | `scripts/benchmark.sh` | 決済モックを含む公式ベンチマーカーの実行 |
 | `scripts/report-endpoint-latency.sh` | 診断runのnginx timing logをendpoint別に集計 |
 | `scripts/report-coordinate-phases.sh` | 診断runのcoordinate phase、row lock、current-state writeを集計 |
@@ -223,6 +224,10 @@ cd contests/isucon14
 # 注意: 開始時と終了時にPOST /api/initializeを呼び、ローカルデータを初期化する
 ./scripts/test-username-collision.sh
 
+# 異なる24招待コードと同一招待コード4件を並行登録し、lockと3回上限を確認
+# 注意: 開始時と終了時にPOST /api/initializeを呼び、ローカルデータを初期化する
+./scripts/test-invitation-concurrency.sh
+
 # 公式ベンチマーカーによる短い動作確認
 ./scripts/benchmark.sh 10
 
@@ -349,6 +354,7 @@ RESET=1 ./scripts/down.sh
 | 決済冪等化 + owner配送境界 | ride IDを全決済POSTの `Idempotency-Key` にして確認GETを削除。owner requestと重なる評価rideだけを除外。最終3走95,596–115,968点、中央値101,037点、全run `pass=true`・error map空 |
 | 通知payload cache | recipient revisionとchair stats dependency revisionでstale hit / 再挿入を防ぎ、未送信statusは30ms、状態不変cacheは100ms。最終3走103,727–111,798点、中央値109,443点（Benchmark 25比+8.3%）、全run `pass=true`・error map空 |
 | username衝突の限定再試行 | `users.username` のMySQL 1062だけを内部usernameで1回再試行。3走103,738–107,508点、中央値104,263点、全run `pass=true`、`CODE=17` 0件。直前中央値比-4.7%のため高速化ではなく正当性修正として採用 |
+| 招待登録の並行安全化 | 招待者UNIQUE行を直列化地点にし、couponを `COUNT(*)`、reward codeを新規user IDで一意化。3走99,775–105,304点、中央値102,569点、全run `pass=true`・error map空。並行回帰テストのMySQL 1062 / 1213増分0 |
 
 初回の初期60秒走行ではMySQLのqueryが十数秒以上へ遅延し、ベンチマーカーの期限を
 超えました。同じ初期revisionを外部コンテナの大きな共有負荷がない条件で再計測
@@ -410,6 +416,19 @@ cross-userの正当性を満たす修正版だけを現在実装の代表値と�
 超えているため、通知は引き続きP0です。詳細は
 [`tuning/26-notification-payload-cache.md`](./tuning/26-notification-payload-cache.md)を
 参照してください。
+
+Benchmark 29では、招待登録の `SELECT ... FOR UPDATE` が異なる招待コードでも
+`coupons(code)` B-treeの同じgapをlockし、互いのINSERTを待つdeadlockを診断しました。
+招待者のUNIQUE行を同一コードの直列化地点に変更し、coupon全row取得を `COUNT(*)` へ
+縮小しています。最初の修正版ではreward codeの `NOW(3)` が同じミリ秒になって主キー
+1062を起こしたため、新規user IDを一意suffixにしました。barrier付き回帰テストでは
+異なる24コードがすべて成功し、同一コード4件は3成功・1拒否、MySQL 1062 / 1213の
+増分は0でした。通常3走は99,775 / 105,304 / 102,569点、中央値102,569点で
+全run error map空です。最高中央値は更新していないため、性能改善ではなく高負荷時の
+HTTP 500とerror budget消費を防ぐ正当性修正として扱います。lockの仕組み、赤・緑検証、
+counter方式などの代替案は
+[`tuning/29-invitation-concurrency.md`](./tuning/29-invitation-concurrency.md)に
+記録しています。
 過去のBenchmark 19では、診断runで `CARRYING` の後に古い `PICKUP` を返す
 CODE=11を再現したため、
 通知と最新statusの順序をwall-clockではなくENUMの状態遷移順へ変更しました。

@@ -155,19 +155,12 @@ async fn app_post_users(
     // 招待コードを使った登録
     if let Some(req_invitation_code) = req.invitation_code {
         if !req_invitation_code.is_empty() {
-            // 招待する側の招待数をチェック
-            let coupons: Vec<Coupon> =
-                sqlx::query_as("SELECT * FROM coupons WHERE code = ? FOR UPDATE")
-                    .bind(format!("INV_{req_invitation_code}"))
-                    .fetch_all(&mut *tx)
-                    .await?;
-            if coupons.len() >= 3 {
-                return Err(Error::BadRequest("この招待コードは使用できません。"));
-            }
-
-            // ユーザーチェック
-            let Some(inviter): Option<User> =
-                sqlx::query_as("SELECT * FROM users WHERE invitation_code = ?")
+            // The unique inviter row is the serialization point for the
+            // per-invitation-code limit. Lock it before counting coupons so
+            // registrations using different codes do not hold conflicting
+            // next-key locks in coupons(code).
+            let Some(inviter_id): Option<String> =
+                sqlx::query_scalar("SELECT id FROM users WHERE invitation_code = ? FOR UPDATE")
                     .bind(&req_invitation_code)
                     .fetch_optional(&mut *tx)
                     .await?
@@ -175,20 +168,33 @@ async fn app_post_users(
                 return Err(Error::BadRequest("この招待コードは使用できません。"));
             };
 
+            let invitation_coupon_code = format!("INV_{req_invitation_code}");
+            let invitation_count: i64 =
+                sqlx::query_scalar("SELECT COUNT(*) FROM coupons WHERE code = ?")
+                    .bind(&invitation_coupon_code)
+                    .fetch_one(&mut *tx)
+                    .await?;
+            if invitation_count >= 3 {
+                return Err(Error::BadRequest("この招待コードは使用できません。"));
+            }
+
             // 招待クーポン付与
             sqlx::query("INSERT INTO coupons (user_id, code, discount) VALUES (?, ?, ?)")
                 .bind(&user_id)
-                .bind(format!("INV_{req_invitation_code}"))
+                .bind(&invitation_coupon_code)
                 .bind(1500)
                 .execute(&mut *tx)
                 .await?;
             // 招待した人にもRewardを付与
-            sqlx::query("INSERT INTO coupons (user_id, code, discount) VALUES (?, CONCAT(?, '_', FLOOR(UNIX_TIMESTAMP(NOW(3))*1000)), ?)")
-                .bind(inviter.id)
-                .bind(format!("RWD_{req_invitation_code}"))
-                .bind(1000)
-                .execute(&mut *tx)
-                .await?;
+            sqlx::query(
+                "INSERT INTO coupons (user_id, code, discount) VALUES (?, CONCAT(?, '_', ?), ?)",
+            )
+            .bind(inviter_id)
+            .bind(format!("RWD_{req_invitation_code}"))
+            .bind(&user_id)
+            .bind(1000)
+            .execute(&mut *tx)
+            .await?;
         }
     }
 

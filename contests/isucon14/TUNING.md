@@ -82,6 +82,7 @@
 | 座標更新の非同期・bulk INSERT | 通常経路を4 SQLから2 SQLへ削減。pickup / destination候補だけlockし、statusをcurrent readする | per-chair順序付きqueueと3秒以内のbulk反映を実験 |
 | 決済HTTP client | process内で1個を共有し、冪等なPOST / retryでconnection poolを再利用済み | TCP connect回数とstatus別retry数を診断runで採取 |
 | 決済の `Idempotency-Key` | ride IDを全POSTへ設定し、確認GETとuser全ride取得を削除済み | pending状態とcrash recoveryを設計し、外部HTTPをDB transaction外へ出す |
+| 招待登録 | 招待者のUNIQUE行を `FOR UPDATE` して同一コードだけを直列化。couponは `COUNT(*)`、reward codeは新規user IDで一意化 | 上限が増えてCOUNTが支配的になった場合だけ、条件付きcounter UPDATEを比較 |
 
 SSEは形式だけ変更しても、DB query数とpayload生成量が同じなら効果が薄いと考えます。
 Benchmark 26ではJSON payload cacheと状態不変時だけ100msにするpollingを実装し、
@@ -896,8 +897,9 @@ amountを記録するため、ride IDを同じkeyとして再利用すれば、�
 | [24-owner-sales-completion-boundary.md](./tuning/24-owner-sales-completion-boundary.md) | 評価の完了writeを決済成功後へ移し、長い決済待ちによるowner `until`の時刻逆転を除去 | 3走93,408–104,048点、推定代表値の中央値94,173点、全run `pass=true`・error map空、`CODE=24` 0件 | 実測n=3。修正前の時刻逆転と売上+700円を決定的に再現。直前中央値比-8.6%のため性能向上とは扱わず、追加SQLなし・冗長SELECT 1本削減の正当性修正として採用。commit→client計上境界はBenchmark 25で追加対策 |
 | [25-payment-idempotency.md](./tuning/25-payment-idempotency.md) | ride IDで決済POSTを冪等化して確認GETを削除し、owner requestと重なる評価rideだけを除外 | 最終3走95,596–115,968点、推定代表値の中央値101,037点、全run `pass=true`・error map空 | 実測n=3。Benchmark 24中央値比+7.3%、Benchmark 23中央値比-1.9%。決済retryの正当性と余計なエラー時処理の削減を理由に採用 |
 | [26-notification-payload-cache.md](./tuning/26-notification-payload-cache.md) | recipient + chair stats dependency revision付きpayload cache。未送信statusは30ms、状態不変cacheは100ms | 最終3走103,727–111,798点、推定代表値の中央値109,443点、全run `pass=true`・error map空 | 修正版実測n=3。Benchmark 25中央値比+8.3%。dependency追加前中央値112,156点は途中結果。30ms固定cache中央値88,757点はclosed-loop request増加で不採用。診断runで通知平均約61–67%、累積約59–63%減 |
-| [27-coordinate-phase-diagnostics.md](./tuning/27-coordinate-phase-diagnostics.md) | coordinateを1/64 samplingでphase分解し、row lock仮説と再発CODE17を診断 | 診断runは`pass=true`・117,989点、`CODE=17` 1件。coordinate内p95はcurrent write 4.185ms、`pool.begin()` 93.651ms | 診断instrumentation付き実測n=1・未推定。current UPDATE支配仮説を棄却。CODE17はdeadlockでなくusername重複のMySQL 1062と特定 |
+| [27-coordinate-phase-diagnostics.md](./tuning/27-coordinate-phase-diagnostics.md) | coordinateを1/64 samplingでphase分解し、row lock仮説と再発CODE17を診断 | 診断runは`pass=true`・117,989点、`CODE=17` 1件。coordinate内p95はcurrent write 4.185ms、`pool.begin()` 93.651ms | 診断instrumentation付き実測n=1・未推定。current UPDATE支配仮説を棄却。このrunのCODE17はusername重複の1062。別runのcoupon deadlockはBenchmark 29で分離 |
 | [28-username-collision-retry.md](./tuning/28-username-collision-retry.md) | `users.username` のMySQL 1062だけを内部usernameで1回再試行 | 3走103,738–107,508点、推定代表値の中央値104,263点、全run `pass=true`、`CODE=17` 0件 | 実測n=3。Benchmark 26中央値比-4.7%のため高速化とは扱わず、通常経路の追加SQLなしで稀な登録失敗を防ぐ正当性修正として採用。`CODE=26` 0 / 136 / 142件は次のP0 |
+| [29-invitation-concurrency.md](./tuning/29-invitation-concurrency.md) | 招待者のUNIQUE行を直列化地点にし、coupon gap deadlockとreward codeのミリ秒衝突を除去 | 3走99,775–105,304点、推定代表値の中央値102,569点、全run `pass=true`・error map空 | 実測n=3。Benchmark 28中央値比-1.6%のため高速化とは扱わない。24種類の同時登録、同一codeの3成功・1拒否、MySQL 1062 / 1213増分0を根拠に正当性修正として採用 |
 | [80-rust-implementation.md](./tuning/80-rust-implementation.md) | Rust / sqlxとrelease buildの知識 | 再build 30分52秒→11.02秒 | build時間の実測。スコア推定対象外 |
 | [81-evaluation-authorization.md](./tuning/81-evaluation-authorization.md) | 評価rideを認証ユーザー所有へ制限 | 公式prevalidation `pass=true`、別ユーザーHTTP回帰成功 | 正当性修正。60秒スコアはBenchmark 20から更新しない |
 | [90-local-environment.md](./tuning/90-local-environment.md) | build context、BuildKit、固定Colima資源 | context 467MB→32.5KB | sizeの実測。スコア推定対象外 |
