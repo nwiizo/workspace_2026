@@ -3,6 +3,7 @@ use axum::{http::StatusCode, response::Response};
 #[derive(Debug, Clone)]
 pub struct AppState {
     pub pool: sqlx::MySqlPool,
+    pub payment_client: reqwest::Client,
 }
 
 #[derive(Debug, thiserror::Error)]

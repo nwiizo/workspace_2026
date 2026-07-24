@@ -45,6 +45,7 @@ where
 }
 
 pub async fn request_payment_gateway_post_payment<F>(
+    client: &reqwest::Client,
     payment_gateway_url: &str,
     token: &str,
     param: &PaymentGatewayPostPaymentRequest,
@@ -61,7 +62,7 @@ where
 
     loop {
         let result = async {
-            let res = reqwest::Client::new()
+            let res = client
                 .post(format!("{payment_gateway_url}/payments"))
                 .bearer_auth(token)
                 .json(param)
@@ -71,7 +72,7 @@ where
 
             if res.status() != reqwest::StatusCode::NO_CONTENT {
                 // エラーが返ってきても成功している場合があるので、社内決済マイクロサービスに問い合わせ
-                let get_res = reqwest::Client::new()
+                let get_res = client
                     .get(format!("{payment_gateway_url}/payments"))
                     .bearer_auth(token)
                     .send()

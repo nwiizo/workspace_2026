@@ -1,3 +1,4 @@
+use anyhow::Context;
 use axum::extract::State;
 use isuride::{AppState, Error};
 use std::net::SocketAddr;
@@ -34,7 +35,12 @@ async fn main() -> anyhow::Result<()> {
         )
         .await?;
 
-    let app_state = AppState { pool };
+    let app_state = AppState {
+        pool,
+        payment_client: reqwest::Client::builder()
+            .build()
+            .context("failed to initialize payment HTTP client")?,
+    };
 
     let app = axum::Router::new()
         .route("/api/initialize", axum::routing::post(post_initialize))
