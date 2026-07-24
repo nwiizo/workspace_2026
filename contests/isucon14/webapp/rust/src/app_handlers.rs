@@ -58,6 +58,51 @@ struct AppPostUsersResponse {
     invitation_code: String,
 }
 
+async fn insert_user(
+    tx: &mut sqlx::MySqlConnection,
+    user_id: &str,
+    username: &str,
+    req: &AppPostUsersRequest,
+    access_token: &str,
+    invitation_code: &str,
+) -> sqlx::Result<()> {
+    sqlx::query("INSERT INTO users (id, username, firstname, lastname, date_of_birth, access_token, invitation_code) VALUES (?, ?, ?, ?, ?, ?, ?)")
+        .bind(user_id)
+        .bind(username)
+        .bind(&req.firstname)
+        .bind(&req.lastname)
+        .bind(&req.date_of_birth)
+        .bind(access_token)
+        .bind(invitation_code)
+        .execute(&mut *tx)
+        .await?;
+
+    Ok(())
+}
+
+fn is_username_duplicate(error: &sqlx::Error) -> bool {
+    let Some(database_error) = error.as_database_error() else {
+        return false;
+    };
+    if !database_error.is_unique_violation() {
+        return false;
+    }
+
+    database_error
+        .try_downcast_ref::<sqlx::mysql::MySqlDatabaseError>()
+        .is_some_and(|mysql_error| {
+            is_username_duplicate_mysql_error(mysql_error.number(), mysql_error.message())
+        })
+}
+
+fn is_username_duplicate_mysql_error(number: u16, message: &str) -> bool {
+    number == 1062 && message.ends_with("for key 'users.username'")
+}
+
+fn duplicate_username_fallback(user_id: &str) -> String {
+    format!("~{user_id}")
+}
+
 async fn app_post_users(
     State(AppState { pool, .. }): State<AppState>,
     jar: CookieJar,
@@ -69,16 +114,35 @@ async fn app_post_users(
 
     let mut tx = pool.begin().await?;
 
-    sqlx::query("INSERT INTO users (id, username, firstname, lastname, date_of_birth, access_token, invitation_code) VALUES (?, ?, ?, ?, ?, ?, ?)")
-        .bind(&user_id)
-        .bind(req.username)
-        .bind(req.firstname)
-        .bind(req.lastname)
-        .bind(req.date_of_birth)
-        .bind(&access_token)
-        .bind(&invitation_code)
-        .execute(&mut *tx)
+    if let Err(error) = insert_user(
+        &mut tx,
+        &user_id,
+        &req.username,
+        &req,
+        &access_token,
+        &invitation_code,
+    )
+    .await
+    {
+        if !is_username_duplicate(&error) {
+            return Err(error.into());
+        }
+
+        let fallback_username = duplicate_username_fallback(&user_id);
+        tracing::warn!(
+            user_id = %user_id,
+            "retrying user registration with an internal username after a duplicate"
+        );
+        insert_user(
+            &mut tx,
+            &user_id,
+            &fallback_username,
+            &req,
+            &access_token,
+            &invitation_code,
+        )
         .await?;
+    }
 
     // 初回登録キャンペーンのクーポンを付与
     sqlx::query("INSERT INTO coupons (user_id, code, discount) VALUES (?, ?, ?)")
@@ -143,6 +207,40 @@ async fn app_post_users(
             }),
         ),
     ))
+}
+
+#[cfg(test)]
+mod user_registration_tests {
+    use super::{duplicate_username_fallback, is_username_duplicate_mysql_error};
+
+    #[test]
+    fn duplicate_username_fallback_uses_the_full_user_id_and_fits_the_column() {
+        let user_id = "01JDJ23EA0C0P2KFPTXDKTZMNM";
+        let username = duplicate_username_fallback(user_id);
+
+        assert_eq!(username, "~01JDJ23EA0C0P2KFPTXDKTZMNM");
+        assert!(username.chars().count() <= 30);
+    }
+
+    #[test]
+    fn retry_classification_accepts_only_the_username_unique_key() {
+        assert!(is_username_duplicate_mysql_error(
+            1062,
+            "Duplicate entry 'same' for key 'users.username'"
+        ));
+
+        for message in [
+            "Duplicate entry 'id' for key 'users.PRIMARY'",
+            "Duplicate entry 'token' for key 'users.access_token'",
+            "Duplicate entry 'code' for key 'users.invitation_code'",
+        ] {
+            assert!(!is_username_duplicate_mysql_error(1062, message));
+        }
+        assert!(!is_username_duplicate_mysql_error(
+            1213,
+            "Deadlock found when trying to get lock"
+        ));
+    }
 }
 
 #[derive(Debug, serde::Deserialize)]

@@ -54,6 +54,7 @@ git -C "$source_dir/isucon14" archive HEAD | tar -x -C contests/isucon14
 | `scripts/test-chair-stats-consistency.sh` | 全初期chairを照合し、欠損・誤値・余分なrowを再起動で修復 |
 | `scripts/test-chair-stats-transitions.sh` | 評価の所有者認可、完了条件、決済rollback、再送時の非加算をHTTP検証 |
 | `scripts/test-owner-sales-response-boundary.sh` | 遅い決済中の評価完了時刻とowner salesの`until`境界をHTTP・決済TCP accept・InnoDB行ロック・response JSON・SQLで確認 |
+| `scripts/test-username-collision.sh` | 同じusernameを2回登録し、別user・別認証・招待couponを維持した限定再試行を確認 |
 | `scripts/benchmark.sh` | 決済モックを含む公式ベンチマーカーの実行 |
 | `scripts/report-endpoint-latency.sh` | 診断runのnginx timing logをendpoint別に集計 |
 | `scripts/report-coordinate-phases.sh` | 診断runのcoordinate phase、row lock、current-state writeを集計 |
@@ -218,6 +219,10 @@ cd contests/isucon14
 # 注意: 8秒遅延する一時決済mock containerを起動し、終了時にローカルデータを初期化する
 ./scripts/test-owner-sales-response-boundary.sh
 
+# 同じusernameの再登録を別userとして継続できることを確認
+# 注意: 開始時と終了時にPOST /api/initializeを呼び、ローカルデータを初期化する
+./scripts/test-username-collision.sh
+
 # 公式ベンチマーカーによる短い動作確認
 ./scripts/benchmark.sh 10
 
@@ -343,6 +348,7 @@ RESET=1 ./scripts/down.sh
 | owner売上の完了時刻境界 | 決済成功後にevaluation / `COMPLETED` / chair statsを確定し、DBとresponseへ同じ完了時刻を使用。3走93,408–104,048点、推定代表値の中央値94,173点、全run `pass=true`・error map空、`CODE=24` 0件 |
 | 決済冪等化 + owner配送境界 | ride IDを全決済POSTの `Idempotency-Key` にして確認GETを削除。owner requestと重なる評価rideだけを除外。最終3走95,596–115,968点、中央値101,037点、全run `pass=true`・error map空 |
 | 通知payload cache | recipient revisionとchair stats dependency revisionでstale hit / 再挿入を防ぎ、未送信statusは30ms、状態不変cacheは100ms。最終3走103,727–111,798点、中央値109,443点（Benchmark 25比+8.3%）、全run `pass=true`・error map空 |
+| username衝突の限定再試行 | `users.username` のMySQL 1062だけを内部usernameで1回再試行。3走103,738–107,508点、中央値104,263点、全run `pass=true`、`CODE=17` 0件。直前中央値比-4.7%のため高速化ではなく正当性修正として採用 |
 
 初回の初期60秒走行ではMySQLのqueryが十数秒以上へ遅延し、ベンチマーカーの期限を
 超えました。同じ初期revisionを外部コンテナの大きな共有負荷がない条件で再計測

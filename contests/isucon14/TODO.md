@@ -194,6 +194,20 @@
   - nginxにrequest IDがないため、UTC時刻 + endpoint + HTTP status + DB error + usernameで相関
   - OpenAPIがusernameを一意と定義するためUNIQUE INDEXは維持し、衝突時の限定retryを別施策で検証する
   - 詳細: [`tuning/27-coordinate-phase-diagnostics.md`](./tuning/27-coordinate-phase-diagnostics.md)
+- [x] `users.username` のMySQL 1062だけを内部usernameで1回再試行する
+  - 修正前は同名の2回目がHTTP 500、修正後は別userとして2回ともHTTP 201
+  - UNIQUE制約を維持し、通常経路にはSELECTも追加しない
+  - ID、access token、invitation codeなど別の一意制約違反は再試行しない
+  - 60秒3走103,738 / 107,508 / 104,263点、観測範囲103,738–107,508点
+  - 推定代表値の中央値104,263点、Benchmark 26比-4.7%のため高速化とは扱わない
+  - 全run `pass=true`、`CODE=17`は0件
+  - `CODE=26`は0 / 136 / 142件で、後半2走はerror予算の68% / 71%を消費
+  - 詳細: [`tuning/28-username-collision-retry.md`](./tuning/28-username-collision-retry.md)
+- [ ] `CODE=26` のowner累積距離が座標responseの受信境界より先へ進む競合を検証する
+  - 期待値より実値が4–40程度大きく、直近1回の移動距離に近い例を確認
+  - ベンチマーカーのcoordinate POST、world更新、owner検証の順序を同じchairで追う
+  - server側はowner request開始時の座標watermarkを固定できるか検討する
+  - username再試行が実行されなかったrun 3でも142件出たため、Benchmark 28の分岐とは分離する
 - [x] nearbyの集合SQL、chair statsの集約SQL、batch matcherを実装
 - [x] 上記3変更を別々のBenchmarkとして正当性・性能検証する
 
@@ -1045,23 +1059,25 @@
 
 ## 推奨する直近の実行順
 
-1. MySQL 1062のusername衝突だけを限定retryし、OpenAPIの一意性を維持したまま
-   `CODE=17`を除去できるか通常3走で確認する
-2. coordinateの `pool.begin()` を `pool.acquire()` とSQL `BEGIN`へ分け、p50 / p95 / p99と
+1. `CODE=26` を再現し、ベンチマーカーがresponseを受信済みの座標と
+   `owner_get_chairs` が集計する座標のwatermark差を同じchairで特定する
+2. owner request開始時に既知の座標までを集計する方法を設計し、決定的な赤・緑テストと
+   通常3走でerror予算・scoreを比較する
+3. coordinateの `pool.begin()` を `pool.acquire()` とSQL `BEGIN`へ分け、p50 / p95 / p99と
    poolの `size` / `idle` / `in_use` を同じ時刻軸で採取する
-3. pool取得待ちが支配的なら、外部決済HTTP中のtransaction保持を先に分割し、
+4. pool取得待ちが支配的なら、外部決済HTTP中のtransaction保持を先に分割し、
    connection保持時間とcrash recoveryを単独検証する
-4. latest-coordinate cacheの `RwLock` とmaintenance gateの待機・保持時間を計測し、
+5. latest-coordinate cacheの `RwLock` とmaintenance gateの待機・保持時間を計測し、
    2秒再同期時のglobal stallを定量化する
-5. 最新statusをcurrent-state化し、未送信statusがない通知pollの履歴lookupとpayload再構築をなくす
-6. matcherへ地域間の距離上限を追加し、500 / 100 / 30msの実行間隔と組み合わせて比較する
-7. 決済をDB transaction外へ出すため、pending状態・条件付きclaim・crash recoveryを設計する
-8. 外部決済HTTPをDB transactionの外へ出し、障害時の二重決済・欠落を回復できるようにする
-9. app history、owner sales、ride作成のN+1を順に除去する
-10. current-state別表で最新statusをO(1)化する
-11. JSON long pollingで不足する場合だけSSEへ移し、状態変更時の即時pushまで実装する
-12. 貪欲matcherと最小費用二部マッチングを比較する
-13. 最後にpool上限、MySQL、nginx、compiler設定をprofileに基づいて調整する
+6. 最新statusをcurrent-state化し、未送信statusがない通知pollの履歴lookupとpayload再構築をなくす
+7. matcherへ地域間の距離上限を追加し、500 / 100 / 30msの実行間隔と組み合わせて比較する
+8. 決済をDB transaction外へ出すため、pending状態・条件付きclaim・crash recoveryを設計する
+9. 外部決済HTTPをDB transactionの外へ出し、障害時の二重決済・欠落を回復できるようにする
+10. app history、owner sales、ride作成のN+1を順に除去する
+11. current-state別表で最新statusをO(1)化する
+12. JSON long pollingで不足する場合だけSSEへ移し、状態変更時の即時pushまで実装する
+13. 貪欲matcherと最小費用二部マッチングを比較する
+14. 最後にpool上限、MySQL、nginx、compiler設定をprofileに基づいて調整する
 
 ## 記録ルール
 
