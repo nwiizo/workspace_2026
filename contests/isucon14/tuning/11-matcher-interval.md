@@ -25,6 +25,10 @@ done
 実際の1周期 = curlの接続・HTTP・matcher処理時間 + sleep時間
 ```
 
+![matcherの実際の1周期が処理時間とsleep時間の合計になる流れ](./images/matcher-interval-effective-cycle.webp)
+
+_sleepを短くしても、curl、nginx、Axum、SQL、COMMITの処理が終わるまで次の周期は始まりません。短周期ほど固定費の占める割合が大きくなります。_
+
 そのため、100msなら60秒に必ず600回、30msなら必ず2,000回呼ばれるわけでは
 ありません。処理が重くなるほど次の呼び出しも遅れます。
 
@@ -86,6 +90,10 @@ nginxコンテナは初期revision確認のために入れ替えた後だった�
 割当開始まで」を短くする仮説には合っています。しかし、最終評価数は560に減り、
 総合スコアも下がりました。ISUCONでは1つの局所指標だけでなく、限られたCPU・DB
 時間で何件を最後まで完了できたかを評価する必要があります。
+
+![matcher待ちの局所改善とシステム全体のride完了数が一致しない比較](./images/matcher-interval-local-vs-system.webp)
+
+_matcherを高頻度に呼ぶと最初の割当は早まりますが、共有資源の固定費が通知や座標更新を圧迫すれば、同じ計測時間内に完了するrideは減ります。_
 
 100msはmatching不満足度が対照より良くありません。生成されたrideとchairの分布に
 走行ごとの揺れがあること、現在のmatcherは1回で最大64件処理できることから、
@@ -163,6 +171,10 @@ curl → nginx → Axumという外部HTTP往復を削れます。ただし、�
 未割当rideがある間だけ短い間隔、空なら指数的に500msまで戻す方式です。DB負荷と
 割当遅延の両方を抑えられる可能性があります。sleepの固定値比較より実装は複雑に
 なるため、queue長と実際の呼出回数をmetricとして残す必要があります。
+
+![固定polling・ride作成時の起動・adaptive intervalの処理量比較](./images/matcher-event-driven-adaptive.webp)
+
+_空のqueueを固定間隔で確認し続ける代わりに、ride作成を契機に起動するか、queueの有無に応じて間隔を変えれば、空振りを減らしながら割当開始を早められます。_
 
 ### matcher SQLを軽くしてから再試験する
 

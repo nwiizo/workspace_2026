@@ -44,6 +44,10 @@ binary logは、主にreplicationとpoint-in-time recoveryで使う変更履歴�
 redoとbinary logは目的が異なります。そのためredoだけを緩めても、
 `sync_binlog=1` の同期がcommit待ちとして残る可能性があります。
 
+![COMMITでInnoDB redo logとbinary logをそれぞれ書き込み同期する流れ](./images/mysql-commit-redo-binlog.webp)
+
+_redo logはクラッシュ復旧、binary logはreplicationやpoint-in-time recoveryのために別々の履歴を持ちます。耐久設定では両方の同期完了がCOMMIT応答を待たせます。_
+
 参考:
 
 - [MySQL 8.4: innodb_flush_log_at_trx_commit](https://dev.mysql.com/doc/refman/8.4/en/innodb-parameters.html#sysvar_innodb_flush_log_at_trx_commit)
@@ -71,6 +75,10 @@ command:
 
 binary logは無効化していません。記録は続けますが、MySQLはcommitごとのdisk同期を
 要求しません。
+
+![redoとbinary logの同期設定を段階的に緩和したときのCOMMIT待ち比較](./images/mysql-commit-flush-stages.webp)
+
+_redoだけを周期flushにしてもbinlogの同期が残れば待ちは続きます。両方のcommit単位の同期を外すと、log記録を維持しつつdisk同期をまとめられます。_
 
 現在のComposeではMySQL imageをdigestで固定し、設定値は環境変数で上書きできます。
 
@@ -196,6 +204,10 @@ matching不満足度は悪化しています。DBが速くなり、ベンチが�
 ISUCON環境です。そのため性能を優先して採用しました。業務データを持つ本番DBへ
 同じ設定をそのまま適用してはいけません。許容損失、backup、replication、
 復旧目標を先に決める必要があります。
+
+![commit耐久性を緩めた性能向上と電源障害時の直近データ損失リスク](./images/mysql-commit-durability-tradeoff.webp)
+
+_同期前でもCOMMITを返す設定ではthroughputが上がる一方、電源やOS障害時に直近のcommit済みデータを失う窓が生まれます。再初期化できる競技環境と本番DBでは判断が異なります。_
 
 ## durable設定へ戻す
 

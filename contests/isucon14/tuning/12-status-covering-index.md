@@ -37,6 +37,10 @@ covering INDEXと呼びます。今回は既存INDEXを次のように変更し�
 それでも、すべての `ride_statuses` INSERTでsecondary INDEXへstatusを書き込む
 追加コストは発生します。
 
+![通常のsecondary INDEXとcovering INDEXで最新statusを取得する経路の違い](./images/status-covering-index-lookup.webp)
+
+_通常はINDEXのleafで主キーを得て行本体へもう一度たどります。covering INDEXでは必要なstatusもleafにあるため、INDEX内だけで応答できます。_
+
 ## 仮説
 
 - 最新status検索は高頻度なので、主キー行の追加参照をなくす効果が積み上がる
@@ -95,6 +99,10 @@ covering版は対照より8,123点、約15.27%低下しました。正当性エ�
 一方で、総合ベンチに改善の証拠がなく、追加write costを恒久的に負う理由も
 ありません。
 
+![単発queryの短縮とシステム全体のボトルネックを分けて評価する構造](./images/status-covering-index-local-vs-system.webp)
+
+_最新statusの単発lookupが速くなっても、通知、座標更新、INSERT、COMMITが流れる総合系では一部の改善にすぎません。局所時間ではなく完了数とスコアで採否を決めます。_
+
 ## 判断
 
 不採用とし、schemaを `(ride_id, created_at)` へ戻しました。
@@ -107,6 +115,10 @@ readは明確に軽くなりました。しかし、次の理由から現在の�
 - 変更前でもbuffer pool上の検索は十分短い
 - status INSERTは状態遷移ごとに発生し、INDEX更新は必ず増える
 - COMMIT累積時間が400秒前後あり、単発SELECTよりtransaction永続化が支配的
+
+![INDEXを広げたときのindex-only readと書き込み・buffer poolコストの交換条件](./images/status-covering-index-write-cost.webp)
+
+_statusをleafへ含めるとread経路は短くなりますが、各entryが広がってbuffer poolを多く使い、すべてのstatus INSERTで大きなINDEXを更新します。_
 
 ## 他の選択肢
 
