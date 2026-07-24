@@ -1,0 +1,14 @@
+[package]
+name = "design-gate-core"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+ra_ap_syntax = "0.0.331"
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"
+walkdir = "2"
+
+[dev-dependencies]
+tempfile = "3"
