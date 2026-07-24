@@ -134,6 +134,10 @@ async fn post_initialize(
     // while init.sh drops and recreates tables. This also prevents a coordinate
     // request from observing an old cache with an empty current-state table.
     let _maintenance_guard = maintenance_lock.write().await;
+    // Invalidate before the first destructive initialization step. If init.sh
+    // or a later refresh fails, requests must fall back to the database instead
+    // of authenticating a token that only existed in the previous generation.
+    auth_cache.clear();
     let output = tokio::process::Command::new("../sql/init.sh")
         .output()
         .await?;

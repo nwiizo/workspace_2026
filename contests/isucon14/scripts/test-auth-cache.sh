@@ -9,8 +9,15 @@ curl_connect_timeout=${CURL_CONNECT_TIMEOUT:-2}
 curl_max_time=${CURL_MAX_TIME:-10}
 temp_dir=$(mktemp -d)
 cookie_jar="$temp_dir/app-cookies.txt"
+dynamic_username="auth-cache-$$"
+init_script="$script_dir/../webapp/sql/init.sh"
+init_script_backup="$init_script.auth-cache-test-$$"
 
 cleanup() {
+  if [ -f "$init_script_backup" ]; then
+    mv "$init_script_backup" "$init_script"
+  fi
+  initialize >/dev/null 2>&1 || true
   rm -rf "$temp_dir"
 }
 
@@ -90,7 +97,7 @@ registration_status=$(
     --write-out '%{http_code}' \
     --request POST \
     --header "Content-Type: application/json" \
-    --data "{\"username\":\"auth-cache-$$\",\"firstname\":\"Auth\",\"lastname\":\"Cache\",\"date_of_birth\":\"2000-01-01\"}" \
+    --data "{\"username\":\"$dynamic_username\",\"firstname\":\"Auth\",\"lastname\":\"Cache\",\"date_of_birth\":\"2000-01-01\"}" \
     "$base_url/api/app/users"
 )
 if [ "$registration_status" != "201" ]; then
@@ -116,6 +123,54 @@ if [ "$after_second_dynamic" != "$after_first_dynamic" ]; then
   exit 1
 fi
 echo "OK: dynamic user uses one DB fallback and is cached"
+
+dynamic_user_id=$(
+  "$compose" exec -T db mysql \
+    --batch \
+    --skip-column-names \
+    -uisucon \
+    -pisucon \
+    isuride \
+    -e "SELECT id FROM users WHERE username = '$dynamic_username'"
+)
+"$compose" exec -T db mysql \
+  --batch \
+  --skip-column-names \
+  -uisucon \
+  -pisucon \
+  isuride \
+  -e "
+DELETE FROM coupons WHERE user_id = '$dynamic_user_id';
+DELETE FROM users WHERE id = '$dynamic_user_id';
+" \
+  >/dev/null
+
+mv "$init_script" "$init_script_backup"
+failed_initialize_status=$(
+  curl \
+    --silent \
+    --show-error \
+    --connect-timeout "$curl_connect_timeout" \
+    --max-time "$curl_max_time" \
+    --output /dev/null \
+    --write-out '%{http_code}' \
+    --request POST \
+    --header "Content-Type: application/json" \
+    --data '{"payment_server":"http://benchmark:12345"}' \
+    "$base_url/api/initialize"
+)
+mv "$init_script_backup" "$init_script"
+if [ "$failed_initialize_status" = "200" ]; then
+  echo "存在しないinit.shを使ったinitializeが成功扱いになりました" >&2
+  exit 1
+fi
+
+stale_after_failure_status=$(get_notification "$cookie_jar")
+if [ "$stale_after_failure_status" != "401" ]; then
+  echo "initialize失敗後も旧cache tokenが認証されました: status=$stale_after_failure_status" >&2
+  exit 1
+fi
+echo "OK: failed initialize does not restore stale authentication entries"
 
 initialize
 stale_status=$(get_notification "$cookie_jar")

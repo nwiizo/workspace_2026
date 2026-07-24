@@ -22,11 +22,43 @@ pub struct AppState {
     pub maintenance_lock: Arc<RwLock<()>>,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct AuthCache {
     users: Arc<StdRwLock<HashMap<String, User>>>,
     owners: Arc<StdRwLock<HashMap<String, Owner>>>,
     chairs: Arc<StdRwLock<HashMap<String, Chair>>>,
+}
+
+impl std::fmt::Debug for AuthCache {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("AuthCache")
+            .field(
+                "users",
+                &self
+                    .users
+                    .read()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .len(),
+            )
+            .field(
+                "owners",
+                &self
+                    .owners
+                    .read()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .len(),
+            )
+            .field(
+                "chairs",
+                &self
+                    .chairs
+                    .read()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .len(),
+            )
+            .finish()
+    }
 }
 
 impl AuthCache {
@@ -65,6 +97,21 @@ impl AuthCache {
             .map(|chair| (chair.access_token.clone(), chair))
             .collect();
         Ok(())
+    }
+
+    pub fn clear(&self) {
+        self.users
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
+        self.owners
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
+        self.chairs
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
     }
 
     pub(crate) fn user(&self, access_token: &str) -> Option<User> {
