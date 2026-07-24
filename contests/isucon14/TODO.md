@@ -164,6 +164,10 @@
   - stats更新は評価と `COMPLETED` 追加と同じtransactionへ入れる
 - 評価APIは決済成功前に200または `COMPLETED` を公開しない
   - 決済成功後に短いwrite transactionで完了状態を確定し、その後レスポンスする
+- [x] 評価APIは認証ユーザー本人のrideだけを更新する
+  - locking readを `id + user_id` 条件にし、他ユーザーrideの存在はHTTP 404として扱う
+  - 別ユーザーcookieでevaluation、`COMPLETED`、chair statsが不変であることをHTTP確認
+  - 詳細: [`tuning/81-evaluation-authorization.md`](./tuning/81-evaluation-authorization.md)
 - 3秒cacheを許せるowner情報は `/owner/chairs` の累積距離だけ
   - `/owner/sales` はリクエスト直前snapshotを下限に検証されるため、遅延cacheしない
 

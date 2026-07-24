@@ -73,7 +73,16 @@ fixture=$(
     -pisucon \
     isuride \
     -e "
-SELECT users.id, users.access_token, chairs.id
+SELECT users.id,
+       users.access_token,
+       chairs.id,
+       (
+         SELECT other_users.access_token
+         FROM users AS other_users
+         WHERE other_users.id <> users.id
+         ORDER BY other_users.id
+         LIMIT 1
+       )
 FROM users
 CROSS JOIN chairs
 ORDER BY users.id, chairs.id
@@ -83,6 +92,7 @@ LIMIT 1
 user_id=$(printf '%s\n' "$fixture" | cut -f 1)
 user_token=$(printf '%s\n' "$fixture" | cut -f 2)
 chair_id=$(printf '%s\n' "$fixture" | cut -f 3)
+other_user_token=$(printf '%s\n' "$fixture" | cut -f 4)
 
 read_stats() {
   "$compose" exec -T db mysql \
@@ -102,12 +112,13 @@ LEFT JOIN chair_stats ON chair_stats.chair_id = '$chair_id'
 post_evaluation() {
   ride_id=$1
   evaluation=$2
+  request_token=${3:-$user_token}
   curl \
     --silent \
     --show-error \
     --connect-timeout "$curl_connect_timeout" \
     --max-time "$curl_max_time" \
-    --cookie "app_session=$user_token" \
+    --cookie "app_session=$request_token" \
     --request POST \
     --header "Content-Type: application/json" \
     --data "{\"evaluation\":$evaluation}" \
@@ -155,6 +166,40 @@ VALUES
 SQL
 
 initial_stats=$(read_stats)
+
+foreign_response=$(post_evaluation "$valid_ride_id" 4 "$other_user_token")
+foreign_status=$(printf '%s\n' "$foreign_response" | tail -n 1)
+if [ "$foreign_status" != "404" ]; then
+  echo "foreign-user evaluation: expected HTTP 404 actual=$foreign_status" >&2
+  exit 1
+fi
+foreign_state=$(
+  "$compose" exec -T db mysql \
+    --batch \
+    --skip-column-names \
+    -uisucon \
+    -pisucon \
+    isuride \
+    -e "
+SELECT evaluation IS NULL,
+       (
+         SELECT COUNT(*)
+         FROM ride_statuses
+         WHERE ride_id = '$valid_ride_id'
+           AND status = 'COMPLETED'
+       )
+FROM rides
+WHERE id = '$valid_ride_id'
+"
+)
+if [ "$foreign_state" != "1	0" ]; then
+  echo "foreign-user evaluation changed ride state: $foreign_state" >&2
+  exit 1
+fi
+if [ "$(read_stats)" != "$initial_stats" ]; then
+  echo "foreign-user evaluation unexpectedly changed chair_stats" >&2
+  exit 1
+fi
 
 missing_response=$(post_evaluation "$missing_ride_id" 5)
 missing_status=$(printf '%s\n' "$missing_response" | tail -n 1)
@@ -278,4 +323,4 @@ if [ "$(read_stats)" != "$expected_stats" ]; then
   exit 1
 fi
 
-echo "OK: chair stats transitions preserve completion, rollback, and retry invariants"
+echo "OK: evaluation authorization and chair stats transition invariants hold"

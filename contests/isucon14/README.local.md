@@ -51,7 +51,7 @@ git -C "$source_dir/isucon14" archive HEAD | tar -x -C contests/isucon14
 | `scripts/test-latest-location-reconciliation.sh` | commit後のcache更新欠落と同時刻tie-breakの故障注入 |
 | `scripts/test-status-notification-order.sh` | 時刻逆転時もapp / chair通知が状態遷移順になることをHTTPで確認 |
 | `scripts/test-chair-stats-consistency.sh` | 全初期chairを照合し、欠損・誤値・余分なrowを再起動で修復 |
-| `scripts/test-chair-stats-transitions.sh` | 評価時の完了条件、決済rollback、再送時の非加算をHTTP検証 |
+| `scripts/test-chair-stats-transitions.sh` | 評価の所有者認可、完了条件、決済rollback、再送時の非加算をHTTP検証 |
 | `scripts/benchmark.sh` | 決済モックを含む公式ベンチマーカーの実行 |
 | `.dockerignore` / `webapp/rust/.dockerignore` | Dockerへ不要なソース・`target/` を送らない |
 
@@ -201,7 +201,7 @@ cd contests/isucon14
 # 注意: 開始時と終了時にPOST /api/initializeを呼び、ローカルデータを初期化する
 ./scripts/test-chair-stats-consistency.sh
 
-# 評価APIの差分更新、決済失敗rollback、再送の非加算を確認
+# 評価APIの所有者認可、差分更新、決済失敗rollback、再送の非加算を確認
 # 注意: 一時決済mock containerを起動し、終了時にローカルデータを初期化する
 ./scripts/test-chair-stats-transitions.sh
 

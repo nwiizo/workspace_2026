@@ -445,6 +445,7 @@ async fn app_post_ride_evaluation(
         active_ride_evaluations,
         ..
     }): State<AppState>,
+    axum::Extension(user): axum::Extension<User>,
     Path((ride_id,)): Path<(String,)>,
     axum::Json(req): axum::Json<AppPostRideEvaluationRequest>,
 ) -> Result<Response, Error> {
@@ -454,10 +455,12 @@ async fn app_post_ride_evaluation(
 
     let mut tx = pool.begin().await?;
 
-    let Some(ride): Option<Ride> = sqlx::query_as("SELECT * FROM rides WHERE id = ? FOR UPDATE")
-        .bind(&ride_id)
-        .fetch_optional(&mut *tx)
-        .await?
+    let Some(ride): Option<Ride> =
+        sqlx::query_as("SELECT * FROM rides WHERE id = ? AND user_id = ? FOR UPDATE")
+            .bind(&ride_id)
+            .bind(&user.id)
+            .fetch_optional(&mut *tx)
+            .await?
     else {
         return Err(Error::NotFound("ride not found"));
     };
