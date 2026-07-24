@@ -76,6 +76,12 @@
   - 直前中央値60,102点から+20,252点、約+33.7%
   - 全run `pass=true`、error map空
   - 詳細: [`tuning/14-payment-client-reuse.md`](./tuning/14-payment-client-reuse.md)
+- [x] `coupons(used_by)` を追加し、rideに適用済みのcoupon検索をB-tree lookup化
+  - 60秒3走: 88,805 / 93,606 / 100,606点
+  - 観測範囲88,805–100,606点、推定代表値の中央値93,606点
+  - 直前中央値80,354点から+13,252点、約+16.5%
+  - 対象SQLの平均0.928ms→0.060ms、全run `pass=true`・error map空
+  - 詳細: [`tuning/15-coupon-used-by-index.md`](./tuning/15-coupon-used-by-index.md)
 - [x] nearbyの集合SQL、chair statsの集約SQL、batch matcherを実装
 - [x] 上記3変更を別々のBenchmarkとして正当性・性能検証する
 
@@ -84,7 +90,7 @@
 | 優先度 | 対象 | 現在の処理 | 主な問題 |
 |---|---|---|---|
 | P0 | `internal_get_matching` | 64件batch + 近傍優先、外部pollは500ms | 空き定義の集約、500msの最小待ち |
-| P0 | `app_get_nearby_chairs` | `LATERAL` + `NOT EXISTS` の集合SQL | 最新statusの相関subquery、複数回中央値未計測 |
+| P0 | `app_get_nearby_chairs` | `LATERAL` + `NOT EXISTS` の集合SQL | INDEX後runでも累積129.226秒・平均109.980ms。status相関subqueryと最新位置履歴のsort |
 | P0 | 通知2経路 | 30ms pollingごとに認証、最新ride、status、表示データを取得 | 60秒で通知GET 34,360回、同じレスポンスの再計算 |
 | P0 | `get_chair_stats` | 1集約SQLを実装・ベンチ検証済み | 初期データ全件の旧実装との照合は未実施 |
 | P0 | `app_post_ride_evaluation` | DB transaction中に外部決済HTTPと最大5回の100ms sleep | connection・snapshot・lockを外部I/O中も保持 |
@@ -121,6 +127,7 @@
 - [x] INDEX、nearbyのN+1解消、owner椅子一覧の事前絞り込みを実装済みであることを確認する
 - [x] `users(access_token)` と `users(invitation_code)` は既存の `UNIQUE` INDEXで検索できることを確認する
 - [x] nearbyの「割当済み判定には `evaluation IS NULL` を利用できる」という前提が、評価と `COMPLETED` を同じtransactionで確定する仕様に基づくことを確認する
+- [x] `coupons.used_by` 全走査をprepared statement統計で特定し、単独INDEX追加を3走比較する
 - [ ] 新しい施策は1つずつ単独ベンチし、現在のRust実装で改善することを確認してから採用する
 - [ ] 完了数だけでなく、空車移動距離、乗車中移動距離、matching / pickup / drive評価を記録してスコアの増減理由を分解する
 - [ ] 空車移動距離の0.1点を単独で稼ごうとせず、pickup遅延と完了数への悪影響を含む総スコアでpolicyを比較する
@@ -142,8 +149,14 @@
 - [ ] エンドポイント別のp50 / p95 / p99を一時的な計測で採取する
 - [ ] 各エンドポイントの30ms超過率と、1tick中に完了できなかった回数を記録する
 - [ ] sqlx poolの `size` / `idle` / `in_use` と取得待ち時間を1秒ごとに採取する
-- [ ] MySQLのstatement digestを回数、累積時間、平均時間で並べる
-- [ ] `docker stats` でwebapp、MySQL、nginx、ベンチマーカーのCPU・メモリ・I/Oを同時に採取する
+- [x] MySQLのprepared statement統計をSQL本文別に回数、累積、平均、最大、走査行数で並べる
+  - SQLxの個別queryはdigest表で `statement/com/Execute` へ集約されるため、`prepared_statements_instances` をSQL本文でgroup化
+  - `coupons.used_by` 変更前: 60,993回、56.615秒、平均0.928ms、61,616,755行走査
+- [ ] 次回のprepared statement計測ではrun前後の `Connections` と
+  `Performance_schema_prepared_statements_lost` も保存する
+  - 終了前に閉じたconnectionのinstanceは集計から消えるため、現在値だけでは全期間を保証しない
+- [x] `docker stats` でwebapp、MySQL、nginx、ベンチマーカーのCPU・メモリ・I/Oを同時に採取する
+  - 診断run中の2 snapshotでMySQL 188.32–239.10%、webapp 70.65–89.16%
 - [ ] 全エラー件数の合計と、200件のエラー予算に対する消費率を記録する
 - [ ] 座標・status系APIのp99を評価遅延予算と比較する
   - matching評価: 100tick = 3秒未満
@@ -352,7 +365,8 @@
 
 ### SQL: `performance_schema`、`sys` schema、`pt-query-digest`
 
-- [ ] benchmark直前にstatement digestをresetし、終了直後に回数、合計、平均、最大、rows examinedを保存する
+- [x] benchmarkごとのMySQL再起動で統計をresetし、終了直後に回数、合計、平均、最大、rows examinedを保存する
+  - prepared statementはdigest表では本文別にならないため、`prepared_statements_instances` も保存する
 - [ ] `sys.statement_analysis`、`sys.statements_with_full_table_scans`、`sys.schema_table_statistics` を同じrunで保存する
 - [ ] transaction、data lock、metadata lock、pool待ちを同じ時刻軸へ載せる
 - [ ] slow logを診断runだけ有効化し、30ms目標より短い `long_query_time=0.01` から開始する
@@ -615,8 +629,13 @@
 - [ ] 招待回数をcoupon全件から数えず、inviterのcounterを条件付きUPDATEする案を比較する
 - [ ] 先行追加した `coupons(code)` の利用回数とwrite costを再評価する
 - [ ] 未使用coupon検索用 `(user_id, used_by, created_at)` を比較する
-- [ ] `WHERE used_by = ?` 用INDEXまたは `UNIQUE(used_by)` を比較する
-- [ ] `coupons(used_by)` を単独追加し、ride履歴・coupon claimの実行計画とwrite costを比較する
+- [x] `WHERE used_by = ?` 用の非unique INDEXを比較する
+  - 1,331行のtable scan・0.551msから1行のB-tree lookup・0.025msへ変化
+  - 制約変更を混ぜないため `UNIQUE(used_by)` は別検証にする
+- [x] `coupons(used_by)` を単独追加し、ride履歴の実行計画と60秒ベンチを比較する
+  - 変更後run 3: 56,383回、3.386秒、平均0.060ms、37,398行走査
+- [ ] `coupons(used_by)` のUPDATE回数・latency、INDEX byte数、buffer pool I/Oを変更前後で測る
+  - 今回は総合ベンチでnet positiveを確認したが、write costの内訳は未計測
 - [ ] coupon書き込みコストを含め、不要・重複INDEXを残さない
 
 ### 認証
@@ -806,7 +825,7 @@
 ### 性能
 
 - [x] 同じCPU・メモリ・走行時間で変更前後を比較する
-- [ ] 最低3回実行し、中央値とばらつきを残す
+- [x] 最低3回実行し、中央値とばらつきを残す
 - [x] `pass`、スコア、全エラーコードを記録する
 - [ ] 完了ride数を独立して記録する
 - [ ] 空車移動距離×0.1、乗車中移動距離、完了ride数×5の各スコア寄与を記録する
@@ -815,24 +834,26 @@
 - [ ] 通知はcache hit率、wake latency、recipientあたりSQL数、再接続時replay件数を記録する
 - [ ] 座標queueはdepth、最古未flush時間、batch件数、drop / retry数、status反映遅延を記録する
 - [ ] エンドポイント件数とp50 / p95 / p99を記録する
-- [ ] SQL回数、累積時間、走査行数を記録する
+- [x] SQL回数、累積時間、走査行数を記録する
 - [ ] pool待ち、MySQL CPU、webapp CPU、block I/Oを記録する
 - [ ] 改善しなければ変更を重ねずrevert候補として記録する
 
 ## 推奨する直近の実行順
 
-1. 現在の近傍優先matcherを同一revisionで3回計測し、16,909点の再現性とスコア内訳を確認する
-2. matcherへ地域間の距離上限を追加し、500 / 100 / 30msの実行間隔と組み合わせて比較する
-3. JSON通知のpayload cacheとlong pollingを実装し、30ms pollingよりDB負荷と通知遅延が減るか確認する
-4. 座標更新の非同期queueとbulk INSERTを単独実験し、3秒制約とstatus遷移を検証する
-5. 決済へ `Idempotency-Key` を導入してGET照合をなくす
-6. 外部決済HTTPをDB transactionの外へ出し、障害時の二重決済・欠落を回復できるようにする
-7. nearbyの未完了判定を `evaluation IS NULL` へ単純化し、座標だけの短時間cacheを比較する
-8. app history、owner sales、ride作成のN+1を順に除去する
-9. current-state別表で最新位置・status・statsをO(1)化する
-10. JSON long pollingで不足する場合だけSSEへ移し、状態変更時の即時pushまで実装する
-11. 貪欲matcherと最小費用二部マッチングを比較する
-12. 最後にpool、MySQL、nginx、compiler設定をprofileに基づいて調整する
+1. nearbyの未完了判定を `evaluation IS NULL` へ単純化し、現在のstatus相関subqueryを除去する
+2. nearbyの最新位置で、既存 `(chair_id, created_at)` のbackward scan可否とsortが残る理由を
+   `EXPLAIN ANALYZE` で特定し、必要ならprojectionを狭めたcovering案を単独比較する
+3. 1と2で不足する場合、chairごとのcurrent location別表と履歴tableを同じtransactionで更新する
+4. chair statsと最新statusを含む通知payload cacheを実装し、30ms pollingよりDB負荷と通知遅延が減るか確認する
+5. 座標更新の非同期queueとbulk INSERTを単独実験し、3秒制約とstatus遷移を検証する
+6. matcherへ地域間の距離上限を追加し、500 / 100 / 30msの実行間隔と組み合わせて比較する
+7. 決済へ `Idempotency-Key` を導入してGET照合をなくす
+8. 外部決済HTTPをDB transactionの外へ出し、障害時の二重決済・欠落を回復できるようにする
+9. app history、owner sales、ride作成のN+1を順に除去する
+10. current-state別表で最新status・statsをO(1)化する
+11. JSON long pollingで不足する場合だけSSEへ移し、状態変更時の即時pushまで実装する
+12. 貪欲matcherと最小費用二部マッチングを比較する
+13. 最後にpool、MySQL、nginx、compiler設定をprofileに基づいて調整する
 
 ## 記録ルール
 

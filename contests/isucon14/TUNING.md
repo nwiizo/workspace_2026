@@ -72,7 +72,7 @@
 
 | 改善対象 | 現在の状態 | 次の検証 |
 |---|---|---|
-| 高頻度検索へのINDEX | 主要INDEXと `coupons(code)` を追加済み。`users(access_token)` と `users(invitation_code)` は既存の `UNIQUE` INDEXで充足 | `coupons(used_by)` を単独比較し、未使用INDEXを増やさない |
+| 高頻度検索へのINDEX | 主要INDEX、`coupons(code)`、`coupons(used_by)` を追加済み。`users(access_token)` と `users(invitation_code)` は既存の `UNIQUE` INDEXで充足 | prepared statement統計で次の全件走査を探し、未使用INDEXを増やさない |
 | nearbyの2N+1解消 | `LATERAL` と `NOT EXISTS` で1 SQL化済み | 未完了判定を `rides.evaluation IS NULL` へ単純化して比較 |
 | owner椅子一覧をownerで先に絞る | 実装・単独ベンチ済み | 最新位置と累積距離のcurrent-state化 |
 | 最新位置と累積距離をUPSERT管理 | 未実装 | 履歴INSERTと同じtransactionでcurrent-stateを更新 |
@@ -109,6 +109,28 @@ matcherは単純なマンハッタン距離だけでなく、椅子モデルのs
 
 ## はじめに知っておく用語
 
+### この章の使い方
+
+性能用語は、名前だけ覚えても施策の判断には使えません。この章では各用語を、
+「何を表すか」「どのlogや数値で観測するか」「性能へどう影響するか」「何を
+誤解しやすいか」の順で説明します。
+
+たとえば「INDEXを追加した」という事実だけでは改善とは判断しません。対象SQLの
+実行頻度、変更前後の実行計画、走査行数、60秒ベンチの正当性とスコア、追加された
+書込みコストまでつないで初めて採否を決められます。この記録での基本単位は、次の
+因果の鎖です。
+
+```text
+変更
+  -> 内部の処理経路が変わったか
+  -> SQL時間・走査行数・待ち時間が変わったか
+  -> endpointの応答と状態進行が変わったか
+  -> 完了ride数・正当性・スコアが変わったか
+```
+
+途中の矢印を計測していない場合は、「改善した理由」ではなく「考えられる理由」と
+区別します。
+
 ### 計測と判断
 
 #### ベンチマーク
@@ -122,6 +144,41 @@ ISUCON14の公式ベンチマーカーは、単にHTTP requestを大量送信す
 総スコアは上がりません。最終行の `pass`、スコア、error mapに加え、途中の
 `eval reqs` とmatching / pickup / drive不満率を読みます。
 
+#### score・`pass`・error map・最終評価数
+
+scoreは、60秒間に世界をどこまで正しく進められたかをまとめた結果です。単純な
+HTTP request数ではありません。benchmarker実装上の `pass=true` は、worldのtick処理を
+止めるcritical errorと決済errorによってscenarioの `failed` flagが立たなかったことを
+表します。non-critical errorはerror mapへ加算されても `pass=true` のままになり得るため、
+`pass` とerror mapを必ず別々に確認します。scoreが高くても `pass=false` なら、そのrunは
+採用できません。
+
+error mapは、どの種類の失敗が何回起きたかを示します。timeoutが多い場合も、
+必ずしもそのendpoint自身が遅いとは限りません。先に重いSQLがDB connectionを
+占有し、別endpointを巻き込んでいる場合があるため、発生順とserver logを合わせます。
+
+最終評価数は、依頼から決済・評価まで完了したride数に近い、状態進行の重要な指標です。
+scoreと同じ方向へ増えたかを見ると、「軽いAPIだけ大量に返した」のか、「完了する仕事が
+実際に増えた」のかを区別しやすくなります。
+
+#### tick・状態進行・不満率
+
+ISUCON14のbenchmarkerは約30msを1 tickとして利用者と椅子の行動を進めます。
+通知や座標反映が1 tick遅れると、次の操作開始も遅れます。個々の遅延は小さくても、
+matching、pickup、drive、決済まで連鎖すると60秒間の完了数へ影響します。
+
+benchmark logの3つの不満率は、次の判定を集計しています。
+
+1. matching: 依頼からmatchまでが100 tick未満だったrideの割合を反転
+2. dispatch: 割当時の椅子から乗車地点までの距離が `10 × 椅子のspeed` 未満だった
+   rideの割合を反転
+3. 実移動: pickupの実時間と理想時間の差が15 tick未満、driveの差が5 tick未満という
+   2判定を合算し、`完了ride数 × 2` で割った成功率を反転
+
+第2値は時間の実測ではなく、距離とspeedによる割当品質の判定です。第3値もpickupと
+driveを分離した値ではなく、2判定の平均です。原因を直接示すCPU profilerではないため、
+個別interval、endpoint latency、SQL logと合わせてボトルネックを絞ります。
+
 #### 実測値・推定値・中央値
 
 実測値は、そのrunでログに出た事実です。推定値は、限られた実測から「同じ条件を
@@ -132,6 +189,36 @@ ISUCON14の公式ベンチマーカーは、単にHTTP requestを大量送信す
 88,638点なら、観測範囲は76,761–88,638点、推定代表値は中央値80,354点です。
 観測範囲の外へ次回値が出ない保証はありません。
 
+#### run・標本数 `n`・観測範囲
+
+runは、初期化から60秒ベンチ終了までの1回です。`n=3` は同じ条件を3回測ったという
+意味で、3倍の時間を測った意味ではありません。観測範囲は最小値から最大値までです。
+標本数が少ないため、範囲は将来の上下限を保証しません。
+
+中央値は値を小さい順に並べた中央です。極端に遅い1走の影響を平均より受けにくいため、
+この記録では代表値に使います。ただし中央値だけでは揺れ幅が消えるため、必ず各runと
+観測範囲も残します。
+
+#### 対照・変更変数・noise
+
+対照は変更前の比較対象、変更変数はその実験で意図的に変えたものです。1つのrunで
+SQL、poll間隔、DB設定を同時に変えると、scoreが上がってもどれが効いたか分かりません。
+そこで原則として1施策ずつ比較します。
+
+noiseは、施策以外の揺らぎです。初期データの乱数、OS scheduler、cacheの温まり方、
+同時実行の順序、ホスト上の別processなどが含まれます。CPU / memory条件を固定し、
+複数runを残すのはnoiseと施策効果を混同しにくくするためです。
+
+#### 相関・因果・仮説・反証条件
+
+score上昇とSQL時間短縮が同時に起きたことは相関です。変更したINDEXによって
+実行計画がtable scanからindex lookupへ変わり、走査行数が減り、同じ正当性で
+複数runの処理量が増えたところまで確認すると、因果の説明が強くなります。
+
+仮説は変更前に予想した処理経路、反証条件は「何が起きたらその予想を捨てるか」です。
+たとえばcovering INDEXの仮説なら、実行計画がcoveringにならない、走査は減っても
+scoreが継続的に下がる、書込み待ちが増える、のいずれかを反証条件にできます。
+
 #### latency・throughput・p95 / p99
 
 latencyは1回の処理が終わるまでの時間、throughputは一定時間に終えられる処理量です。
@@ -141,6 +228,33 @@ latencyは1回の処理が終わるまでの時間、throughputは一定時間�
 p95は測定値を短い順に並べた95%地点、p99は99%地点です。p99が高いと、少数の
 requestだけが大きく遅れる「裾の長い」分布だと分かります。ISUCON14は30msで
 1tick進むため、平均だけでなく30ms超過率とp95 / p99が重要です。
+
+平均、中央値、p95、p99は互いに置き換えられません。100件を短い順に並べた場合、
+p95はおおむね95番目、p99は99番目の値です。平均だけが悪化した場合も、全体が少しずつ
+遅くなった場合と、少数の極端値に引っ張られた場合の両方があります。分布全体、
+histogram、閾値超過率を見て仮説を分けます。p99が悪化した場合は、lockやqueueによる
+一部の長い待ちを候補にし、同時刻のserver側の待ちで確認します。
+
+#### 壁時計時間・CPU時間・累積SQL時間
+
+壁時計時間は、人が時計で測る開始から終了までの時間です。CPU時間はCPU coreが
+実際に命令を実行した時間です。SQLの累積時間は、同じSQLを並行実行した各回の時間を
+足した値です。
+
+60秒ベンチ中に、SQL累積時間が120秒になることは矛盾ではありません。2本以上が
+並行して待機・実行されれば、個々の経過時間の和は60秒を超えます。累積時間は
+「DBがそのSQLへどれだけ多くの時間を費やしたか」の順位付けに使い、endpointの
+壁時計latencyとは区別します。
+
+#### concurrency・queue・Littleの関係
+
+concurrencyは同時に処理途中になっている仕事の数です。throughputを毎秒100件、
+平均latencyを50msとすると、安定状態では平均して約5件が処理途中になります
+（`100 × 0.05 = 5`）。latencyが伸びたまま到着数が同じなら、処理途中の仕事が増え、
+connection poolやqueueの上限へ近づきます。
+
+これは平均値の関係であり、個々のrequestの完了時間を予測する式ではありません。
+到着がburstする場合や上限でrejectする場合は、queue depthとp95 / p99も必要です。
 
 #### ボトルネック
 
@@ -153,6 +267,20 @@ DB connection待ち、diskへのflush、外部HTTP、lock、短すぎるpolling�
 後にmatcherの待ちや決済HTTPが目立つのは正常な変化です。変更後は必ず計測し直し、
 前回の分析をそのまま使い続けません。
 
+#### utilization・saturation・backpressure
+
+utilizationは資源が仕事をしていた割合です。DockerのCPU 100%は原則1 core相当なので、
+MySQL 240%は約2.4 coreを使用している読み方になります。ただしCPUが高いだけでは、
+有益な処理か、無駄なscanかは分かりません。
+
+saturationは、資源が処理しきれず仕事が待ち行列へ溜まった状態です。DB poolの
+取得待ち、MySQLの `Threads_running`、disk I/O待ち、queue depthなどで観測します。
+CPU 60%でも、単一lockやconnection上限でsaturationすることがあります。
+
+backpressureは、下流が処理できないときに上流の投入速度を抑える仕組みです。無制限に
+taskを生成するより安全ですが、待ちがどこへ移ったかを隠さないよう、queue長、最古待ち
+時間、timeout、drop数を記録します。
+
 ### SQLとMySQL
 
 #### SQL
@@ -164,6 +292,27 @@ MySQLが解析・実行し、結果を返し、Rustが型へdecodeする複数�
 SQLの性能は文の長さでは決まりません。何行を読み、どのINDEXを使い、途中結果を
 何行作り、何回呼ばれるかで決まります。単発0.1msのSQLでも60秒に20万回呼ばれれば
 累積負荷になります。
+
+#### table・row・column・schema
+
+tableは同じ形のデータを持つ集合、rowは1件の記録、columnは各項目です。schemaは
+table、column、型、制約、INDEXを含むデータ構造の定義です。アプリコードだけを
+変えても、`POST /api/initialize` がschemaを作り直すなら、初期化SQLにも変更を
+反映しないと次のrunで消えます。
+
+row数だけで重さは決まりません。1 rowの幅、返すcolumn数、同じrowを読む回数、
+buffer poolへ収まるか、条件で何件へ絞れるかが効きます。`SELECT *` は不要なcolumnも
+読み、covering INDEXの選択肢を狭めるため、hot pathでは必要列を確認します。
+
+#### PRIMARY KEY・secondary INDEX・clustered構造
+
+PRIMARY KEYはrowを一意に識別するキーです。InnoDBではtable本体がPRIMARY KEY順の
+B-treeとして保持され、leafにrow全体があります。これをclustered INDEXと呼びます。
+
+PRIMARY KEY以外のINDEXはsecondary INDEXです。そのleafにはINDEX列とPRIMARY KEYが
+入ります。secondary INDEXで候補を見つけた後、必要なcolumnがINDEX内にない場合は
+PRIMARY KEYを使ってtable本体をもう一度読みます。したがって、候補が大量にある
+低選択性INDEXは、全件走査より遅いこともあります。
 
 #### INDEX
 
@@ -180,6 +329,65 @@ INDEXは無料ではありません。INSERT / UPDATEごとに索引も更新し
 書き込み増加を対応付けます。詳細は [INDEXの記録](./tuning/01-indexes.md) を参照して
 ください。
 
+#### B-tree・page・root・leaf
+
+B-treeは、並んだkeyを一定個数ずつpageへ格納し、rootからbranchをたどってleafへ
+到達する木構造です。1 rowずつ先頭から比べるのではなく、各段で候補範囲を狭めます。
+そのため位置探索は概念上 `O(log N)`、見つけた後の範囲読みは一致件数に比例します。
+
+実際の速度は計算量だけでなくpage I/Oで決まります。必要pageがbuffer poolにあれば
+memoryから、なければstorageから読みます。INDEXを増やしすぎると全INDEXのpageが
+memoryを競合し、書込み時のpage分割やdirty page flushも増えます。
+
+#### cardinality・selectivity・一意性
+
+cardinalityは、あるcolumnに異なる値がおおよそ何種類あるかです。selectivityは、
+条件によってtable全体からどれだけ少数へ絞れるかです。厳密な表現は用途で異なりますが、
+この記録では「一致行数 ÷ 全行数」が小さいほど選択性が高い、と読みます。
+
+100万rowに一意なride IDが100万種類あるcolumnの等価検索は、通常1 rowへ絞れるため
+高選択性です。true / falseしかないcolumnが半々なら50万row残るため低選択性です。
+`UNIQUE` は重複を禁止する制約であり、高選択性になりやすいものの、INDEXを速くする
+ためだけに既存データの意味を変えて追加してはいけません。
+
+MySQLのoptimizerはtable統計からcardinalityとcostを見積もります。偏ったデータや
+古い統計では見積りを外すため、`EXPLAIN` の推定 `rows` と `EXPLAIN ANALYZE` の
+`actual rows` を比較します。
+
+#### 複合INDEX・左端prefix・range条件
+
+複合INDEX `(a, b, c)` は、まず `a`、同じ `a` の中で `b`、さらに同じ組の中で `c`
+という辞書順で並びます。`WHERE a = ? AND b = ?` は連続範囲を直接探せますが、
+`WHERE b = ?` だけでは異なる `a` の範囲に同じ `b` が散らばるため、原則として
+効率よく絞れません。これが左端prefixです。
+
+`a = ? AND b > ?` のようにrange条件へ入った後は、`c` を追加しても探索範囲を
+さらに狭められない場合があります。ただしIndex Condition Pushdown、covering、
+`ORDER BY` 回避には役立つ場合があるため、列順は「WHEREに出た順」ではなく、
+等価条件、range、並び順、返す列を合わせて実行計画で決めます。
+
+#### covering INDEX
+
+検索条件、並び順、返すcolumnがすべて1本のINDEXに含まれ、table本体を読まずに
+結果を返せる状態です。実行計画では `Using index` や `Covering index lookup` が
+手掛かりになります。
+
+読み取り経路は短くなりますが、返すcolumnをすべてINDEXへ加えるとleafが太くなり、
+1 pageに入るentryが減ります。その結果、memory、storage、INSERT / UPDATEの負荷が
+増えます。「coveringになった」ことと「総合ベンチが速くなった」ことは別に検証します。
+
+#### `ORDER BY`・sort・backward index scan
+
+INDEXの並びが `ORDER BY` と合えば、MySQLは別のsortを作らず順番どおり読めます。
+昇順INDEX `(chair_id, created_at)` でも、`chair_id = ?` の範囲を末尾から逆向きに
+読むbackward index scanによって `created_at DESC` を処理できる場合があります。
+したがって、降順が欲しいという理由だけで `DESC` INDEXを重複追加しません。
+
+実行計画にsortが残る場合は、joinやsubqueryで順序を維持できない、複数chairをまとめて
+並べ直す、projectionが広い、optimizerが別INDEXを安いと判断した、などの理由を先に
+調べます。降順INDEXは、複合列にASC / DESCが混在し既存INDEXの逆向き走査では
+順序を作れない場合などに比較対象になります。
+
 #### 全件走査
 
 条件に合う行を探すため、tableまたはINDEXの広い範囲を先頭から確認する処理です。
@@ -189,6 +397,49 @@ MySQLの実行計画では `Table scan`、`rows`、`actual rows` などを確認
 全件走査そのものが常に悪いわけではありません。500行の大半を返す処理では、
 INDEXを何度もたどるよりscanが速い場合があります。問題は「返すのは1行なのに
 数万行読む」ことや、それが高頻度経路で繰り返されることです。
+
+#### index lookup・index scan・table scan
+
+index lookupは、等価条件などでB-tree上の狭い位置へ直接移動する処理です。index scanは
+INDEXを順に広く読む処理で、table本体よりcolumnが少ない、`ORDER BY`を省ける、といった
+利点はありますが、読むentryが多ければ高コストです。table scanはtable本体を広く
+読む処理です。
+
+「INDEXを使った」という一言ではlookupとscanを区別できません。返す1 rowのために
+何entry読んだか、実行計画のoperation、`rows examined`を合わせて確認します。
+
+#### rows examined・rows sent・loops
+
+rows examinedは条件判定やjoinのために調べたrow数、rows sentはclientへ返したrow数です。
+1 row返すSQLで毎回1,000 row調べていれば、差分999 row分が探索コストです。ただし
+aggregationは多くのrowから1 rowを作るため、この差だけで無駄とは判断しません。
+
+`loops` は実行計画のその段階が何回繰り返されたかです。内側が0.1msでも外側1万rowに
+対して1万回動けば累積1秒以上になります。`actual time=a..b rows=r loops=l` の時間は
+versionやoperationによって1 loopあたりの平均として表示されるため、親子operationと
+総実行時間を合わせて読みます。
+
+#### prepared statement・placeholder・digest
+
+prepared statementは、`?` の位置へ値を後からbindして同じSQL形を繰り返し実行する
+仕組みです。値をSQL文字列へ連結しないため安全性を高め、protocol上でSQL形と値を
+分けられます。SQLxのMySQL driverもこの経路を使います。
+
+digestは、定数を正規化して同じ形のSQLを集約する識別です。ただし今回の
+`events_statements_summary_by_digest` ではprepared statement本文が
+`statement/com/Execute` へまとまり、本文別の順位を直接得られませんでした。
+そこで `prepared_statements_instances` を補助的に使いました。
+
+このtableのtimerはpicosecond単位なので、秒は `1e12`、millisecondは `1e9` で割ります。
+複数connectionの平均は各行の `AVG_TIMER_EXECUTE` を単純平均せず、
+`SUM(SUM_TIMER_EXECUTE) / SUM(COUNT_EXECUTE)` で重み付き平均を作ります。
+
+ただし、行は現在存在するprepared statement instanceに対応し、deallocateまたは
+connection終了で消えます。そのためrun中に閉じたconnectionの実行は終了時集計から
+欠ける可能性があります。`Performance_schema_prepared_statements_lost=0` は
+instrument枠不足がなかったことを示しますが、connection終了による欠落がないことまでは
+証明しません。完全な全期間traceではなく、同一条件でhot SQLを順位付けする観測として
+扱います。
 
 #### 実行計画と `EXPLAIN ANALYZE`
 
@@ -200,6 +451,25 @@ INDEXを何度もたどるよりscanが速い場合があります。問題は�
 あります。`loops` が外側の行数だけ増えていれば、相関subqueryやnested loopが
 繰り返されていると判断できます。更新SQLへ無造作に使うと実データを変更するため、
 この記録では読み取りSQLに限定しています。
+
+`EXPLAIN` の `key` は選ばれたINDEX、`possible_keys` は候補、`rows` は推定走査行数、
+`filtered` はその後の条件を通る割合の推定です。`key` が表示されても広いindex scan
+なら十分に速いとは限りません。
+
+`EXPLAIN ANALYZE` は実データを読み、cache状態や同時負荷の影響も受けます。1回の
+0.025msを将来の保証にせず、処理経路の確認と単発差の参考に使い、採否は高頻度時の
+集計と60秒ベンチで決めます。
+
+#### join・nested loop・相関subquery
+
+joinは複数tableのrowを条件で結びます。nested loopは、外側のrowごとに内側を探す
+実行方法です。外側が少なく、内側がINDEX lookupなら有効ですが、外側1万rowごとに
+内側をscanすると走査量が掛け算で増えます。
+
+相関subqueryは、内側のqueryが外側rowの値を参照します。読みやすく正しい表現でも、
+外側rowごとに実行される可能性があります。`loops`、走査行数、同じ意味を現在状態の
+columnやjoinで表せるかを確認します。書換え時は `NULL`、履歴欠損、同率の最新時刻など、
+境界条件で結果集合が同じかを先に検証します。
 
 #### materialize
 
@@ -232,6 +502,21 @@ transactionが長いと、その間DB connection、snapshot、行lockを保持�
 資源を占有します。短くする価値はありますが、正当性を保つ更新まで別々にすると
 中間状態や欠落が見えるため、境界設計が先です。
 
+#### lock・deadlock・isolation
+
+lockは、同じrowや範囲を並行更新したときに矛盾を起こさないための待ちです。INDEXが
+ない更新は広い範囲を調べ、意図より広いlock範囲や長い保持時間につながることがあります。
+待ちの原因はslow query logだけでなく、InnoDB status、deadlock記録、transaction時間で
+確認します。
+
+deadlockは、transaction AがBのlockを、BがAのlockを待つ循環です。MySQLは片方を
+ROLLBACKして循環を解きます。単にretryを増やす前に、更新順序を統一する、検索範囲を
+INDEXで狭める、transactionを短くする、の順で原因を減らします。
+
+isolation levelは、並行transactionからどの時点のデータを見せるかを決めます。
+弱めれば必ず安全に速くなるわけではありません。rideとcouponの二重割当など、守るべき
+不変条件を列挙してから変更します。
+
 #### autocommit
 
 明示的なtransactionを開始していないとき、SQL文1つを1transactionとして自動で
@@ -254,6 +539,28 @@ SQLの意味を変えず待ちを減らす一方、電源・OS障害時にcommit
 
 ### アプリケーションと通信
 
+#### process・container・CPU core
+
+processは実行中のプログラム、containerはprocess群へfilesystem、network、資源上限などの
+境界を与える仕組みです。containerは仮想machineそのものではなく、CPUはホストやColimaの
+割当を共有します。この環境では4 CPU・4 GiBを固定しているため、MySQL、webapp、nginx、
+benchmarkerが同じ4 coreを取り合います。
+
+CPU使用率100%は通常1 coreを使い切った状態です。webappが90%、MySQLが240%なら、
+合計約3.3 core相当ですが、測定時刻が違う値や短時間sampleは単純加算できません。
+CPUだけでなく、block I/O、memory、connection待ちと同じ時刻で記録します。
+
+#### async・concurrency・parallelism
+
+asyncは、networkやDB待ちの間に同じthreadで別taskを進めやすくする実装方式です。
+concurrencyは複数の仕事が途中状態にあること、parallelismは複数CPU coreで同時に
+命令を実行することです。asyncにしただけでCPU計算が複数coreへ自動分散されるとは
+限りません。
+
+async taskがDB queryを待つ間はthreadを占有しなくても、DB connectionは借りたままの
+場合があります。task数、thread数、pool上限は別の資源なので、どこで待っているかを
+区別します。
+
 #### connection
 
 2つのprocessが通信するための経路です。DBならRustとMySQLのTCP connection、
@@ -273,6 +580,17 @@ handlerはpoolから1本借り、SQLやtransactionを終えたら返します。
 上限を増やせば必ず速くなるわけではありません。MySQLが処理できる量を超えると
 query同士の競合、memory、context switchが増えます。`size`、`idle`、`in_use`、
 取得待ち時間、MySQLの `Threads_running` を一緒に測って調整します。
+
+#### cache・hit / miss・invalidation
+
+cacheは、計算結果やDBから読んだ値を近い場所へ一時保存し、同じ仕事を省く仕組みです。
+hitはcacheから返せた回、missは元のDBやserviceを読む必要があった回です。hit率だけで
+なく、miss時latency、memory量、再起動後の再構築時間を測ります。
+
+invalidationは、元データが変わったとき古いcacheを捨てる処理です。cache導入で難しい
+のは保存より、「いつ無効にするか」です。ride status、chair位置、fareのように更新頻度と
+正当性要件が異なる値を1つのsnapshotへまとめると、一部だけ古い状態を返す危険があります。
+まず不変条件と更新eventを列挙し、miss時に正しいDBへfallbackできるようにします。
 
 #### HTTP connection poolと `reqwest::Client`
 
@@ -317,6 +635,14 @@ retryは一時的な通信失敗時に同じ処理を再試行すること、bac
 難しい用語が必要な箇所では、定義だけでなく、観測するlog、性能への影響、誤った
 判断になりやすい点まで対応付けます。
 
+### 用語を実装へ結び付けるための公式仕様
+
+- [MySQL 8.4: Clustered and Secondary Indexes](https://dev.mysql.com/doc/refman/8.4/en/innodb-index-types.html)
+- [MySQL 8.4: ORDER BY Optimization](https://dev.mysql.com/doc/refman/8.4/en/order-by-optimization.html)
+- [MySQL 8.4: EXPLAIN Statement](https://dev.mysql.com/doc/refman/8.4/en/explain.html)
+- [MySQL 8.4: Performance Schema Event Timing](https://dev.mysql.com/doc/refman/8.4/en/performance-schema-timing.html)
+- [MySQL 8.4: prepared_statements_instances](https://dev.mysql.com/doc/refman/8.4/en/performance-schema-prepared-statements-instances-table.html)
+
 ## ベンチマーク記録
 
 | 記録 | 変更 | 60秒結果 | 値の扱い |
@@ -336,6 +662,7 @@ retryは一時的な通信失敗時に同じ処理を再試行すること、bac
 | [12-status-covering-index.md](./tuning/12-status-covering-index.md) | 最新status検索をcovering INDEX化 | 実行計画は改善、45,075点のため不採用 | 実測n=1・未推定 |
 | [13-mysql-commit-durability.md](./tuning/13-mysql-commit-durability.md) | redo / binary logのcommit同期を緩和 | 3走中央値53,198→60,102点、`COMMIT`平均中央値48.6%減 | 各条件実測n=3、中央値を推定代表値に使用 |
 | [14-payment-client-reuse.md](./tuning/14-payment-client-reuse.md) | 決済HTTP clientとconnection poolを再利用 | 3走76,761–88,638点、中央値80,354点、エラー0 | 実測n=3、中央値を推定代表値に使用 |
+| [15-coupon-used-by-index.md](./tuning/15-coupon-used-by-index.md) | rideに適用済みのcoupon検索をB-tree lookup化 | 3走88,805–100,606点、中央値93,606点、エラー0 | 実測n=3、中央値を推定代表値に使用 |
 | [80-rust-implementation.md](./tuning/80-rust-implementation.md) | Rust / sqlxとrelease buildの知識 | 再build 30分52秒→11.02秒 | build時間の実測。スコア推定対象外 |
 | [90-local-environment.md](./tuning/90-local-environment.md) | build context、BuildKit、固定Colima資源 | context 467MB→32.5KB | sizeの実測。スコア推定対象外 |
 
