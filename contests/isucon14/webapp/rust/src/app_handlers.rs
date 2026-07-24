@@ -472,8 +472,9 @@ async fn app_post_ride_evaluation(
 
     // The evaluation transaction also performs an external payment request.
     // Keep the assigned chair unavailable after the DB commit until Axum has
-    // consumed the response body. Moving this guard into the response body also
-    // releases it when the client disconnects and the body is dropped.
+    // consumed or dropped the response body. Dropping the guard starts the
+    // tracker's measured delivery grace because handing the body to Hyper can
+    // still precede the benchmark client receiving that response.
     let active_evaluation = ride
         .chair_id
         .clone()
@@ -799,6 +800,10 @@ async fn app_get_nearby_chairs(
         longitude: query.longitude,
     };
 
+    // Preserve evaluations that overlap this request even when the SQL waits
+    // for a pool connection or an evaluation transaction. Active IDs alone
+    // can miss an evaluation that both starts and ends during that wait.
+    let evaluation_snapshot = active_ride_evaluations.snapshot();
     let chairs: Vec<NearbyChair> = sqlx::query_as(
         r#"
 SELECT chairs.id,
@@ -817,11 +822,11 @@ WHERE chairs.is_active = TRUE
     .fetch_all(&pool)
     .await?;
 
-    // SQL alone changes from "busy" to "free" at evaluation commit, slightly
-    // before the evaluation HTTP response is returned. Exclude evaluations
-    // whose handlers are still running instead of guessing that interval from
-    // rides.updated_at and a fixed cooldown.
-    let evaluating_chair_ids = active_ride_evaluations.chair_ids();
+    // SQL changes from "busy" to "free" at evaluation commit, before the client
+    // necessarily receives the response. The start snapshot, completion
+    // revision, and short delivery grace cover evaluations that overlap this
+    // request without deriving the boundary from rides.updated_at.
+    let evaluating_chair_ids = active_ride_evaluations.chair_ids_overlapping(evaluation_snapshot);
     let coordinates = latest_chair_locations
         .coordinates_for(chairs.iter().map(|chair| chair.id.as_str()))
         .await;

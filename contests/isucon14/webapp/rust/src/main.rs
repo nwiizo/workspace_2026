@@ -125,6 +125,7 @@ async fn post_initialize(
         pool,
         auth_cache,
         latest_chair_locations,
+        active_ride_evaluations,
         maintenance_lock,
         ..
     }): State<AppState>,
@@ -134,10 +135,12 @@ async fn post_initialize(
     // while init.sh drops and recreates tables. This also prevents a coordinate
     // request from observing an old cache with an empty current-state table.
     let _maintenance_guard = maintenance_lock.write().await;
-    // Invalidate before the first destructive initialization step. If init.sh
-    // or a later refresh fails, requests must fall back to the database instead
-    // of authenticating a token that only existed in the previous generation.
+    // Invalidate process-local state before the first destructive initialization
+    // step. If init.sh or a later refresh fails, requests must neither
+    // authenticate a token nor retain an evaluation lease from the previous
+    // database generation.
     auth_cache.clear();
+    active_ride_evaluations.clear();
     let output = tokio::process::Command::new("../sql/init.sh")
         .output()
         .await?;
