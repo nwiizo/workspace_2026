@@ -402,3 +402,4 @@ contests/**/*.exe
 **/cfp/*.md
 !**/cfp/README.md
 !**/cfp/CLAUDE.md
+!**/cfp/AGENTS.md
