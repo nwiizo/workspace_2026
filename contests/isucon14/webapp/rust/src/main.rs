@@ -3,7 +3,8 @@ use axum::extract::{Request, State};
 use axum::middleware::Next;
 use axum::response::Response;
 use isuride::{
-    ensure_chair_stats, ActiveRideEvaluationTracker, AppState, Error, LatestChairLocationCache,
+    ensure_chair_stats, ActiveRideEvaluationTracker, AppState, AuthCache, Error,
+    LatestChairLocationCache,
 };
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -42,6 +43,9 @@ async fn main() -> anyhow::Result<()> {
         )
         .await?;
 
+    let auth_cache = AuthCache::load(&pool)
+        .await
+        .context("failed to load authentication cache")?;
     let latest_chair_locations = LatestChairLocationCache::load(&pool)
         .await
         .context("failed to load latest chair locations")?;
@@ -53,6 +57,7 @@ async fn main() -> anyhow::Result<()> {
         payment_client: reqwest::Client::builder()
             .build()
             .context("failed to initialize payment HTTP client")?,
+        auth_cache,
         latest_chair_locations,
         active_ride_evaluations: ActiveRideEvaluationTracker::default(),
         maintenance_lock: Arc::new(RwLock::new(())),
@@ -118,6 +123,7 @@ struct PostInitializeResponse {
 async fn post_initialize(
     State(AppState {
         pool,
+        auth_cache,
         latest_chair_locations,
         maintenance_lock,
         ..
@@ -142,6 +148,7 @@ async fn post_initialize(
         .bind(req.payment_server)
         .execute(&pool)
         .await?;
+    auth_cache.refresh(&pool).await?;
     latest_chair_locations.refresh(&pool).await?;
 
     Ok(axum::Json(PostInitializeResponse { language: "rust" }))

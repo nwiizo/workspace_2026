@@ -7,7 +7,9 @@ use crate::models::{Chair, Owner, User};
 use crate::{AppState, Error};
 
 pub async fn app_auth_middleware(
-    State(AppState { pool, .. }): State<AppState>,
+    State(AppState {
+        pool, auth_cache, ..
+    }): State<AppState>,
     jar: CookieJar,
     mut req: Request,
     next: Next,
@@ -16,12 +18,18 @@ pub async fn app_auth_middleware(
         return Err(Error::Unauthorized("app_session cookie is required"));
     };
     let access_token = c.value();
-    let Some(user): Option<User> = sqlx::query_as("SELECT * FROM users WHERE access_token = ?")
-        .bind(access_token)
-        .fetch_optional(&pool)
-        .await?
-    else {
-        return Err(Error::Unauthorized("invalid access token"));
+    let user = if let Some(user) = auth_cache.user(access_token) {
+        user
+    } else {
+        let Some(user): Option<User> = sqlx::query_as("SELECT * FROM users WHERE access_token = ?")
+            .bind(access_token)
+            .fetch_optional(&pool)
+            .await?
+        else {
+            return Err(Error::Unauthorized("invalid access token"));
+        };
+        auth_cache.insert_user(user.clone());
+        user
     };
 
     req.extensions_mut().insert(user);
@@ -30,7 +38,9 @@ pub async fn app_auth_middleware(
 }
 
 pub async fn owner_auth_middleware(
-    State(AppState { pool, .. }): State<AppState>,
+    State(AppState {
+        pool, auth_cache, ..
+    }): State<AppState>,
     jar: CookieJar,
     mut req: Request,
     next: Next,
@@ -39,12 +49,19 @@ pub async fn owner_auth_middleware(
         return Err(Error::Unauthorized("owner_session cookie is required"));
     };
     let access_token = c.value();
-    let Some(owner): Option<Owner> = sqlx::query_as("SELECT * FROM owners WHERE access_token = ?")
-        .bind(access_token)
-        .fetch_optional(&pool)
-        .await?
-    else {
-        return Err(Error::Unauthorized("invalid access token"));
+    let owner = if let Some(owner) = auth_cache.owner(access_token) {
+        owner
+    } else {
+        let Some(owner): Option<Owner> =
+            sqlx::query_as("SELECT * FROM owners WHERE access_token = ?")
+                .bind(access_token)
+                .fetch_optional(&pool)
+                .await?
+        else {
+            return Err(Error::Unauthorized("invalid access token"));
+        };
+        auth_cache.insert_owner(owner.clone());
+        owner
     };
 
     req.extensions_mut().insert(owner);
@@ -53,7 +70,9 @@ pub async fn owner_auth_middleware(
 }
 
 pub async fn chair_auth_middleware(
-    State(AppState { pool, .. }): State<AppState>,
+    State(AppState {
+        pool, auth_cache, ..
+    }): State<AppState>,
     jar: CookieJar,
     mut req: Request,
     next: Next,
@@ -62,12 +81,19 @@ pub async fn chair_auth_middleware(
         return Err(Error::Unauthorized("chair_session cookie is required"));
     };
     let access_token = c.value();
-    let Some(chair): Option<Chair> = sqlx::query_as("SELECT * FROM chairs WHERE access_token = ?")
-        .bind(access_token)
-        .fetch_optional(&pool)
-        .await?
-    else {
-        return Err(Error::Unauthorized("invalid access token"));
+    let chair = if let Some(chair) = auth_cache.chair(access_token) {
+        chair
+    } else {
+        let Some(chair): Option<Chair> =
+            sqlx::query_as("SELECT * FROM chairs WHERE access_token = ?")
+                .bind(access_token)
+                .fetch_optional(&pool)
+                .await?
+        else {
+            return Err(Error::Unauthorized("invalid access token"));
+        };
+        auth_cache.insert_chair(chair.clone());
+        chair
     };
 
     req.extensions_mut().insert(chair);

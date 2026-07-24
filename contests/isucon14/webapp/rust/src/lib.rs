@@ -6,17 +6,111 @@ use axum::{
 use http_body::{Body as HttpBody, Frame, SizeHint};
 use std::collections::{HashMap, HashSet};
 use std::pin::Pin;
-use std::sync::{Arc, Mutex as StdMutex};
+use std::sync::{Arc, Mutex as StdMutex, RwLock as StdRwLock};
 use std::task::{Context, Poll};
 use tokio::sync::{Mutex, RwLock};
+
+use crate::models::{Chair, Owner, User};
 
 #[derive(Debug, Clone)]
 pub struct AppState {
     pub pool: sqlx::MySqlPool,
     pub payment_client: reqwest::Client,
+    pub auth_cache: AuthCache,
     pub latest_chair_locations: LatestChairLocationCache,
     pub active_ride_evaluations: ActiveRideEvaluationTracker,
     pub maintenance_lock: Arc<RwLock<()>>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct AuthCache {
+    users: Arc<StdRwLock<HashMap<String, User>>>,
+    owners: Arc<StdRwLock<HashMap<String, Owner>>>,
+    chairs: Arc<StdRwLock<HashMap<String, Chair>>>,
+}
+
+impl AuthCache {
+    pub async fn load(pool: &sqlx::MySqlPool) -> sqlx::Result<Self> {
+        let cache = Self::default();
+        cache.refresh(pool).await?;
+        Ok(cache)
+    }
+
+    pub async fn refresh(&self, pool: &sqlx::MySqlPool) -> sqlx::Result<()> {
+        let (users, owners, chairs) = tokio::try_join!(
+            sqlx::query_as::<_, User>("SELECT * FROM users").fetch_all(pool),
+            sqlx::query_as::<_, Owner>("SELECT * FROM owners").fetch_all(pool),
+            sqlx::query_as::<_, Chair>("SELECT * FROM chairs").fetch_all(pool),
+        )?;
+
+        *self
+            .users
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = users
+            .into_iter()
+            .map(|user| (user.access_token.clone(), user))
+            .collect();
+        *self
+            .owners
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = owners
+            .into_iter()
+            .map(|owner| (owner.access_token.clone(), owner))
+            .collect();
+        *self
+            .chairs
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = chairs
+            .into_iter()
+            .map(|chair| (chair.access_token.clone(), chair))
+            .collect();
+        Ok(())
+    }
+
+    pub(crate) fn user(&self, access_token: &str) -> Option<User> {
+        self.users
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(access_token)
+            .cloned()
+    }
+
+    pub(crate) fn insert_user(&self, user: User) {
+        self.users
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(user.access_token.clone(), user);
+    }
+
+    pub(crate) fn owner(&self, access_token: &str) -> Option<Owner> {
+        self.owners
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(access_token)
+            .cloned()
+    }
+
+    pub(crate) fn insert_owner(&self, owner: Owner) {
+        self.owners
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(owner.access_token.clone(), owner);
+    }
+
+    pub(crate) fn chair(&self, access_token: &str) -> Option<Chair> {
+        self.chairs
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(access_token)
+            .cloned()
+    }
+
+    pub(crate) fn insert_chair(&self, chair: Chair) {
+        self.chairs
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(chair.access_token.clone(), chair);
+    }
 }
 
 #[derive(Debug, Clone, Default)]
