@@ -8,9 +8,13 @@
 
 最終目的は単純なHTTPリクエスト数ではなく、60秒ベンチを `pass=true` で完走させ、完了ライド数とスコアを増やすことです。
 
+- ベンチマーカーは30msを1tickとして進むため、全エンドポイントの理想値を30ms以内とする
+- スコアは「空車で乗車地点へ移動した距離×0.1 + 乗車中の移動距離 + 完了ライド数×5」で評価する
+- 空車移動より乗車中の移動の価値が10倍なので、単なる処理件数だけでなく乗車地点に近い椅子の割当を優先する
 - 通知は全状態遷移を順番どおり、at least onceで返す
 - 通知状態は変化から3秒以内に反映する
 - nearbyの座標とownerの累積距離は3秒以内のずれに収める
+- nearbyで3秒のずれが許されるのは座標だけで、椅子の割当可否は即時に反映する
 - ライドを30秒以内にマッチさせ、1台の椅子へ複数ライドを割り当てない
 - 評価成功時の決済を重複・欠落させない
 - 動的に追加される利用者、オーナー、椅子を初期データと同様に扱う
@@ -53,6 +57,11 @@
 - [x] 座標更新を通常4 SQLから2 SQLへ削減した60秒ベンチ: `pass=true`、スコア11,599、`CODE=17` 2件
 - [x] `SHOW ENGINE INNODB STATUS` で `coupons.code` 全走査に起因する登録deadlockを特定
 - [x] `coupons(code)` 追加後の60秒ベンチ: `pass=true`、スコア15,415、error map空
+- [x] 通知の `retry_after_ms` を30 / 50 / 100msで比較し、30msを維持
+  - 30ms: `pass=true`、15,415、エラー0、通知GET 34,360回
+  - 100ms: `pass=true`、14,611、エラー0、通知GET 21,140回
+  - 50ms: `pass=true`、6,986、`CODE=31` 1件、通知GET 13,552回
+  - DB負荷は減ったが評価数とスコアが改善せず、50msはエラー0も満たさないため不採用
 - [x] BuildKit、release incremental、LLDでRust source変更後の再buildを高速化
   - Cargo: 7.03秒
   - Docker build壁時計: 11.02秒
@@ -66,14 +75,14 @@
 |---|---|---|---|
 | P0 | `internal_get_matching` | 64件batch + 近傍優先、外部pollは500ms | 空き定義の集約、500msの最小待ち |
 | P0 | `app_get_nearby_chairs` | `LATERAL` + `NOT EXISTS` の集合SQL | 最新statusの相関subquery、複数回中央値未計測 |
-| P0 | 通知2経路 | 30ms pollingごとに認証、最新ride、status、表示データを取得 | 約1.3万transaction、同じレスポンスの再計算 |
+| P0 | 通知2経路 | 30ms pollingごとに認証、最新ride、status、表示データを取得 | 60秒で通知GET 34,360回、同じレスポンスの再計算 |
 | P0 | `get_chair_stats` | 1集約SQLを実装・ベンチ検証済み | 初期データ全件の旧実装との照合は未実施 |
 | P0 | `app_post_ride_evaluation` | DB transaction中に外部決済HTTPと最大5回の100ms sleep | connection・snapshot・lockを外部I/O中も保持 |
 | P0 | `chair_post_coordinate` | INSERT後に同じ位置を再SELECTし、rideとstatusも個別取得 | 全椅子が高頻度で通る書き込み経路の往復過多 |
 | P1 | `app_get_rides` | rideごとにstatus、coupon、chair、ownerを取得 | 履歴増加に比例するN+1 |
 | P1 | `owner_get_sales` | ownerのchairごとに完了rideを取得 | N+1、read transactionが暗黙ROLLBACK |
 | P1 | `app_post_rides` | userの全rideとride別最新statusを取得 | ライド作成ごとに履歴全体を再走査 |
-| P1 | `app_post_users` | 招待回数確認で `coupons.code` を全件検索 | `code` 単独検索用INDEXなし、行全体を取得 |
+| P1 | `app_post_users` | `coupons(code)` INDEXは追加済みだが、招待回数確認で該当行全体を取得 | `COUNT` / counter化とlock範囲の縮小が未実施 |
 | P1 | 認証middleware | 全APIリクエストでtokenからDB検索 | pollingと座標送信のたびに追加SQL |
 | P1 | `payment_gateway` | retryごとに `reqwest::Client::new()` | HTTP connection poolを再利用できない |
 | P2 | nginx / Rustログ | stock設定のまま全リクエストを処理 | 高頻度経路のログI/Oとproxy overheadが未計測 |
@@ -97,15 +106,31 @@
 - 3秒cacheを許せるowner情報は `/owner/chairs` の累積距離だけ
   - `/owner/sales` はリクエスト直前snapshotを下限に検証されるため、遅延cacheしない
 
+## スコア構造から導いた追加仮説
+
+- [x] INDEX、nearbyのN+1解消、owner椅子一覧の事前絞り込みを実装済みであることを確認する
+- [x] `users(access_token)` と `users(invitation_code)` は既存の `UNIQUE` INDEXで検索できることを確認する
+- [x] nearbyの「割当済み判定には `evaluation IS NULL` を利用できる」という前提が、評価と `COMPLETED` を同じtransactionで確定する仕様に基づくことを確認する
+- [ ] 新しい施策は1つずつ単独ベンチし、現在のRust実装で改善することを確認してから採用する
+- [ ] 完了数だけでなく、空車移動距離、乗車中移動距離、matching / pickup / drive評価を記録してスコアの増減理由を分解する
+- [ ] 空車移動距離の0.1点を単独で稼ごうとせず、pickup遅延と完了数への悪影響を含む総スコアでpolicyを比較する
+- [ ] スコア増加が完了数、乗車距離、空車距離のどれによるものかをrunごとに説明できる集計scriptを用意する
+
 ## Phase 0: 現在の変更を確定する
 
 - [x] 現在のコードを再ビルドし、`./scripts/smoke-test.sh` を通す
 - [x] `./scripts/benchmark.sh 60` を実行する
 - [x] `pass`、スコア、全エラーコードを記録する
 - [ ] 完了ライド数を独立した指標として記録する
-- [ ] `BEGIN` / `COMMIT` / `ROLLBACK` の回数と累積時間を再計測する
+- [x] `BEGIN` / `COMMIT` / `ROLLBACK` の回数と累積時間を再計測する
+  - 30ms走行: BEGIN 50,643回、COMMIT 50,526回・累積452.757秒、ROLLBACK 114回
+  - 100ms走行: COMMIT 35,194回・累積412.027秒
+  - 50ms走行: COMMIT 20,108回・累積410.209秒
 - [x] `CODE=33` など通知内容の不整合が発生していないことを確認する
-- [ ] エンドポイント別の件数とp50 / p95 / p99を一時的な計測で採取する
+- [x] nginx access logから30ms走行のエンドポイント別件数を採取する
+  - app通知18,382、chair通知15,978、座標更新14,644
+- [ ] エンドポイント別のp50 / p95 / p99を一時的な計測で採取する
+- [ ] 各エンドポイントの30ms超過率と、1tick中に完了できなかった回数を記録する
 - [ ] sqlx poolの `size` / `idle` / `in_use` と取得待ち時間を1秒ごとに採取する
 - [ ] MySQLのstatement digestを回数、累積時間、平均時間で並べる
 - [ ] `docker stats` でwebapp、MySQL、nginx、ベンチマーカーのCPU・メモリ・I/Oを同時に採取する
@@ -146,6 +171,9 @@
 - [x] 集合SQLだけをBenchmark 04として60秒計測する
 - [x] nearbyの内容不一致とtimeoutがないことを60秒ベンチで確認する
 - [ ] `CODE=26` 1件との因果を切り分けるため、同一revisionを3回以上走らせる
+- [ ] 未完了ride判定のstatus相関subqueryを `rides.evaluation IS NULL` へ置き換え、実行計画と結果を比較する
+- [ ] 座標だけを最大3秒cacheし、`is_active` と割当可否は毎回最新状態を合成する案を比較する
+- [ ] nearbyレスポンス全体の3秒cacheは割当済み椅子を返すため採用しない
 
 ### JSON通知の短期改善
 
@@ -159,7 +187,18 @@
 - [ ] 同一recipientへの並行pollingが発生する構成になった場合だけ `FOR UPDATE SKIP LOCKED` を比較する
 - [ ] transactionは未送信statusのclaimからsent更新までの最短区間だけにする
 - [ ] app/chairそれぞれで、状態遷移の順序とat least onceを並行リクエストでも確認する
-- [ ] `retry_after_ms` を30 / 50 / 100msで比較し、通知遅延とDB負荷の交点を測る
+- [x] `retry_after_ms` を30 / 50 / 100msで比較し、通知遅延とDB負荷の交点を測る
+  - 50 / 100msはCOMMIT回数を減らしたがスコアを改善せず、実装は30msへ戻した
+  - 詳細は [`tuning/10-notification-retry-interval.md`](./tuning/10-notification-retry-interval.md)
+- [ ] 同じ利用者・椅子への直前payloadと最新ride状態をcacheし、状態不変時のSQLとJSON再構築をなくす
+- [ ] cache keyをrecipient ID、valueを `last_status_id` / ride version / payloadとし、ride割当・status追加・評価確定で明示的にinvalidateする
+- [ ] TTLだけに依存せず、cache missとプロセス再起動時はDB履歴から復元する
+- [ ] JSON APIのまま最大60秒のlong pollingを実装し、状態変化時に `Notify` / channelで即時wakeする案をSSEより先に比較する
+- [ ] version確認 → waiter登録 → version再確認の順にして、確認と待機開始の間に発生した通知を取りこぼさない
+- [ ] long polling中はDB connectionとtransactionを保持せず、切断・timeout・再接続時もat least onceを維持する
+- [ ] cacheはpayload生成の高速化だけに使い、`app_sent_at` / `chair_sent_at` の配信cursorと混同しない
+- [ ] 未配信statusが複数ある再接続では、cacheの最新1件だけを返さず `created_at, id` 順で全遷移を送る
+- [ ] JSON polling、JSON long polling、SSEを同一条件で比較し、protocol変更だけではなくDB query数と通知遅延が減った案を採用する
 
 ### 決済と評価
 
@@ -187,6 +226,14 @@
 - [ ] 同じstatusを重複INSERTしない条件付き遷移へする
 - [x] 通常の1座標更新あたりのSQL回数を4回から2回へ削減する
 - [ ] 座標更新のtransaction保持時間、p95 / p99を比較する
+- [ ] 座標更新をper-chair順序付きのbounded queueへ投入し、HTTP応答と永続化・status判定を分離する実験を行う
+- [ ] 最新座標をメモリ上では即時更新し、`chair_locations` を30 / 50 / 100ms単位でbulk INSERTする
+- [ ] queue内の中間座標は累積距離と乗車地点・目的地への到達判定に必要なので、最新1件へ無条件にcoalesceしない
+- [ ] nearby向けlatest-coordinate cacheだけを上書きし、永続化対象の全座標列とは分離する
+- [ ] queue full時のbackpressure、DB失敗時の再試行、initialize / shutdown時のflushを定義する
+- [ ] HTTP 200をqueue投入時とDB commit後のどちらで返すか比較し、応答p99と再起動時の座標欠落リスクを記録する
+- [ ] 非同期化後も座標は3秒以内、割当可否と到着statusは通知評価を落とさない時間内に反映する
+- [ ] 同じ椅子の座標順序、累積距離、`PICKUP` / `ARRIVED` の一度だけの遷移を並行負荷で検証する
 
 ### 招待couponのINDEX
 
@@ -235,6 +282,7 @@
 - [ ] 先行追加した `coupons(code)` の利用回数とwrite costを再評価する
 - [ ] 未使用coupon検索用 `(user_id, used_by, created_at)` を比較する
 - [ ] `WHERE used_by = ?` 用INDEXまたは `UNIQUE(used_by)` を比較する
+- [ ] `coupons(used_by)` を単独追加し、ride履歴・coupon claimの実行計画とwrite costを比較する
 - [ ] coupon書き込みコストを含め、不要・重複INDEXを残さない
 
 ### 認証
@@ -284,6 +332,7 @@
 
 ### SSE通知
 
+- [ ] JSONのcache / long pollingで到達できるスコアを先に計測し、SSE移行の追加利益を見積もる
 - [ ] app/chair通知を `text/event-stream` で返す実験ブランチを作る
 - [ ] streamを開いたままDB connectionやtransactionを保持しない
 - [ ] 接続直後に必要な最新状態または未送信状態列を順番どおり送る
@@ -294,6 +343,7 @@
 - [ ] sent cursorをDBへ持つか、既存 `app_sent_at` / `chair_sent_at` を使うか比較する
 - [ ] nginxで `proxy_buffering off`、十分な `proxy_read_timeout`、keepaliveを設定する
 - [ ] 60秒中の通知HTTPリクエスト数、DB query数、接続数、メモリをJSON pollingと比較する
+- [ ] SSEへ形式だけ移行せず、status変更時の即時pushと接続単位cacheまで含めて評価する
 - [ ] prevalidationと全通知エラーコードが通るまでJSON実装を削除しない
 
 ### matcherの再設計
@@ -312,6 +362,15 @@
 - [ ] matcher間隔を500 / 100 / 30msで比較し、matching latencyとDB負荷を測る
 - [ ] CODE=32または未マッチ滞留が悪化したら、他のP1施策よりmatcherを繰り上げる
 - [x] 乗車地点に近い椅子を優先するthroughput重視policyを計測する
+- [ ] 2地域をまたぐ遠距離割当を避ける距離上限を設け、近隣椅子がないrideは次batchへ保留する
+- [ ] 距離上限を100 / 200 / 400で比較し、地域ごとの未マッチ滞留と枯渇を監視する
+- [ ] pickup座標とchair座標を地域bucketへ分類し、同一地域内だけを候補にする方式と単純な距離上限を比較する
+- [ ] chair modelのspeedを候補取得時にJOINし、距離ではなく `ceil(distance / speed)` のpickup予測tickを最小化する
+- [ ] matcherの目的関数を「割当件数最大化 → 期限超過ride最小化 → pickup予測tick最小化」の辞書順で定義する
+- [ ] 64件batch内の貪欲法と最小費用二部マッチングを、計算時間・空車移動距離・完了数で比較する
+- [ ] 二部マッチングではride待ち時間をcostへ加え、近い新規rideだけが選ばれて古いrideがstarvationしないようにする
+- [ ] matcher自身の計算を30ms以内に収め、64×64の候補生成・最適化時間を独立計測する
+- [ ] 走行中の椅子について「現在rideの完了予測時間 + 次の乗車地点までの時間」が空き椅子より短い場合の先行予約を高リスク実験として評価する
 - [ ] dispatch評価を落とさない範囲で距離スコアを増やすpolicyを別ベンチで比較する
 - [x] ID順と近傍優先について完了数、不満率、最終スコアを記録する
 - [ ] 同一revisionを3回以上実行し、中央値・最小・最大を比較する
@@ -371,6 +430,7 @@
 - [ ] `/owner/sales` は遅延cacheせず、常にリクエスト時点の許容範囲を満たす
 - [ ] MySQLを別CPU/ホストへ分離できる環境では、アプリ同居構成と比較する
 - [ ] Axum processの複数化はSSE・cache・matcherの状態共有を解決してから比較する
+- [ ] 複数webappでmatcherを動かす場合はleaderを1つに限定するか、rideとchairの条件付きclaimで二重割当を防ぐ
 - [ ] PGOやCPU固有最適化は最終候補binaryだけで比較する
 
 ## 各変更の検証
@@ -402,6 +462,11 @@
 - [ ] 最低3回実行し、中央値とばらつきを残す
 - [x] `pass`、スコア、全エラーコードを記録する
 - [ ] 完了ride数を独立して記録する
+- [ ] 空車移動距離×0.1、乗車中移動距離、完了ride数×5の各スコア寄与を記録する
+- [ ] 全APIの30ms超過率とmatching / pickup / driveのtick遅延を記録する
+- [ ] matcherは地域別pending数、available chair数、starvationした最古rideの待ち時間を記録する
+- [ ] 通知はcache hit率、wake latency、recipientあたりSQL数、再接続時replay件数を記録する
+- [ ] 座標queueはdepth、最古未flush時間、batch件数、drop / retry数、status反映遅延を記録する
 - [ ] エンドポイント件数とp50 / p95 / p99を記録する
 - [ ] SQL回数、累積時間、走査行数を記録する
 - [ ] pool待ち、MySQL CPU、webapp CPU、block I/Oを記録する
@@ -409,17 +474,18 @@
 
 ## 推奨する直近の実行順
 
-1. nearby集合SQLだけをBenchmark 04として正当性・性能検証する
-2. chair stats集約SQLを旧実装と全初期データで照合し、単独ベンチする
-3. batch matcherを単独ベンチし、2種類の空き状態を検証する
-4. `coupons(code)` INDEXを単独追加・計測する
+1. 現在の近傍優先matcherを同一revisionで3回計測し、16,909点の再現性とスコア内訳を確認する
+2. matcherへ地域間の距離上限を追加し、500 / 100 / 30msの実行間隔と組み合わせて比較する
+3. JSON通知のpayload cacheとlong pollingを実装し、30ms pollingよりDB負荷と通知遅延が減るか確認する
+4. 座標更新の非同期queueとbulk INSERTを単独実験し、3秒制約とstatus遷移を検証する
 5. 決済へ `Idempotency-Key` を導入してGET照合をなくす
 6. 外部決済HTTPをDB transactionの外へ出し、Clientを共有する
-7. coordinateの再SELECTと最新status往復を減らす
+7. nearbyの未完了判定を `evaluation IS NULL` へ単純化し、座標だけの短時間cacheを比較する
 8. app history、owner sales、ride作成のN+1を順に除去する
 9. current-state別表で最新位置・status・statsをO(1)化する
-10. JSON通知をSSEへ移し、30ms pollingをなくす
-11. 最後にpool、MySQL、nginx、compiler設定をprofileに基づいて調整する
+10. JSON long pollingで不足する場合だけSSEへ移し、状態変更時の即時pushまで実装する
+11. 貪欲matcherと最小費用二部マッチングを比較する
+12. 最後にpool、MySQL、nginx、compiler設定をprofileに基づいて調整する
 
 ## 記録ルール
 
