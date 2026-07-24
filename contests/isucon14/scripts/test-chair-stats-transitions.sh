@@ -2,6 +2,11 @@
 
 set -eu
 
+if ! command -v jq >/dev/null 2>&1; then
+  echo "jq が必要です" >&2
+  exit 1
+fi
+
 script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 compose="$script_dir/compose.sh"
 base_url=${BASE_URL:-http://127.0.0.1:${APP_PORT:-8080}}
@@ -77,6 +82,13 @@ SELECT users.id,
        users.access_token,
        chairs.id,
        (
+         SELECT other_users.id
+         FROM users AS other_users
+         WHERE other_users.id <> users.id
+         ORDER BY other_users.id
+         LIMIT 1
+       ),
+       (
          SELECT other_users.access_token
          FROM users AS other_users
          WHERE other_users.id <> users.id
@@ -92,7 +104,8 @@ LIMIT 1
 user_id=$(printf '%s\n' "$fixture" | cut -f 1)
 user_token=$(printf '%s\n' "$fixture" | cut -f 2)
 chair_id=$(printf '%s\n' "$fixture" | cut -f 3)
-other_user_token=$(printf '%s\n' "$fixture" | cut -f 4)
+other_user_id=$(printf '%s\n' "$fixture" | cut -f 4)
+other_user_token=$(printf '%s\n' "$fixture" | cut -f 5)
 
 read_stats() {
   "$compose" exec -T db mysql \
@@ -131,6 +144,9 @@ missing_arrived_id=$(printf 'A%025d' "$$")
 valid_ride_id=$(printf 'V%025d' "$$")
 valid_carrying_id=$(printf 'C%025d' "$$")
 valid_arrived_id=$(printf 'B%025d' "$$")
+other_ride_id=$(printf 'O%025d' "$$")
+other_carrying_id=$(printf 'D%025d' "$$")
+other_arrived_id=$(printf 'E%025d' "$$")
 
 "$compose" exec -T db mysql \
   --batch \
@@ -323,4 +339,91 @@ if [ "$(read_stats)" != "$expected_stats" ]; then
   exit 1
 fi
 
-echo "OK: evaluation authorization and chair stats transition invariants hold"
+# Make the completed ride the deterministic latest ride and warm a stable app
+# notification payload that embeds the shared chair's current statistics.
+"$compose" exec -T db mysql \
+  --batch \
+  --skip-column-names \
+  -uisucon \
+  -pisucon \
+  isuride <<SQL
+UPDATE rides
+SET created_at = TIMESTAMPADD(SECOND, 1, NOW(6))
+WHERE id = '$valid_ride_id';
+UPDATE ride_statuses
+SET app_sent_at = NOW(6)
+WHERE ride_id = '$valid_ride_id';
+SQL
+
+cached_count=$(
+  curl \
+    --fail \
+    --silent \
+    --show-error \
+    --connect-timeout "$curl_connect_timeout" \
+    --max-time "$curl_max_time" \
+    --cookie "app_session=$user_token" \
+    "$base_url/api/app/notification" |
+    jq -r '.data.chair.stats.total_rides_count'
+)
+if [ "$cached_count" != "$((initial_count + 1))" ]; then
+  echo "app notification did not expose the initial shared-chair stats: $cached_count" >&2
+  exit 1
+fi
+
+# A different user evaluates a later ride on the same chair. The first user's
+# recipient revision does not change, so only the chair-stats dependency
+# revision can prevent an indefinitely stale cache hit.
+"$compose" exec -T db mysql \
+  --batch \
+  --skip-column-names \
+  -uisucon \
+  -pisucon \
+  isuride <<SQL
+INSERT INTO payment_tokens (user_id, token)
+VALUES ('$other_user_id', 'chair-stats-test-other-payment-token')
+ON DUPLICATE KEY UPDATE token = VALUES(token);
+INSERT INTO rides (
+  id,
+  user_id,
+  chair_id,
+  pickup_latitude,
+  pickup_longitude,
+  destination_latitude,
+  destination_longitude
+) VALUES ('$other_ride_id', '$other_user_id', '$chair_id', 0, 0, 1, 1);
+INSERT INTO ride_statuses (id, ride_id, status, created_at)
+VALUES
+  ('$other_carrying_id', '$other_ride_id', 'CARRYING', NOW(6)),
+  (
+    '$other_arrived_id',
+    '$other_ride_id',
+    'ARRIVED',
+    TIMESTAMPADD(MICROSECOND, 1, NOW(6))
+  );
+SQL
+
+other_response=$(post_evaluation "$other_ride_id" 5 "$other_user_token")
+other_status=$(printf '%s\n' "$other_response" | tail -n 1)
+if [ "$other_status" != "200" ]; then
+  echo "other-user evaluation: expected HTTP 200 actual=$other_status" >&2
+  exit 1
+fi
+
+refreshed_count=$(
+  curl \
+    --fail \
+    --silent \
+    --show-error \
+    --connect-timeout "$curl_connect_timeout" \
+    --max-time "$curl_max_time" \
+    --cookie "app_session=$user_token" \
+    "$base_url/api/app/notification" |
+    jq -r '.data.chair.stats.total_rides_count'
+)
+if [ "$refreshed_count" != "$((initial_count + 2))" ]; then
+  echo "cross-user chair stats cache stayed stale: $refreshed_count" >&2
+  exit 1
+fi
+
+echo "OK: evaluation authorization, chair stats transitions, and cross-user cache invalidation hold"

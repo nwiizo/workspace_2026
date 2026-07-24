@@ -157,10 +157,11 @@ assert_notification_order \
   "chair_session=test-status-chair-token" \
   "/api/chair/notification"
 
-assert_latest_notification() {
+assert_notification_status() {
   client_name=$1
   cookie=$2
   endpoint=$3
+  expected=$4
   response=$(
     curl \
       --fail \
@@ -172,21 +173,23 @@ assert_latest_notification() {
       "$base_url$endpoint"
   )
   status=$(extract_status "$response")
-  if [ "$status" != "CARRYING" ]; then
-    echo "$client_name latest notification: expected=CARRYING actual=$status response=$response" >&2
+  if [ "$status" != "$expected" ]; then
+    echo "$client_name latest notification: expected=$expected actual=$status response=$response" >&2
     exit 1
   fi
   echo "OK: $client_name latest notification fallback: $status"
 }
 
-assert_latest_notification \
+assert_notification_status \
   app \
   "app_session=test-status-app-token" \
-  "/api/app/notification"
-assert_latest_notification \
+  "/api/app/notification" \
+  CARRYING
+assert_notification_status \
   chair \
   "chair_session=test-status-chair-token" \
-  "/api/chair/notification"
+  "/api/chair/notification" \
+  CARRYING
 
 latest_status=$(
   "$compose" exec -T db \
@@ -236,3 +239,16 @@ if [ "$arrived_count" != "1" ]; then
 fi
 
 echo "OK: coordinate locking read: CARRYING -> ARRIVED"
+
+# The preceding fallback requests populate the steady-state notification
+# cache. The coordinate transition must invalidate both app and chair entries.
+assert_notification_status \
+  app \
+  "app_session=test-status-app-token" \
+  "/api/app/notification" \
+  ARRIVED
+assert_notification_status \
+  chair \
+  "chair_session=test-status-chair-token" \
+  "/api/chair/notification" \
+  ARRIVED

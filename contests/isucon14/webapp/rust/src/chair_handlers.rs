@@ -1,5 +1,6 @@
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
+use axum::response::Response;
 use axum_extra::extract::cookie::Cookie;
 use axum_extra::extract::CookieJar;
 use ulid::Ulid;
@@ -176,6 +177,7 @@ async fn chair_post_coordinate(
     State(AppState {
         pool,
         latest_chair_locations,
+        notification_cache,
         ..
     }): State<AppState>,
     axum::Extension(chair): axum::Extension<Chair>,
@@ -184,6 +186,7 @@ async fn chair_post_coordinate(
     #[derive(sqlx::FromRow)]
     struct CurrentRide {
         id: String,
+        user_id: String,
         evaluation: Option<i32>,
         pickup_latitude: i32,
         pickup_longitude: i32,
@@ -193,6 +196,7 @@ async fn chair_post_coordinate(
 
     let current_location_exists = latest_chair_locations.contains(&chair.id).await;
     let mut tx = pool.begin().await?;
+    let mut notification_user_id = None;
 
     let chair_location_id = Ulid::new().to_string();
     let recorded_at = chrono::Utc::now().naive_utc();
@@ -256,6 +260,7 @@ WHERE chair_id = ?
     let ride: Option<CurrentRide> = sqlx::query_as(
         r#"
 SELECT rides.id,
+       rides.user_id,
        rides.evaluation,
        rides.pickup_latitude,
        rides.pickup_longitude,
@@ -305,12 +310,17 @@ LIMIT 1
                         .bind(next_status)
                         .execute(&mut *tx)
                         .await?;
+                    notification_user_id = Some(ride.user_id);
                 }
             }
         }
     }
 
     tx.commit().await?;
+    if let Some(user_id) = notification_user_id {
+        notification_cache.invalidate_app(&user_id);
+        notification_cache.invalidate_chair(&chair.id);
+    }
     latest_chair_locations
         .update(
             chair.id,
@@ -348,19 +358,30 @@ struct ChairGetNotificationResponseData {
 }
 
 async fn chair_get_notification(
-    State(AppState { pool, .. }): State<AppState>,
+    State(AppState {
+        pool,
+        notification_cache,
+        ..
+    }): State<AppState>,
     axum::Extension(chair): axum::Extension<Chair>,
-) -> Result<axum::Json<ChairGetNotificationResponse>, Error> {
+) -> Result<Response, Error> {
+    let (cached_payload, cache_revision) = notification_cache.chair(&chair.id);
+    if let Some(cached_payload) = cached_payload {
+        return Ok(crate::json_bytes_response(cached_payload));
+    }
+
     let ride_exists: Option<(String,)> =
         sqlx::query_as("SELECT id FROM rides WHERE chair_id = ? ORDER BY updated_at DESC LIMIT 1")
             .bind(&chair.id)
             .fetch_optional(&pool)
             .await?;
     if ride_exists.is_none() {
-        return Ok(axum::Json(ChairGetNotificationResponse {
+        let payload = axum::body::Bytes::from(serde_json::to_vec(&ChairGetNotificationResponse {
             data: None,
-            retry_after_ms: Some(30),
-        }));
+            retry_after_ms: Some(crate::CACHED_NOTIFICATION_RETRY_AFTER_MS),
+        })?);
+        notification_cache.insert_chair_if_current(chair.id, cache_revision, payload.clone());
+        return Ok(crate::json_bytes_response(payload));
     }
 
     // ライドがある場合は、通知対象の読み取りから通知済み更新までを
@@ -392,7 +413,7 @@ async fn chair_get_notification(
         .fetch_one(&mut *tx)
         .await?;
 
-    if let Some(yet_sent_ride_status_id) = yet_sent_ride_status_id {
+    if let Some(yet_sent_ride_status_id) = &yet_sent_ride_status_id {
         sqlx::query("UPDATE ride_statuses SET chair_sent_at = CURRENT_TIMESTAMP(6) WHERE id = ?")
             .bind(yet_sent_ride_status_id)
             .execute(&mut *tx)
@@ -401,7 +422,8 @@ async fn chair_get_notification(
 
     tx.commit().await?;
 
-    Ok(axum::Json(ChairGetNotificationResponse {
+    let cacheable = yet_sent_ride_status_id.is_none();
+    let response = ChairGetNotificationResponse {
         data: Some(ChairGetNotificationResponseData {
             ride_id: ride.id,
             user: SimpleUser {
@@ -418,8 +440,17 @@ async fn chair_get_notification(
             },
             status,
         }),
-        retry_after_ms: Some(30),
-    }))
+        retry_after_ms: Some(if cacheable {
+            crate::CACHED_NOTIFICATION_RETRY_AFTER_MS
+        } else {
+            crate::NOTIFICATION_RETRY_AFTER_MS
+        }),
+    };
+    let payload = axum::body::Bytes::from(serde_json::to_vec(&response)?);
+    if cacheable {
+        notification_cache.insert_chair_if_current(chair.id, cache_revision, payload.clone());
+    }
+    Ok(crate::json_bytes_response(payload))
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -428,7 +459,11 @@ struct PostChairRidesRideIDStatusRequest {
 }
 
 async fn chair_post_ride_status(
-    State(AppState { pool, .. }): State<AppState>,
+    State(AppState {
+        pool,
+        notification_cache,
+        ..
+    }): State<AppState>,
     axum::Extension(chair): axum::Extension<Chair>,
     Path((ride_id,)): Path<(String,)>,
     axum::Json(req): axum::Json<PostChairRidesRideIDStatusRequest>,
@@ -462,7 +497,7 @@ async fn chair_post_ride_status(
             }
             sqlx::query("INSERT INTO ride_statuses (id, ride_id, status) VALUES (?, ?, ?)")
                 .bind(Ulid::new().to_string())
-                .bind(ride.id)
+                .bind(&ride.id)
                 .bind("ENROUTE")
                 .execute(&mut *tx)
                 .await?;
@@ -475,7 +510,7 @@ async fn chair_post_ride_status(
             }
             sqlx::query("INSERT INTO ride_statuses (id, ride_id, status) VALUES (?, ?, ?)")
                 .bind(Ulid::new().to_string())
-                .bind(ride.id)
+                .bind(&ride.id)
                 .bind("CARRYING")
                 .execute(&mut *tx)
                 .await?;
@@ -486,6 +521,8 @@ async fn chair_post_ride_status(
     };
 
     tx.commit().await?;
+    notification_cache.invalidate_app(&ride.user_id);
+    notification_cache.invalidate_chair(&chair.id);
 
     Ok(StatusCode::NO_CONTENT)
 }

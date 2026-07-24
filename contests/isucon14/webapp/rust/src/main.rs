@@ -4,7 +4,7 @@ use axum::middleware::Next;
 use axum::response::Response;
 use isuride::{
     ensure_chair_stats, ActiveRideEvaluationTracker, AppState, AuthCache, Error,
-    LatestChairLocationCache,
+    LatestChairLocationCache, NotificationCache,
 };
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -58,6 +58,7 @@ async fn main() -> anyhow::Result<()> {
             .build()
             .context("failed to initialize payment HTTP client")?,
         auth_cache,
+        notification_cache: NotificationCache::default(),
         latest_chair_locations,
         active_ride_evaluations: ActiveRideEvaluationTracker::default(),
         maintenance_lock: Arc::new(RwLock::new(())),
@@ -124,6 +125,7 @@ async fn post_initialize(
     State(AppState {
         pool,
         auth_cache,
+        notification_cache,
         latest_chair_locations,
         active_ride_evaluations,
         maintenance_lock,
@@ -140,6 +142,7 @@ async fn post_initialize(
     // authenticate a token nor retain an evaluation lease from the previous
     // database generation.
     auth_cache.clear();
+    notification_cache.clear();
     active_ride_evaluations.clear();
     let output = tokio::process::Command::new("../sql/init.sh")
         .output()

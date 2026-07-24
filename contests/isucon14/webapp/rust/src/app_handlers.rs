@@ -270,7 +270,11 @@ struct AppPostRidesResponse {
 }
 
 async fn app_post_rides(
-    State(AppState { pool, .. }): State<AppState>,
+    State(AppState {
+        pool,
+        notification_cache,
+        ..
+    }): State<AppState>,
     axum::Extension(user): axum::Extension<User>,
     axum::Json(req): axum::Json<AppPostRidesRequest>,
 ) -> Result<(StatusCode, axum::Json<AppPostRidesResponse>), Error> {
@@ -377,6 +381,7 @@ async fn app_post_rides(
     .await?;
 
     tx.commit().await?;
+    notification_cache.invalidate_app(&user.id);
 
     Ok((
         StatusCode::ACCEPTED,
@@ -443,6 +448,7 @@ async fn app_post_ride_evaluation(
         pool,
         payment_client,
         active_ride_evaluations,
+        notification_cache,
         ..
     }): State<AppState>,
     axum::Extension(user): axum::Extension<User>,
@@ -544,7 +550,7 @@ ON DUPLICATE KEY UPDATE
   total_evaluation_sum = total_evaluation_sum + VALUES(total_evaluation_sum)
         "#,
     )
-    .bind(chair_id)
+    .bind(&chair_id)
     .bind(req.evaluation)
     .bind(&ride_id)
     .execute(&mut *tx)
@@ -567,6 +573,9 @@ ON DUPLICATE KEY UPDATE
     }
 
     tx.commit().await?;
+    notification_cache.invalidate_app(&user.id);
+    notification_cache.invalidate_chair(&chair_id);
+    notification_cache.invalidate_chair_stats(&chair_id);
 
     let response = axum::Json(AppPostRideEvaluationResponse {
         fare,
@@ -614,20 +623,39 @@ struct AppGetNotificationResponseChairStats {
 }
 
 async fn app_get_notification(
-    State(AppState { pool, .. }): State<AppState>,
+    State(AppState {
+        pool,
+        notification_cache,
+        ..
+    }): State<AppState>,
     axum::Extension(user): axum::Extension<User>,
-) -> Result<axum::Json<AppGetNotificationResponse>, Error> {
-    let ride_exists: Option<(String,)> =
-        sqlx::query_as("SELECT id FROM rides WHERE user_id = ? ORDER BY created_at DESC LIMIT 1")
-            .bind(&user.id)
-            .fetch_optional(&pool)
-            .await?;
-    if ride_exists.is_none() {
-        return Ok(axum::Json(AppGetNotificationResponse {
-            data: None,
-            retry_after_ms: Some(30),
-        }));
+) -> Result<Response, Error> {
+    let (cached_payload, cache_revision) = notification_cache.app(&user.id);
+    if let Some(cached_payload) = cached_payload {
+        return Ok(crate::json_bytes_response(cached_payload));
     }
+
+    let latest_ride: Option<(String, Option<String>)> = sqlx::query_as(
+        "SELECT id, chair_id FROM rides WHERE user_id = ? ORDER BY created_at DESC LIMIT 1",
+    )
+    .bind(&user.id)
+    .fetch_optional(&pool)
+    .await?;
+    let Some((_, dependency_chair_id)) = latest_ride else {
+        let payload = axum::body::Bytes::from(serde_json::to_vec(&AppGetNotificationResponse {
+            data: None,
+            retry_after_ms: Some(crate::CACHED_NOTIFICATION_RETRY_AFTER_MS),
+        })?);
+        notification_cache.insert_app_if_current(user.id, cache_revision, None, payload.clone());
+        return Ok(crate::json_bytes_response(payload));
+    };
+    // Chair statistics are part of the app notification payload and can change
+    // when another user evaluates a later ride on the same chair. Capture this
+    // cross-recipient dependency before opening the transaction, so a
+    // concurrent evaluation invalidates a stale snapshot before it is cached.
+    let chair_stats_revision = dependency_chair_id
+        .as_deref()
+        .map(|chair_id| notification_cache.chair_stats_revision(chair_id));
 
     // 通知内容を組み立てる複数の SELECT と通知済み更新は、同じ
     // スナップショットで扱う必要がある。ライドがない利用者だけを
@@ -638,6 +666,7 @@ async fn app_get_notification(
             .bind(&user.id)
             .fetch_one(&mut *tx)
             .await?;
+    let chair_dependency_matches = ride.chair_id.as_deref() == dependency_chair_id.as_deref();
 
     let yet_sent_ride_status: Option<RideStatus> = sqlx::query_as("SELECT * FROM ride_statuses WHERE ride_id = ? AND app_sent_at IS NULL ORDER BY status ASC LIMIT 1")
         .bind(&ride.id)
@@ -680,7 +709,7 @@ async fn app_get_notification(
         updated_at: ride.updated_at.timestamp_millis(),
     };
 
-    if let Some(chair_id) = ride.chair_id {
+    if let Some(chair_id) = &ride.chair_id {
         let chair: Chair = sqlx::query_as("SELECT * FROM chairs WHERE id = ?")
             .bind(chair_id)
             .fetch_one(&mut *tx)
@@ -696,7 +725,7 @@ async fn app_get_notification(
         });
     }
 
-    if let Some(ride_status_id) = ride_status_id {
+    if let Some(ride_status_id) = &ride_status_id {
         sqlx::query("UPDATE ride_statuses SET app_sent_at = CURRENT_TIMESTAMP(6) WHERE id = ?")
             .bind(ride_status_id)
             .execute(&mut *tx)
@@ -705,10 +734,25 @@ async fn app_get_notification(
 
     tx.commit().await?;
 
-    Ok(axum::Json(AppGetNotificationResponse {
+    let cacheable = ride_status_id.is_none() && chair_dependency_matches;
+    let response = AppGetNotificationResponse {
         data: Some(data),
-        retry_after_ms: Some(30),
-    }))
+        retry_after_ms: Some(if cacheable {
+            crate::CACHED_NOTIFICATION_RETRY_AFTER_MS
+        } else {
+            crate::NOTIFICATION_RETRY_AFTER_MS
+        }),
+    };
+    let payload = axum::body::Bytes::from(serde_json::to_vec(&response)?);
+    if cacheable {
+        notification_cache.insert_app_if_current(
+            user.id,
+            cache_revision,
+            chair_stats_revision,
+            payload.clone(),
+        );
+    }
+    Ok(crate::json_bytes_response(payload))
 }
 
 async fn get_chair_stats(

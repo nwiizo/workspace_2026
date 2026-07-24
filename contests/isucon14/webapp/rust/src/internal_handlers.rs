@@ -12,13 +12,18 @@ pub fn internal_routes() -> axum::Router<AppState> {
 
 // このAPIをインスタンス内から一定間隔で叩かせることで、椅子とライドをマッチングさせる
 async fn internal_get_matching(
-    State(AppState { pool, .. }): State<AppState>,
+    State(AppState {
+        pool,
+        notification_cache,
+        ..
+    }): State<AppState>,
 ) -> Result<StatusCode, Error> {
     const MATCHING_BATCH_SIZE: i64 = 64;
 
     #[derive(sqlx::FromRow)]
     struct PendingRide {
         id: String,
+        user_id: String,
         pickup_latitude: i32,
         pickup_longitude: i32,
     }
@@ -34,7 +39,7 @@ async fn internal_get_matching(
 
     let pending_rides: Vec<PendingRide> = sqlx::query_as(
         r#"
-SELECT id, pickup_latitude, pickup_longitude
+SELECT id, user_id, pickup_latitude, pickup_longitude
 FROM rides
 WHERE chair_id IS NULL
 ORDER BY created_at
@@ -79,6 +84,7 @@ FOR UPDATE SKIP LOCKED
     .fetch_all(&mut *tx)
     .await?;
 
+    let mut matched_notifications = Vec::with_capacity(pending_rides.len());
     for ride in pending_rides {
         let Some((chair_index, _)) =
             available_chairs
@@ -97,14 +103,21 @@ FOR UPDATE SKIP LOCKED
         };
         let chair = available_chairs.swap_remove(chair_index);
 
-        sqlx::query("UPDATE rides SET chair_id = ? WHERE id = ? AND chair_id IS NULL")
-            .bind(chair.id)
-            .bind(ride.id)
+        let result = sqlx::query("UPDATE rides SET chair_id = ? WHERE id = ? AND chair_id IS NULL")
+            .bind(&chair.id)
+            .bind(&ride.id)
             .execute(&mut *tx)
             .await?;
+        if result.rows_affected() == 1 {
+            matched_notifications.push((ride.user_id, chair.id));
+        }
     }
 
     tx.commit().await?;
+    for (user_id, chair_id) in matched_notifications {
+        notification_cache.invalidate_app(&user_id);
+        notification_cache.invalidate_chair(&chair_id);
+    }
 
     Ok(StatusCode::NO_CONTENT)
 }

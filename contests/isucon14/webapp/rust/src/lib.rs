@@ -13,11 +13,15 @@ use tokio::sync::{Mutex, RwLock};
 
 use crate::models::{Chair, Owner, User};
 
+pub(crate) const NOTIFICATION_RETRY_AFTER_MS: i32 = 30;
+pub(crate) const CACHED_NOTIFICATION_RETRY_AFTER_MS: i32 = 100;
+
 #[derive(Debug, Clone)]
 pub struct AppState {
     pub pool: sqlx::MySqlPool,
     pub payment_client: reqwest::Client,
     pub auth_cache: AuthCache,
+    pub notification_cache: NotificationCache,
     pub latest_chair_locations: LatestChairLocationCache,
     pub active_ride_evaluations: ActiveRideEvaluationTracker,
     pub maintenance_lock: Arc<RwLock<()>>,
@@ -159,6 +163,235 @@ impl AuthCache {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .insert(chair.access_token.clone(), chair);
     }
+}
+
+#[derive(Clone, Default)]
+pub struct NotificationCache {
+    inner: Arc<StdMutex<NotificationCacheState>>,
+}
+
+#[derive(Debug, Default)]
+struct NotificationCacheState {
+    generation: u64,
+    app_revisions: HashMap<String, u64>,
+    chair_revisions: HashMap<String, u64>,
+    chair_stats_revisions: HashMap<String, u64>,
+    app_payloads: HashMap<String, AppNotificationCacheEntry>,
+    chair_payloads: HashMap<String, Bytes>,
+}
+
+#[derive(Debug)]
+struct AppNotificationCacheEntry {
+    payload: Bytes,
+    chair_stats_revision: Option<ChairStatsCacheRevision>,
+}
+
+impl std::fmt::Debug for NotificationCache {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let state = self
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        formatter
+            .debug_struct("NotificationCache")
+            .field("generation", &state.generation)
+            .field("app_payloads", &state.app_payloads.len())
+            .field("chair_payloads", &state.chair_payloads.len())
+            .finish()
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct NotificationCacheRevision {
+    generation: u64,
+    revision: u64,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct ChairStatsCacheRevision {
+    chair_id: String,
+    revision: u64,
+}
+
+impl NotificationCache {
+    pub(crate) fn app(&self, user_id: &str) -> (Option<Bytes>, NotificationCacheRevision) {
+        let state = self
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let payload = state.app_payloads.get(user_id).and_then(|entry| {
+            let dependency_is_current =
+                entry
+                    .chair_stats_revision
+                    .as_ref()
+                    .is_none_or(|dependency| {
+                        state
+                            .chair_stats_revisions
+                            .get(&dependency.chair_id)
+                            .copied()
+                            .unwrap_or_default()
+                            == dependency.revision
+                    });
+            dependency_is_current.then(|| entry.payload.clone())
+        });
+        (
+            payload,
+            NotificationCacheRevision {
+                generation: state.generation,
+                revision: state
+                    .app_revisions
+                    .get(user_id)
+                    .copied()
+                    .unwrap_or_default(),
+            },
+        )
+    }
+
+    pub(crate) fn chair(&self, chair_id: &str) -> (Option<Bytes>, NotificationCacheRevision) {
+        let state = self
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        (
+            state.chair_payloads.get(chair_id).cloned(),
+            NotificationCacheRevision {
+                generation: state.generation,
+                revision: state
+                    .chair_revisions
+                    .get(chair_id)
+                    .copied()
+                    .unwrap_or_default(),
+            },
+        )
+    }
+
+    pub(crate) fn insert_app_if_current(
+        &self,
+        user_id: String,
+        snapshot: NotificationCacheRevision,
+        chair_stats_snapshot: Option<ChairStatsCacheRevision>,
+        payload: Bytes,
+    ) {
+        let mut state = self
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let revision = state
+            .app_revisions
+            .get(&user_id)
+            .copied()
+            .unwrap_or_default();
+        let chair_stats_are_current = chair_stats_snapshot.as_ref().is_none_or(|dependency| {
+            state
+                .chair_stats_revisions
+                .get(&dependency.chair_id)
+                .copied()
+                .unwrap_or_default()
+                == dependency.revision
+        });
+        if state.generation == snapshot.generation
+            && revision == snapshot.revision
+            && chair_stats_are_current
+        {
+            state.app_payloads.insert(
+                user_id,
+                AppNotificationCacheEntry {
+                    payload,
+                    chair_stats_revision: chair_stats_snapshot,
+                },
+            );
+        }
+    }
+
+    pub(crate) fn insert_chair_if_current(
+        &self,
+        chair_id: String,
+        snapshot: NotificationCacheRevision,
+        payload: Bytes,
+    ) {
+        let mut state = self
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let revision = state
+            .chair_revisions
+            .get(&chair_id)
+            .copied()
+            .unwrap_or_default();
+        if state.generation == snapshot.generation && revision == snapshot.revision {
+            state.chair_payloads.insert(chair_id, payload);
+        }
+    }
+
+    pub(crate) fn invalidate_app(&self, user_id: &str) {
+        let mut state = self
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let revision = state.app_revisions.entry(user_id.to_owned()).or_default();
+        *revision = revision.wrapping_add(1);
+        state.app_payloads.remove(user_id);
+    }
+
+    pub(crate) fn invalidate_chair(&self, chair_id: &str) {
+        let mut state = self
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let revision = state
+            .chair_revisions
+            .entry(chair_id.to_owned())
+            .or_default();
+        *revision = revision.wrapping_add(1);
+        state.chair_payloads.remove(chair_id);
+    }
+
+    pub(crate) fn chair_stats_revision(&self, chair_id: &str) -> ChairStatsCacheRevision {
+        let state = self
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        ChairStatsCacheRevision {
+            chair_id: chair_id.to_owned(),
+            revision: state
+                .chair_stats_revisions
+                .get(chair_id)
+                .copied()
+                .unwrap_or_default(),
+        }
+    }
+
+    pub(crate) fn invalidate_chair_stats(&self, chair_id: &str) {
+        let mut state = self
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let revision = state
+            .chair_stats_revisions
+            .entry(chair_id.to_owned())
+            .or_default();
+        *revision = revision.wrapping_add(1);
+    }
+
+    pub fn clear(&self) {
+        let mut state = self
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.generation = state.generation.wrapping_add(1);
+        state.app_revisions.clear();
+        state.chair_revisions.clear();
+        state.chair_stats_revisions.clear();
+        state.app_payloads.clear();
+        state.chair_payloads.clear();
+    }
+}
+
+pub(crate) fn json_bytes_response(payload: Bytes) -> Response {
+    Response::builder()
+        .header(axum::http::header::CONTENT_TYPE, "application/json")
+        .body(Body::from(payload))
+        .expect("static JSON response headers are valid")
 }
 
 #[derive(Debug, Clone, Default)]
@@ -772,11 +1005,94 @@ mod tests {
     use super::{
         hold_active_evaluation_until_response_drop, insert_if_newer, merge_newer_locations,
         ActiveRideEvaluationTracker, LatestChairLocation, LatestChairLocationCache,
-        EVALUATION_RESPONSE_DELIVERY_GRACE,
+        NotificationCache, EVALUATION_RESPONSE_DELIVERY_GRACE,
     };
+    use axum::body::Bytes;
     use axum::response::IntoResponse;
     use std::collections::HashMap;
     use std::time::Instant;
+
+    #[test]
+    fn notification_cache_returns_a_current_payload() {
+        let cache = NotificationCache::default();
+        let (payload, revision) = cache.app("user-1");
+        assert!(payload.is_none());
+
+        cache.insert_app_if_current(
+            "user-1".to_owned(),
+            revision,
+            None,
+            Bytes::from_static(b"app-payload"),
+        );
+
+        assert_eq!(
+            cache.app("user-1").0.unwrap(),
+            Bytes::from_static(b"app-payload")
+        );
+        assert!(cache.chair("user-1").0.is_none());
+    }
+
+    #[test]
+    fn notification_cache_rejects_an_insert_after_invalidation() {
+        let cache = NotificationCache::default();
+        let (_, stale_revision) = cache.chair("chair-1");
+        cache.invalidate_chair("chair-1");
+
+        cache.insert_chair_if_current(
+            "chair-1".to_owned(),
+            stale_revision,
+            Bytes::from_static(b"stale"),
+        );
+
+        assert!(cache.chair("chair-1").0.is_none());
+    }
+
+    #[test]
+    fn notification_cache_clear_rejects_a_previous_generation() {
+        let cache = NotificationCache::default();
+        let (_, stale_revision) = cache.app("user-1");
+        cache.clear();
+
+        cache.insert_app_if_current(
+            "user-1".to_owned(),
+            stale_revision,
+            None,
+            Bytes::from_static(b"stale"),
+        );
+
+        assert!(cache.app("user-1").0.is_none());
+    }
+
+    #[test]
+    fn app_notification_cache_tracks_cross_user_chair_stats_changes() {
+        let cache = NotificationCache::default();
+        let (_, app_revision) = cache.app("past-user");
+        let stale_stats_revision = cache.chair_stats_revision("shared-chair");
+
+        cache.insert_app_if_current(
+            "past-user".to_owned(),
+            app_revision,
+            Some(stale_stats_revision.clone()),
+            Bytes::from_static(b"old-stats"),
+        );
+        assert_eq!(
+            cache.app("past-user").0.unwrap(),
+            Bytes::from_static(b"old-stats")
+        );
+
+        // A later ride can be evaluated by a different user while changing
+        // statistics embedded in past-user's notification payload.
+        cache.invalidate_chair_stats("shared-chair");
+        assert!(cache.app("past-user").0.is_none());
+
+        cache.insert_app_if_current(
+            "past-user".to_owned(),
+            app_revision,
+            Some(stale_stats_revision),
+            Bytes::from_static(b"stale-reinsert"),
+        );
+        assert!(cache.app("past-user").0.is_none());
+    }
 
     #[tokio::test]
     async fn latest_chair_location_cache_keeps_the_newest_coordinate() {
@@ -1136,6 +1452,8 @@ pub enum Error {
     Io(#[from] std::io::Error),
     #[error("SQLx error: {0}")]
     Sqlx(#[from] sqlx::Error),
+    #[error("JSON serialization error: {0}")]
+    Json(#[from] serde_json::Error),
     #[error("failed to initialize: stdout={stdout} stderr={stderr}")]
     Initialize { stdout: String, stderr: String },
     #[error("{0}")]
