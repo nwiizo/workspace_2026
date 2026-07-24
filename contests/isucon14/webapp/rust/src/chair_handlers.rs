@@ -3,6 +3,12 @@ use axum::http::StatusCode;
 use axum::response::Response;
 use axum_extra::extract::cookie::Cookie;
 use axum_extra::extract::CookieJar;
+use std::io::Write as _;
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    OnceLock,
+};
+use std::time::Instant;
 use ulid::Ulid;
 
 use crate::models::{Chair, Owner, Ride, RideStatus, User};
@@ -115,6 +121,106 @@ struct ChairPostCoordinateResponse {
     recorded_at: i64,
 }
 
+const COORDINATE_DIAGNOSTIC_SAMPLE_EVERY: u64 = 64;
+static COORDINATE_DIAGNOSTIC_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+static COORDINATE_DIAGNOSTICS_ENABLED: OnceLock<bool> = OnceLock::new();
+
+#[derive(serde::Serialize)]
+struct CoordinateDiagnosticSample {
+    sequence: u64,
+    cache_lookup_us: u64,
+    pool_begin_us: u64,
+    history_insert_us: u64,
+    current_write_us: u64,
+    ride_lookup_us: u64,
+    transition_us: u64,
+    commit_us: u64,
+    cache_update_us: u64,
+    total_us: u64,
+    current_write_path: &'static str,
+    transition_candidate: bool,
+    transition_inserted: bool,
+    outcome: &'static str,
+    terminal_phase: &'static str,
+}
+
+struct CoordinateDiagnostic {
+    started_at: Instant,
+    checkpoint_at: Instant,
+    sample: CoordinateDiagnosticSample,
+    emitted: bool,
+}
+
+impl CoordinateDiagnostic {
+    fn sampled() -> Option<Self> {
+        let enabled = *COORDINATE_DIAGNOSTICS_ENABLED.get_or_init(|| {
+            std::env::var_os("ISUCON_DIAGNOSTIC").as_deref() == Some(std::ffi::OsStr::new("1"))
+        });
+        if !enabled {
+            return None;
+        }
+
+        let sequence = COORDINATE_DIAGNOSTIC_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        if sequence.checked_rem(COORDINATE_DIAGNOSTIC_SAMPLE_EVERY) != Some(0) {
+            return None;
+        }
+
+        let started_at = Instant::now();
+        Some(Self {
+            started_at,
+            checkpoint_at: started_at,
+            sample: CoordinateDiagnosticSample {
+                sequence,
+                cache_lookup_us: 0,
+                pool_begin_us: 0,
+                history_insert_us: 0,
+                current_write_us: 0,
+                ride_lookup_us: 0,
+                transition_us: 0,
+                commit_us: 0,
+                cache_update_us: 0,
+                total_us: 0,
+                current_write_path: "unknown",
+                transition_candidate: false,
+                transition_inserted: false,
+                outcome: "error_or_cancelled",
+                terminal_phase: "cache_lookup",
+            },
+            emitted: false,
+        })
+    }
+
+    fn elapsed_since_checkpoint_us(&mut self) -> u64 {
+        let now = Instant::now();
+        let elapsed = now.duration_since(self.checkpoint_at).as_micros();
+        self.checkpoint_at = now;
+        elapsed.min(u128::from(u64::MAX)) as u64
+    }
+
+    fn emit_record(&mut self) {
+        self.emitted = true;
+        let total_us = self.started_at.elapsed().as_micros();
+        self.sample.total_us = total_us.min(u128::from(u64::MAX)) as u64;
+        if let Ok(json) = serde_json::to_string(&self.sample) {
+            let _ = writeln!(std::io::stdout().lock(), "COORDINATE_DIAGNOSTIC {json}");
+        }
+    }
+
+    fn emit_success(mut self) {
+        self.sample.outcome = "success";
+        self.sample.terminal_phase = "complete";
+        self.emit_record();
+    }
+}
+
+impl Drop for CoordinateDiagnostic {
+    fn drop(&mut self) {
+        if !self.emitted {
+            self.emit_record();
+        }
+    }
+}
+
 async fn upsert_chair_current_location(
     tx: &mut sqlx::MySqlConnection,
     chair_id: &str,
@@ -194,8 +300,19 @@ async fn chair_post_coordinate(
         destination_longitude: i32,
     }
 
+    let mut diagnostic = CoordinateDiagnostic::sampled();
     let current_location_exists = latest_chair_locations.contains(&chair.id).await;
+    if let Some(diagnostic) = &mut diagnostic {
+        let elapsed_us = diagnostic.elapsed_since_checkpoint_us();
+        diagnostic.sample.cache_lookup_us = elapsed_us;
+        diagnostic.sample.terminal_phase = "pool_begin";
+    }
     let mut tx = pool.begin().await?;
+    if let Some(diagnostic) = &mut diagnostic {
+        let elapsed_us = diagnostic.elapsed_since_checkpoint_us();
+        diagnostic.sample.pool_begin_us = elapsed_us;
+        diagnostic.sample.terminal_phase = "history_insert";
+    }
     let mut notification_user_id = None;
 
     let chair_location_id = Ulid::new().to_string();
@@ -210,8 +327,16 @@ async fn chair_post_coordinate(
     .bind(recorded_at)
     .execute(&mut *tx)
     .await?;
+    if let Some(diagnostic) = &mut diagnostic {
+        let elapsed_us = diagnostic.elapsed_since_checkpoint_us();
+        diagnostic.sample.history_insert_us = elapsed_us;
+        diagnostic.sample.terminal_phase = "current_write";
+    }
 
     if current_location_exists {
+        if let Some(diagnostic) = &mut diagnostic {
+            diagnostic.sample.current_write_path = "update";
+        }
         let current_location_update = sqlx::query(
             r#"
 UPDATE chair_current_locations
@@ -238,6 +363,9 @@ WHERE chair_id = ?
         .await?;
 
         if current_location_update.rows_affected() == 0 {
+            if let Some(diagnostic) = &mut diagnostic {
+                diagnostic.sample.current_write_path = "update_fallback";
+            }
             // A stale cache or a concurrent newer update can make the guarded
             // UPDATE affect zero rows. The atomic fallback repairs both cases.
             upsert_chair_current_location(
@@ -250,11 +378,19 @@ WHERE chair_id = ?
             .await?;
         }
     } else {
+        if let Some(diagnostic) = &mut diagnostic {
+            diagnostic.sample.current_write_path = "upsert_missing";
+        }
         // Updating a missing row under REPEATABLE READ acquires a gap lock. Many
         // first-coordinate transactions can then deadlock when they all insert.
         // Start with one atomic upsert when the cache says no current row exists.
         upsert_chair_current_location(&mut tx, &chair.id, &chair_location_id, &req, recorded_at)
             .await?;
+    }
+    if let Some(diagnostic) = &mut diagnostic {
+        let elapsed_us = diagnostic.elapsed_since_checkpoint_us();
+        diagnostic.sample.current_write_us = elapsed_us;
+        diagnostic.sample.terminal_phase = "ride_lookup";
     }
 
     let ride: Option<CurrentRide> = sqlx::query_as(
@@ -275,6 +411,11 @@ LIMIT 1
     .bind(&chair.id)
     .fetch_optional(&mut *tx)
     .await?;
+    if let Some(diagnostic) = &mut diagnostic {
+        let elapsed_us = diagnostic.elapsed_since_checkpoint_us();
+        diagnostic.sample.ride_lookup_us = elapsed_us;
+        diagnostic.sample.terminal_phase = "transition";
+    }
     if let Some(ride) = ride {
         let is_pickup =
             req.latitude == ride.pickup_latitude && req.longitude == ride.pickup_longitude;
@@ -282,6 +423,9 @@ LIMIT 1
             && req.longitude == ride.destination_longitude;
 
         if ride.evaluation.is_none() && (is_pickup || is_destination) {
+            if let Some(diagnostic) = &mut diagnostic {
+                diagnostic.sample.transition_candidate = true;
+            }
             let evaluation: Option<i32> =
                 sqlx::query_scalar("SELECT evaluation FROM rides WHERE id = ? FOR UPDATE")
                     .bind(&ride.id)
@@ -311,12 +455,25 @@ LIMIT 1
                         .execute(&mut *tx)
                         .await?;
                     notification_user_id = Some(ride.user_id);
+                    if let Some(diagnostic) = &mut diagnostic {
+                        diagnostic.sample.transition_inserted = true;
+                    }
                 }
             }
         }
     }
+    if let Some(diagnostic) = &mut diagnostic {
+        let elapsed_us = diagnostic.elapsed_since_checkpoint_us();
+        diagnostic.sample.transition_us = elapsed_us;
+        diagnostic.sample.terminal_phase = "commit";
+    }
 
     tx.commit().await?;
+    if let Some(diagnostic) = &mut diagnostic {
+        let elapsed_us = diagnostic.elapsed_since_checkpoint_us();
+        diagnostic.sample.commit_us = elapsed_us;
+        diagnostic.sample.terminal_phase = "cache_update";
+    }
     if let Some(user_id) = notification_user_id {
         notification_cache.invalidate_app(&user_id);
         notification_cache.invalidate_chair(&chair.id);
@@ -330,10 +487,18 @@ LIMIT 1
             recorded_at,
         )
         .await;
+    if let Some(diagnostic) = &mut diagnostic {
+        let elapsed_us = diagnostic.elapsed_since_checkpoint_us();
+        diagnostic.sample.cache_update_us = elapsed_us;
+    }
 
-    Ok(axum::Json(ChairPostCoordinateResponse {
+    let response = axum::Json(ChairPostCoordinateResponse {
         recorded_at: recorded_at.and_utc().timestamp_millis(),
-    }))
+    });
+    if let Some(diagnostic) = diagnostic {
+        diagnostic.emit_success();
+    }
+    Ok(response)
 }
 
 #[derive(Debug, serde::Serialize)]

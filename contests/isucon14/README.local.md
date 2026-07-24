@@ -56,6 +56,7 @@ git -C "$source_dir/isucon14" archive HEAD | tar -x -C contests/isucon14
 | `scripts/test-owner-sales-response-boundary.sh` | 遅い決済中の評価完了時刻とowner salesの`until`境界をHTTP・決済TCP accept・InnoDB行ロック・response JSON・SQLで確認 |
 | `scripts/benchmark.sh` | 決済モックを含む公式ベンチマーカーの実行 |
 | `scripts/report-endpoint-latency.sh` | 診断runのnginx timing logをendpoint別に集計 |
+| `scripts/report-coordinate-phases.sh` | 診断runのcoordinate phase、row lock、current-state writeを集計 |
 | `.dockerignore` / `webapp/rust/.dockerignore` | Dockerへ不要なソース・`target/` を送らない |
 
 ## 初期構築方法
@@ -230,16 +231,21 @@ endpoint別のp50 / p95 / p99を採るときだけ、診断overlayを有効に�
 diagnostic_since=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 ISUCON_DIAGNOSTIC=1 ./scripts/benchmark.sh 60
 DIAGNOSTIC_SINCE="$diagnostic_since" ./scripts/report-endpoint-latency.sh
+DIAGNOSTIC_SINCE="$diagnostic_since" ./scripts/report-coordinate-phases.sh
 ```
 
 `ISUCON_DIAGNOSTIC=1` は
 [`compose.diagnostics.yaml`](./compose.diagnostics.yaml) から
 [`docker/nginx.diagnostic.conf`](./docker/nginx.diagnostic.conf) をmountし、APIのmethod、
 URI、status、request time、upstream response time、request / response bytesを
-JSONでstdoutへ記録します。
+JSONでstdoutへ記録します。同じoverlayがRust webappのcoordinate phase samplingも
+有効にします。64 requestに1件について、pool + `BEGIN`、履歴INSERT、current-state write、
+ride検索、status遷移、COMMIT、cache更新を分け、成功・error / cancellationと最後のphaseを
+JSONで記録します。
 upstream connect time、connection ID、同じconnection上のrequest回数も含みます。
 Cookie、認証token、request body本文、決済情報は記録しません。通常のスコアrunは
-環境変数を付けずに実行し、access logの追加処理と分離してください。
+環境変数を付けずに実行し、access log、時刻取得、sample JSON、同期stdout writeの追加処理と
+分離してください。
 
 集計にはmacOSホストの `alp 1.0.21` を使います。ride IDを含むpathは
 `/api/app/rides/[^/]+/evaluation` と `/api/chair/rides/[^/]+/status` へ正規化されます。
@@ -247,6 +253,22 @@ Cookie、認証token、request body本文、決済情報は記録しません。
 `DIAGNOSTIC_SINCE` は同じnginx containerに残る前回runのlogを混ぜないため必須です。
 `compose logs` またはJSON抽出に失敗した場合も、空の集計を成功として扱わず停止します。
 通常表の4xx合計とは別に、clientがresponse完了前に切断したHTTP 499をendpoint別に出します。
+
+coordinate集計のInnoDB metricは `DIAGNOSTIC_SINCE` で時刻filterできず、MySQL process起動後の
+累積値です。そこで集計scriptは「指定run開始 ≤ MySQL起動 ≤ 最初のcoordinate sample」を
+検証し、再利用DBや走行後のDB再起動では停止します。上記の
+`./scripts/benchmark.sh` はbuild前にDBを正常停止し、新しいrun用processとして再起動します。
+run開始時刻はbenchmark commandより前に取得し、同じrunのcontainerを再起動する前に集計して
+ください。
+
+`prepared_statements_instances` はreport時点で生存するSQLx connectionだけを持つlive snapshotです。
+終了済みconnectionの実行は消えるため、全期間の完全な回数ではありません。phase sampling、
+nginx全request、InnoDB process累積を同じ境界の値として混ぜず、互いに同じ傾向かを確認する
+補助情報として使います。
+
+phase別p50 / p95 / p99は、すべてのphaseを完了した成功sampleだけで計算します。errorまたは
+cancellationでは未到達phaseがあるため、初期値0を成功分布へ混ぜません。失敗sampleは
+terminal phase別の件数とhandler内total latencyを別表へ出し、どこまで進んだかを確認します。
 
 走行時間は引数または環境変数で指定します。省略時は公式と同じ 60 秒です。
 上記の `test-*.sh` はDBを公式初期データへ戻すため、保持したいローカルデータが

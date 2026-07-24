@@ -181,6 +181,19 @@
   - 推定代表値の中央値109,443点、Benchmark 25比+8.3%、全run`pass=true`・error map空
   - 診断runでapp / chair通知の平均を113 / 130msから37 / 51msへ短縮
   - 詳細: [`tuning/26-notification-payload-cache.md`](./tuning/26-notification-payload-cache.md)
+- [x] coordinateを1/64 samplingでphase分解し、current UPDATEのrow lock仮説を検証する
+  - 1,185 sampleのcurrent writeは平均1.633ms、p95 4.185ms
+  - `pool.begin()` は平均32.452ms、p95 93.651ms、handler内total p95 105.296ms
+  - current-state write全75,834回は平均0.812ms、row lock待ちは2,914回・平均約16.6ms
+  - row lockは存在するが支配的phaseではないため、current row queue化を直近の実装対象から外す
+  - `pool.begin()` はacquire + SQL `BEGIN` の合算なので、次は2区間を分離する
+  - 詳細: [`tuning/27-coordinate-phase-diagnostics.md`](./tuning/27-coordinate-phase-diagnostics.md)
+- [x] 再発した`CODE=17`のHTTP経路、MySQL error、deadlock履歴を同時採取する
+  - `POST /api/app/users` のMySQL 1062、`users.username='Kulas4628'` の重複
+  - 同名rowは同じrunで約16秒前に作成。InnoDB deadlock履歴はなく、過去のcoupon競合とは別原因
+  - nginxにrequest IDがないため、UTC時刻 + endpoint + HTTP status + DB error + usernameで相関
+  - OpenAPIがusernameを一意と定義するためUNIQUE INDEXは維持し、衝突時の限定retryを別施策で検証する
+  - 詳細: [`tuning/27-coordinate-phase-diagnostics.md`](./tuning/27-coordinate-phase-diagnostics.md)
 - [x] nearbyの集合SQL、chair statsの集約SQL、batch matcherを実装
 - [x] 上記3変更を別々のBenchmarkとして正当性・性能検証する
 
@@ -193,7 +206,7 @@
 | P0 | 通知2経路 | recipient + chair stats dependency revision付きpayload cache。未送信statusは30ms、定常cacheは100ms。cursorはDBに維持 | 診断runのp95はapp 166ms / chair 181ms。response ACKなしの配送loss、cache missのphase分解、long pollingが未検証 |
 | P0 | `get_chair_stats` | 評価時差分更新 + 主キーreadへ変更 | SQL累積は約89%減、スコア中央値は約3.5%低下したため次の通知施策と合わせて再評価 |
 | P0 | `app_post_ride_evaluation` | ride IDの冪等keyで決済retry。完了時刻は決済後の最終SQL。ただしDB transaction中に外部HTTPと最大5回の100ms sleep | connection・snapshot・ride row lockを外部I/O中も保持。pending状態とcrash recoveryを設計してtransactionを分割する |
-| P0 | `chair_post_coordinate` | 履歴INSERT + current UPDATE、遷移候補だけride lock + 最新status再読 | current UPDATE平均0.744msとrow-lock待ち。write amplificationを減らす |
+| P0 | `chair_post_coordinate` | 履歴INSERT + current UPDATE、遷移候補だけride lock + 最新status再読 | 診断runではcurrent write p95 4.185msに対し`pool.begin()` p95 93.651ms。pool acquireと`BEGIN`を分離する |
 | P1 | `app_get_rides` | rideごとにstatus、coupon、chair、ownerを取得 | 履歴増加に比例するN+1 |
 | P1 | `owner_get_sales` | ownerのchairごとに完了rideを取得し、評価responseと重なったride IDを除外 | N+1、read transactionが暗黙ROLLBACK。複数processではtracker共有が必要 |
 | P1 | `app_post_rides` | userの全rideとride別最新statusを取得 | ライド作成ごとに履歴全体を再走査 |
@@ -659,11 +672,16 @@
   - 決済後にevaluationと完了時刻を同じUPDATEで保存し、同じ時刻をresponseへ返す
   - `./scripts/test-owner-sales-response-boundary.sh` でInnoDB行ロックを条件pollして赤/緑を確認
   - 詳細: [`tuning/24-owner-sales-completion-boundary.md`](./tuning/24-owner-sales-completion-boundary.md)
-- [ ] `CODE=17` が再発したrunで、登録request ID、MySQL error、`SHOW ENGINE INNODB STATUS`を同時採取する
+- [x] `CODE=17` が再発したrunで、登録HTTP経路、MySQL error、`SHOW ENGINE INNODB STATUS`を同時採取する
+  - request IDは現行logにないため、UTC時刻、endpoint、status、DB error、重複usernameで相関
+  - MySQL 1062のusername重複であり、deadlockではなかった
 - [x] initializeのtable再作成中は、全API requestと定期再同期をmaintenance gateで待たせる
 - [ ] latest-coordinate cacheの `RwLock` read / write待機時間と保持時間を計測する
 - [x] 共有current-state表を追加し、複数processも2秒以内に収束できる経路を作る
-- [ ] current UPDATEのrow-lock待機時間とcoordinate transaction p95 / p99を計測する
+- [x] current UPDATEのrow-lock待機時間とcoordinate transaction p95 / p99を計測する
+  - current write平均1.633ms / p95 4.185ms / p99 23.184ms
+  - coordinate handler内total平均40.089ms / p95 105.296ms / p99 138.956ms
+  - `pool.begin()` p95 93.651msが最大であり、acquireとSQL `BEGIN`の分離を継続
 - [ ] current row更新のcoalescing / queue化で3秒収束と履歴完全性を維持できるか比較する
 
 ### JSON通知の短期改善
@@ -1027,10 +1045,12 @@
 
 ## 推奨する直近の実行順
 
-1. `CODE=17` が再発したrunでは、登録request IDとMySQL error / deadlock履歴を同時採取する
-2. current UPDATEのrow-lock待機とcoordinate transaction p50 / p95 / p99を診断runで採取する
-3. current rowをper-chair順序付きqueueでcoalesceし、3秒収束・全履歴・crash整合性を維持したまま
-   39,013回、累積29.033秒のwrite amplificationを減らせるか単独比較する
+1. MySQL 1062のusername衝突だけを限定retryし、OpenAPIの一意性を維持したまま
+   `CODE=17`を除去できるか通常3走で確認する
+2. coordinateの `pool.begin()` を `pool.acquire()` とSQL `BEGIN`へ分け、p50 / p95 / p99と
+   poolの `size` / `idle` / `in_use` を同じ時刻軸で採取する
+3. pool取得待ちが支配的なら、外部決済HTTP中のtransaction保持を先に分割し、
+   connection保持時間とcrash recoveryを単独検証する
 4. latest-coordinate cacheの `RwLock` とmaintenance gateの待機・保持時間を計測し、
    2秒再同期時のglobal stallを定量化する
 5. 最新statusをcurrent-state化し、未送信statusがない通知pollの履歴lookupとpayload再構築をなくす
@@ -1041,7 +1061,7 @@
 10. current-state別表で最新statusをO(1)化する
 11. JSON long pollingで不足する場合だけSSEへ移し、状態変更時の即時pushまで実装する
 12. 貪欲matcherと最小費用二部マッチングを比較する
-13. 最後にpool、MySQL、nginx、compiler設定をprofileに基づいて調整する
+13. 最後にpool上限、MySQL、nginx、compiler設定をprofileに基づいて調整する
 
 ## 記録ルール
 
