@@ -13,6 +13,7 @@ use ulid::Ulid;
 
 use crate::models::{Chair, Owner, Ride, RideStatus, User};
 use crate::{AppState, Coordinate, Error};
+use sqlx::Acquire;
 
 pub fn chair_routes(app_state: AppState) -> axum::Router<AppState> {
     let routes =
@@ -129,7 +130,12 @@ static COORDINATE_DIAGNOSTICS_ENABLED: OnceLock<bool> = OnceLock::new();
 struct CoordinateDiagnosticSample {
     sequence: u64,
     cache_lookup_us: u64,
+    pool_acquire_us: u64,
+    transaction_begin_us: u64,
     pool_begin_us: u64,
+    pool_size_before: Option<u64>,
+    pool_idle_before: Option<u64>,
+    pool_in_use_before: Option<u64>,
     history_insert_us: u64,
     current_write_us: u64,
     ride_lookup_us: u64,
@@ -172,7 +178,12 @@ impl CoordinateDiagnostic {
             sample: CoordinateDiagnosticSample {
                 sequence,
                 cache_lookup_us: 0,
+                pool_acquire_us: 0,
+                transaction_begin_us: 0,
                 pool_begin_us: 0,
+                pool_size_before: None,
+                pool_idle_before: None,
+                pool_in_use_before: None,
                 history_insert_us: 0,
                 current_write_us: 0,
                 ride_lookup_us: 0,
@@ -305,12 +316,25 @@ async fn chair_post_coordinate(
     if let Some(diagnostic) = &mut diagnostic {
         let elapsed_us = diagnostic.elapsed_since_checkpoint_us();
         diagnostic.sample.cache_lookup_us = elapsed_us;
-        diagnostic.sample.terminal_phase = "pool_begin";
+        let pool_size = u64::from(pool.size());
+        let pool_idle = u64::try_from(pool.num_idle()).unwrap_or(u64::MAX);
+        diagnostic.sample.pool_size_before = Some(pool_size);
+        diagnostic.sample.pool_idle_before = Some(pool_idle);
+        diagnostic.sample.pool_in_use_before = Some(pool_size.saturating_sub(pool_idle));
+        diagnostic.sample.terminal_phase = "pool_acquire";
     }
-    let mut tx = pool.begin().await?;
+    let mut connection = pool.acquire().await?;
     if let Some(diagnostic) = &mut diagnostic {
         let elapsed_us = diagnostic.elapsed_since_checkpoint_us();
-        diagnostic.sample.pool_begin_us = elapsed_us;
+        diagnostic.sample.pool_acquire_us = elapsed_us;
+        diagnostic.sample.terminal_phase = "transaction_begin";
+    }
+    let mut tx = connection.begin().await?;
+    if let Some(diagnostic) = &mut diagnostic {
+        let elapsed_us = diagnostic.elapsed_since_checkpoint_us();
+        diagnostic.sample.transaction_begin_us = elapsed_us;
+        diagnostic.sample.pool_begin_us =
+            diagnostic.sample.pool_acquire_us.saturating_add(elapsed_us);
         diagnostic.sample.terminal_phase = "history_insert";
     }
     let mut notification_user_id = None;
@@ -469,6 +493,7 @@ LIMIT 1
     }
 
     tx.commit().await?;
+    drop(connection);
     if let Some(diagnostic) = &mut diagnostic {
         let elapsed_us = diagnostic.elapsed_since_checkpoint_us();
         diagnostic.sample.commit_us = elapsed_us;

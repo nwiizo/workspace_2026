@@ -103,10 +103,13 @@ printf '\nInnoDB metrics below are cumulative since this fresh MySQL process sta
 printf 'Prepared-statement metrics are a lossy live snapshot at report time.\n\n'
 
 printf 'successful coordinate phase latency\n\n'
+printf 'Percentiles use the zero-based lower order statistic floor((n - 1) * p).\n\n'
 printf '| phase | samples | avg_us | p50_us | p95_us | p99_us | max_us |\n'
 printf '|---|---:|---:|---:|---:|---:|---:|\n'
 for phase in \
   cache_lookup_us \
+  pool_acquire_us \
+  transaction_begin_us \
   pool_begin_us \
   history_insert_us \
   current_write_us \
@@ -120,6 +123,7 @@ do
     [
       .[] |
       select((.outcome // "success") == "success") |
+      select(.[$phase] != null) |
       .[$phase]
     ] | sort as $values |
     ($values | length) as $length |
@@ -139,6 +143,91 @@ do
     end
   ' "$json_log"
 done
+
+printf '\npool state before sampled acquire\n\n'
+printf 'summary: '
+jq --slurp --raw-output '
+  [
+    .[] |
+    select(.pool_size_before != null)
+  ] as $samples |
+  if ($samples | length) == 0 then
+    "no split pool samples"
+  else
+    ($samples | map(.pool_size_before) | max) as $max_size |
+    "samples=\($samples | length) " +
+    "no_idle=\($samples | map(select(.pool_idle_before == 0)) | length) " +
+    "observed_max_size=\($max_size) " +
+    "observed_max_size_no_idle=\($samples | map(select(
+      .pool_size_before == $max_size and .pool_idle_before == 0
+    )) | length)"
+  end
+' "$json_log"
+printf '\n'
+printf '| pool size | idle | in use | samples |\n'
+printf '|---:|---:|---:|---:|\n'
+jq --slurp --raw-output '
+  [
+    .[] |
+    select(.pool_size_before != null) |
+    {
+      size: .pool_size_before,
+      idle: .pool_idle_before,
+      in_use: .pool_in_use_before
+    }
+  ] |
+  group_by([.size, .idle, .in_use])[] |
+  "| \(.[0].size) | \(.[0].idle) | \(.[0].in_use) | \(length) |"
+' "$json_log"
+
+printf '\npool acquire latency by state before acquire\n\n'
+printf '| state | samples | avg_us | p50_us | p95_us | p99_us | max_us |\n'
+printf '|---|---:|---:|---:|---:|---:|---:|\n'
+jq --slurp --raw-output '
+  [
+    .[] |
+    select((.outcome // "success") == "success") |
+    select(.pool_size_before != null and .pool_acquire_us != null)
+  ] as $samples |
+  ($samples | map(.pool_size_before) | max) as $max_size |
+  def row($label; $values):
+    ($values | sort) as $sorted |
+    ($sorted | length) as $length |
+    if $length == 0 then
+      "| \($label) | 0 | n/a | n/a | n/a | n/a | n/a |"
+    else
+      "| \($label) | \($length) | " +
+      "\(($sorted | add) / $length | floor) | " +
+      "\($sorted[(($length - 1) * 0.50 | floor)]) | " +
+      "\($sorted[(($length - 1) * 0.95 | floor)]) | " +
+      "\($sorted[(($length - 1) * 0.99 | floor)]) | " +
+      "\($sorted[$length - 1]) |"
+    end;
+  row(
+    "observed_max_size_no_idle";
+    [
+      $samples[] |
+      select(.pool_size_before == $max_size and .pool_idle_before == 0) |
+      .pool_acquire_us
+    ]
+  ),
+  row(
+    "idle_positive";
+    [
+      $samples[] |
+      select(.pool_idle_before > 0) |
+      .pool_acquire_us
+    ]
+  ),
+  row(
+    "below_observed_max_no_idle";
+    [
+      $samples[] |
+      select(.pool_size_before < $max_size and .pool_idle_before == 0) |
+      .pool_acquire_us
+    ]
+  )
+' "$json_log"
 
 printf '\ncurrent-state write path\n\n'
 printf '| path | samples |\n'

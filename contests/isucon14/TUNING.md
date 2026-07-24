@@ -83,6 +83,7 @@
 | 決済HTTP client | process内で1個を共有し、冪等なPOST / retryでconnection poolを再利用済み | TCP connect回数とstatus別retry数を診断runで採取 |
 | 決済の `Idempotency-Key` | ride IDを全POSTへ設定し、確認GETとuser全ride取得を削除済み | pending状態とcrash recoveryを設計し、外部HTTPをDB transaction外へ出す |
 | 招待登録 | 招待者のUNIQUE行を `FOR UPDATE` して同一コードだけを直列化。couponは `COUNT(*)`、reward codeは新規user IDで一意化 | 上限が増えてCOUNTが支配的になった場合だけ、条件付きcounter UPDATEを比較 |
+| SQLx connection pool | 上限50。coordinate診断sampleの78.1%でsize 50 / idle 0、acquire p95 113.156msに対しSQL BEGIN p95 2.327ms | 評価APIのDB準備・決済HTTP・完了write・COMMITを分け、長い保持元を先に短縮する |
 
 SSEは形式だけ変更しても、DB query数とpayload生成量が同じなら効果が薄いと考えます。
 Benchmark 26ではJSON payload cacheと状態不変時だけ100msにするpollingを実装し、
@@ -900,6 +901,7 @@ amountを記録するため、ride IDを同じkeyとして再利用すれば、�
 | [27-coordinate-phase-diagnostics.md](./tuning/27-coordinate-phase-diagnostics.md) | coordinateを1/64 samplingでphase分解し、row lock仮説と再発CODE17を診断 | 診断runは`pass=true`・117,989点、`CODE=17` 1件。coordinate内p95はcurrent write 4.185ms、`pool.begin()` 93.651ms | 診断instrumentation付き実測n=1・未推定。current UPDATE支配仮説を棄却。このrunのCODE17はusername重複の1062。別runのcoupon deadlockはBenchmark 29で分離 |
 | [28-username-collision-retry.md](./tuning/28-username-collision-retry.md) | `users.username` のMySQL 1062だけを内部usernameで1回再試行 | 3走103,738–107,508点、推定代表値の中央値104,263点、全run `pass=true`、`CODE=17` 0件 | 実測n=3。Benchmark 26中央値比-4.7%のため高速化とは扱わず、通常経路の追加SQLなしで稀な登録失敗を防ぐ正当性修正として採用。`CODE=26` 0 / 136 / 142件は次のP0 |
 | [29-invitation-concurrency.md](./tuning/29-invitation-concurrency.md) | 招待者のUNIQUE行を直列化地点にし、coupon gap deadlockとreward codeのミリ秒衝突を除去 | 3走99,775–105,304点、推定代表値の中央値102,569点、全run `pass=true`・error map空 | 実測n=3。Benchmark 28中央値比-1.6%のため高速化とは扱わない。24種類の同時登録、同一codeの3成功・1拒否、MySQL 1062 / 1213増分0を根拠に正当性修正として採用 |
+| [30-coordinate-pool-acquisition.md](./tuning/30-coordinate-pool-acquisition.md) | coordinateの `pool.begin()` をpool acquireとSQL BEGINへ分離 | acquire p95 113.156ms、BEGIN p95 2.327ms。1,173 sampleの78.1%でsize 50 / idle 0。この群のacquire平均54.762msに対しidleあり群は3.968ms | 診断instrumentation付き実測n=1・未推定。score 124,064、`pass=true`・error map空。current write支配仮説を棄却し、長時間connectionを保持する評価APIを次にphase分解 |
 | [80-rust-implementation.md](./tuning/80-rust-implementation.md) | Rust / sqlxとrelease buildの知識 | 再build 30分52秒→11.02秒 | build時間の実測。スコア推定対象外 |
 | [81-evaluation-authorization.md](./tuning/81-evaluation-authorization.md) | 評価rideを認証ユーザー所有へ制限 | 公式prevalidation `pass=true`、別ユーザーHTTP回帰成功 | 正当性修正。60秒スコアはBenchmark 20から更新しない |
 | [90-local-environment.md](./tuning/90-local-environment.md) | build context、BuildKit、固定Colima資源 | context 467MB→32.5KB | sizeの実測。スコア推定対象外 |

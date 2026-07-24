@@ -217,6 +217,18 @@
   - 推定代表値の中央値102,569点、Benchmark 28比-1.6%のため高速化とは扱わない
   - 全run `pass=true`、error map空、終了後のMySQL 1062 / 1213は0件
   - 詳細: [`tuning/29-invitation-concurrency.md`](./tuning/29-invitation-concurrency.md)
+- [x] coordinateの `pool.begin()` をconnection取得待ちとSQL `BEGIN`へ分離する
+  - 診断runは `pass=true`、124,064点、error map空。診断n=1なのでscoreは未推定
+  - 成功1,173 sampleでpool acquireは平均43.657ms、p95 113.156ms
+  - SQL `BEGIN` は平均0.611ms、p95 2.327ms
+  - 916 sample、約78.1%で取得直前がpool size 50 / idle 0 / in use 50
+  - size 50 / idle 0群のacquire phaseは平均54.762ms・p95 117.398ms、
+    idleあり群は平均3.968ms・p95 16.138ms
+  - current-state write p95は5.007msで、row write支配仮説を棄却
+  - 同runの評価APIは1,795回、平均403ms、p95 769ms。外部決済をtransaction内で待つ
+    connection保持時間を次にphase分解する
+  - pool上限は変更せず、長いtransactionを先に短縮する
+  - 詳細: [`tuning/30-coordinate-pool-acquisition.md`](./tuning/30-coordinate-pool-acquisition.md)
 - [ ] `CODE=26` のowner累積距離が座標responseの受信境界より先へ進む競合を検証する
   - 期待値より実値が4–40程度大きく、直近1回の移動距離に近い例を確認
   - ベンチマーカーのcoordinate POST、world更新、owner検証の順序を同じchairで追う
@@ -224,6 +236,7 @@
   - username再試行が実行されなかったrun 3でも142件出たため、Benchmark 28の分岐とは分離する
   - Benchmark 29前の診断3走と通常3走では再現しなかった。解決とは扱わず、
     再発時に座標request / responseとowner集計を同じchair IDで採取する
+  - Benchmark 30診断runもerror map空。再現待ちだけで他のP0計測を止めない
 - [x] nearbyの集合SQL、chair statsの集約SQL、batch matcherを実装
 - [x] 上記3変更を別々のBenchmarkとして正当性・性能検証する
 
@@ -235,8 +248,8 @@
 | P0 | `app_get_nearby_chairs` | 最新座標はcurrent-state表 + process cache、active / 割当可否はDB、評価はsnapshot + revision + delivery leaseで除外 | 最終run例8.079ms。ride antijoinとtracker確認の内訳を測る |
 | P0 | 通知2経路 | recipient + chair stats dependency revision付きpayload cache。未送信statusは30ms、定常cacheは100ms。cursorはDBに維持 | 診断runのp95はapp 166ms / chair 181ms。response ACKなしの配送loss、cache missのphase分解、long pollingが未検証 |
 | P0 | `get_chair_stats` | 評価時差分更新 + 主キーreadへ変更 | SQL累積は約89%減、スコア中央値は約3.5%低下したため次の通知施策と合わせて再評価 |
-| P0 | `app_post_ride_evaluation` | ride IDの冪等keyで決済retry。完了時刻は決済後の最終SQL。ただしDB transaction中に外部HTTPと最大5回の100ms sleep | connection・snapshot・ride row lockを外部I/O中も保持。pending状態とcrash recoveryを設計してtransactionを分割する |
-| P0 | `chair_post_coordinate` | 履歴INSERT + current UPDATE、遷移候補だけride lock + 最新status再読 | 診断runではcurrent write p95 4.185msに対し`pool.begin()` p95 93.651ms。pool acquireと`BEGIN`を分離する |
+| P0 | `app_post_ride_evaluation` | ride IDの冪等keyで決済retry。完了時刻は決済後の最終SQL。ただしDB transaction中に外部HTTPと最大5回の100ms sleep | 診断runで平均403ms・p95 769ms。DB準備、決済await、完了write、COMMITのholding timeを分け、pending状態とcrash recoveryを設計する |
+| P0 | `chair_post_coordinate` | 履歴INSERT + current UPDATE、遷移候補だけride lock + 最新status再読 | acquire p95 113.156ms、SQL BEGIN p95 2.327ms。78.1%のsampleでpool 50接続が全使用中 |
 | P1 | `app_get_rides` | rideごとにstatus、coupon、chair、ownerを取得 | 履歴増加に比例するN+1 |
 | P1 | `owner_get_sales` | ownerのchairごとに完了rideを取得し、評価responseと重なったride IDを除外 | N+1、read transactionが暗黙ROLLBACK。複数processではtracker共有が必要 |
 | P1 | `app_post_rides` | userの全rideとride別最新statusを取得 | ライド作成ごとに履歴全体を再走査 |
@@ -297,7 +310,10 @@
   - Benchmark 26後app通知2 / 166 / 257ms、chair通知5 / 181 / 269ms
   - 通常スコアrunとは分離し、詳細は [`tuning/26-notification-payload-cache.md`](./tuning/26-notification-payload-cache.md)
 - [ ] 各エンドポイントの30ms超過率と、1tick中に完了できなかった回数を記録する
-- [ ] sqlx poolの `size` / `idle` / `in_use` と取得待ち時間を1秒ごとに採取する
+- [x] sqlx poolの `size` / `idle` / `in_use` と取得待ち時間をcoordinate sampleで採取する
+  - 1/64 samplingの1,173件中916件、約78.1%でsize 50 / idle 0 / in use 50
+  - acquire平均43.657ms・p95 113.156ms、SQL BEGIN平均0.611ms・p95 2.327ms
+  - 1秒ごとの全pool時系列は未実装。まず接続保持元のhandler phaseを測る
 - [x] MySQLのprepared statement統計をSQL本文別に回数、累積、平均、最大、走査行数で並べる
   - SQLxの個別queryはdigest表で `statement/com/Execute` へ集約されるため、`prepared_statements_instances` をSQL本文でgroup化
   - `coupons.used_by` 変更前: 60,993回、56.615秒、平均0.928ms、61,616,755行走査
@@ -986,7 +1002,12 @@
 - [ ] `RUST_LOG=info` と `warn` でログ行数、byte数、CPU、スコアを比較する
 - [ ] TraceLayerとエラーログの量を測り、成功requestログだけを抑制する
 - [ ] poolの `min_connections`、`max_connections`、`acquire_timeout` を計測で調整する
+  - 現在はmax 50。Benchmark 30でacquire saturationを確認したが、上限はまだ変更しない
+  - 起動時handshakeではなく定常時size 50 / idle 0が主要状態なので、`min_connections` は
+    直近の解決策にしない
 - [ ] pool上限を増やす前にMySQL CPUと実行中thread数に余裕があることを確認する
+  - run後はMySQL `max_connections=151`、`Max_used_connections=51`だが、
+    run中のCPU・Threads_running・row lock悪化を同時採取してから比較する
 - [ ] release binaryをperf / samply / Instrumentsでprofileする
 - [ ] DB待ちが支配的でなくなった後だけLTO、codegen-units、`target-cpu` を比較する
 - [ ] allocationがhotになった場合だけallocator変更を比較する
@@ -1085,24 +1106,27 @@
 ## 推奨する直近の実行順
 
 1. `CODE=26` を再現し、ベンチマーカーがresponseを受信済みの座標と
-   `owner_get_chairs` が集計する座標のwatermark差を同じchairで特定する
-2. owner request開始時に既知の座標までを集計する方法を設計し、決定的な赤・緑テストと
-   通常3走でerror予算・scoreを比較する
-3. coordinateの `pool.begin()` を `pool.acquire()` とSQL `BEGIN`へ分け、p50 / p95 / p99と
-   poolの `size` / `idle` / `in_use` を同じ時刻軸で採取する
-4. pool取得待ちが支配的なら、外部決済HTTP中のtransaction保持を先に分割し、
-   connection保持時間とcrash recoveryを単独検証する
-5. latest-coordinate cacheの `RwLock` とmaintenance gateの待機・保持時間を計測し、
+   `owner_get_chairs` が集計する座標のwatermark差を同じchairで特定する。
+   再現しない間も以下のP0計測は止めない
+2. 評価APIをpool acquire、ride lock、DB準備、決済HTTP、完了write、COMMITへ分け、
+   connection保持時間とpayment retry回数を計測する
+3. 決済awaitが支配的なら、短いclaim transaction、transaction外の冪等決済、
+   短い完了transaction、失敗・crash時の回収を設計する
+4. app / chair通知cache missのtransaction保持時間を計測し、
+   高頻度pollが50接続を占有する割合を評価APIと分ける
+5. 長い保持区間を短縮した後もacquire待ちが残る場合だけ、pool上限を比較する。
+   MySQL CPU、Threads_running、row lock、COMMIT p95を同時に記録する
+6. owner request開始時に既知の座標までを集計する方法を設計し、決定的な赤・緑テストと
+   通常3走で`CODE=26`のerror予算・scoreを比較する
+7. latest-coordinate cacheの `RwLock` とmaintenance gateの待機・保持時間を計測し、
    2秒再同期時のglobal stallを定量化する
-6. 最新statusをcurrent-state化し、未送信statusがない通知pollの履歴lookupとpayload再構築をなくす
-7. matcherへ地域間の距離上限を追加し、500 / 100 / 30msの実行間隔と組み合わせて比較する
-8. 決済をDB transaction外へ出すため、pending状態・条件付きclaim・crash recoveryを設計する
-9. 外部決済HTTPをDB transactionの外へ出し、障害時の二重決済・欠落を回復できるようにする
+8. 最新statusをcurrent-state化し、未送信statusがない通知pollの履歴lookupとpayload再構築をなくす
+9. matcherへ地域間の距離上限を追加し、500 / 100 / 30msの実行間隔と組み合わせて比較する
 10. app history、owner sales、ride作成のN+1を順に除去する
 11. current-state別表で最新statusをO(1)化する
 12. JSON long pollingで不足する場合だけSSEへ移し、状態変更時の即時pushまで実装する
 13. 貪欲matcherと最小費用二部マッチングを比較する
-14. 最後にpool上限、MySQL、nginx、compiler設定をprofileに基づいて調整する
+14. 最後にMySQL、nginx、compiler設定をprofileに基づいて調整する
 
 ## 記録ルール
 

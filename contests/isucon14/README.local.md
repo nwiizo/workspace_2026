@@ -249,9 +249,10 @@ DIAGNOSTIC_SINCE="$diagnostic_since" ./scripts/report-coordinate-phases.sh
 [`docker/nginx.diagnostic.conf`](./docker/nginx.diagnostic.conf) をmountし、APIのmethod、
 URI、status、request time、upstream response time、request / response bytesを
 JSONでstdoutへ記録します。同じoverlayがRust webappのcoordinate phase samplingも
-有効にします。64 requestに1件について、pool + `BEGIN`、履歴INSERT、current-state write、
-ride検索、status遷移、COMMIT、cache更新を分け、成功・error / cancellationと最後のphaseを
-JSONで記録します。
+有効にします。64 requestに1件について、pool取得、SQL `BEGIN`、履歴INSERT、
+current-state write、ride検索、status遷移、COMMIT、cache更新を分け、
+成功・error / cancellationと最後のphaseをJSONで記録します。
+取得直前のpool size / idle / in-useも同じsampleへ記録します。
 upstream connect time、connection ID、同じconnection上のrequest回数も含みます。
 Cookie、認証token、request body本文、決済情報は記録しません。通常のスコアrunは
 環境変数を付けずに実行し、access log、時刻取得、sample JSON、同期stdout writeの追加処理と
@@ -355,6 +356,7 @@ RESET=1 ./scripts/down.sh
 | 通知payload cache | recipient revisionとchair stats dependency revisionでstale hit / 再挿入を防ぎ、未送信statusは30ms、状態不変cacheは100ms。最終3走103,727–111,798点、中央値109,443点（Benchmark 25比+8.3%）、全run `pass=true`・error map空 |
 | username衝突の限定再試行 | `users.username` のMySQL 1062だけを内部usernameで1回再試行。3走103,738–107,508点、中央値104,263点、全run `pass=true`、`CODE=17` 0件。直前中央値比-4.7%のため高速化ではなく正当性修正として採用 |
 | 招待登録の並行安全化 | 招待者UNIQUE行を直列化地点にし、couponを `COUNT(*)`、reward codeを新規user IDで一意化。3走99,775–105,304点、中央値102,569点、全run `pass=true`・error map空。並行回帰テストのMySQL 1062 / 1213増分0 |
+| coordinateのpool取得分解 | 診断1走124,064点・未推定。1,173 sampleでacquire p95 113.156ms、SQL BEGIN p95 2.327ms。78.1%がpool size 50 / idle 0 |
 
 初回の初期60秒走行ではMySQLのqueryが十数秒以上へ遅延し、ベンチマーカーの期限を
 超えました。同じ初期revisionを外部コンテナの大きな共有負荷がない条件で再計測
@@ -429,6 +431,18 @@ HTTP 500とerror budget消費を防ぐ正当性修正として扱います。loc
 counter方式などの代替案は
 [`tuning/29-invitation-concurrency.md`](./tuning/29-invitation-concurrency.md)に
 記録しています。
+
+Benchmark 30では、coordinateで一括計測していた `pool.begin()` を、SQLx poolからの
+connection取得と、取得後のSQL `BEGIN`へ分けました。診断runの成功1,173 sampleで
+acquireは平均43.657ms・p95 113.156ms、BEGINは平均0.611ms・p95 2.327msでした。
+取得直前がpool上限50・idle 0だったsampleは916件、約78.1%です。current-state writeの
+p95は5.007msでした。size 50 / idle 0群のacquire phaseは平均54.762ms、
+idleあり群は3.968msなので、次はrow UPDATEではなく長いtransactionのconnection保持時間を
+減らします。同runの評価APIは1,795件・平均403ms・p95 769msで、ride lock後の外部決済を
+transaction内で待つため、次のphase計測対象です。pool上限とCPU / memoryは変更して
+いません。詳細は
+[`tuning/30-coordinate-pool-acquisition.md`](./tuning/30-coordinate-pool-acquisition.md)を
+参照してください。
 過去のBenchmark 19では、診断runで `CARRYING` の後に古い `PICKUP` を返す
 CODE=11を再現したため、
 通知と最新statusの順序をwall-clockではなくENUMの状態遷移順へ変更しました。
