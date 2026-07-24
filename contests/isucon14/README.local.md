@@ -239,15 +239,23 @@ RESET=1 ./scripts/down.sh
 | MySQL commit同期の緩和 | 3走中央値53,198→60,102点（+13.0%）、`COMMIT`平均中央値48.6%減 |
 | 決済HTTP clientの再利用 | 3走76,761–88,638点、中央値80,354点（直前中央値比+33.7%）、全runエラー0 |
 | `coupons(used_by)` INDEX | 3走88,805–100,606点、中央値93,606点（直前中央値比+16.5%）、全runエラー0 |
+| nearbyの未完了ride判定 + 競合安全化 | エラー0の3走98,311–98,628点、中央値98,580点（直前採用版比+5.3%） |
+| 座標遷移queryの絞り込み | 通常座標のstatus取得を除去し、候補だけlocking read。直前版中央値92,484→98,580点（+6.6%） |
 
 初回の初期60秒走行ではMySQLのqueryが十数秒以上へ遅延し、ベンチマーカーの期限を
 超えました。同じ初期revisionを外部コンテナの大きな共有負荷がない条件で再計測
 すると5,906点で完走しました。この差をコード改善の効果とは扱いません。INDEX、
 空通知polling、owner距離集計、N+1削減、matcherを1変更ずつ計測しました。
-最新改善版はMySQL `2 / 0` と決済用 `reqwest::Client` のprocess内共有を維持し、
-`coupons(used_by)` INDEXを追加しています。3走は88,805–100,606点、
-中央値93,606点でした。これは今回の3走から推定した代表値で、最小値–最大値は
-観測範囲であり、将来の保証範囲ではありません。
+最新改善版はMySQL `2 / 0`、決済用 `reqwest::Client` のprocess内共有、
+`coupons(used_by)` INDEXを維持し、nearbyの未完了ride判定から最新statusの
+相関subqueryを除いています。完了後の遅延status追記を防ぐため、状態を変更する
+全writerをride row lockへ合流させ、座標更新はpickup / destination候補だけlock後に
+最新statusをlocking readで再読します。エラー0の3走は98,311–98,628点、
+中央値98,580点でした。
+queryだけを変えた暫定版の中央値100,310点は競合反例があるため、採用スコアには
+含めていません。
+これは今回の3走から推定した代表値で、最小値–最大値は観測範囲であり、将来の
+保証範囲ではありません。
 同一条件が1走だけの過去スコアは実測値として残し、典型値は推定していません。
 スコアには走行ごとの揺れがあるため、
 変更の判断には実行計画、エラーログ、HTTP件数、transaction累積時間も併用して
@@ -329,25 +337,53 @@ curl -sS \
 
 | 画面 | URL | 確認結果 |
 |---|---|---|
-| トップ | `/` | 3 種類の画面へのリンクを表示。コンソールエラーなし |
-| 利用者 | `/client` | 地図、配車操作、下部ナビゲーションを表示 |
+| トップ | `/` | 3 種類の画面へのリンクを表示。最終版でconsole error 0、静的resourceを含む17 requestがすべて200 |
+| 利用者 | `/client` | 未ログインの新規sessionでは `/client/register` へ遷移し、利用者登録フォームを表示 |
 | オーナー | `/owner` | 未ログインのため `/owner/register` へ正常に遷移 |
-| 椅子シミュレーター | `/simulator` | 登録フォームとシミュレーターを表示 |
+| 椅子シミュレーター | `/simulator` | 利用者登録iframeとChair Simulatorを左右に表示 |
 
 - [トップ画面](artifacts/playwright/top.png)
-- [利用者画面](artifacts/playwright/client.png)
+- [利用者画面（登録後）](artifacts/playwright/client.png)
 - [オーナー登録画面](artifacts/playwright/owner.png)
 - [椅子シミュレーター画面](artifacts/playwright/simulator.png)
 
-オーナー画面と椅子シミュレーターでは、未認証の新規ブラウザーセッションから認証必須 API を呼ぶため 401 が記録されます。登録・ログイン前の想定どおりの応答です。
+利用者、オーナー、椅子シミュレーターでは、未認証の新規ブラウザーセッションから
+認証必須APIを呼ぶため、notification、owner chairs / sales、chair activityの401が
+consoleへ記録されます。登録・ログイン前の想定どおりの応答で、トップ画面では
+console error 0件です。
 
 再確認するときは、サービスを起動した状態で次を実行します。
 
 ```sh
-npx --yes @playwright/cli@latest open http://localhost:8080
-npx --yes @playwright/cli@latest screenshot --filename=artifacts/playwright/top.png
-npx --yes @playwright/cli@latest close
+npx --yes @playwright/cli -s=isucon14-check open http://localhost:8080
+npx --yes @playwright/cli -s=isucon14-check snapshot
+npx --yes @playwright/cli -s=isucon14-check console error
+npx --yes @playwright/cli -s=isucon14-check requests --static
+npx --yes @playwright/cli -s=isucon14-check screenshot \
+  --filename=artifacts/playwright/top.png
+
+npx --yes @playwright/cli -s=isucon14-check goto http://localhost:8080/client
+npx --yes @playwright/cli -s=isucon14-check snapshot
+npx --yes @playwright/cli -s=isucon14-check screenshot \
+  --filename=artifacts/playwright/client-register.png
+
+npx --yes @playwright/cli -s=isucon14-check goto http://localhost:8080/owner
+npx --yes @playwright/cli -s=isucon14-check snapshot
+npx --yes @playwright/cli -s=isucon14-check screenshot \
+  --filename=artifacts/playwright/owner.png
+
+npx --yes @playwright/cli -s=isucon14-check goto http://localhost:8080/simulator
+npx --yes @playwright/cli -s=isucon14-check snapshot
+npx --yes @playwright/cli -s=isucon14-check screenshot \
+  --filename=artifacts/playwright/simulator.png
+npx --yes @playwright/cli -s=isucon14-check close
 ```
+
+`snapshot` で「Simulator / Client / Owner」の3リンクを確認し、`console error` が0件、
+`requests --static` が17件すべて200であることを確認します。`screenshot` は実際の
+描画崩れを目視するために使い、DOM snapshotだけで見た目まで正常とは判断しません。
+既存の `client.png` は登録後のsessionで取得した画面です。上記の新規sessionでは
+登録画面へ遷移するため、上書きせず `client-register.png` へ保存します。
 
 ## 日常操作
 

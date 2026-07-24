@@ -128,6 +128,156 @@ struct ChairStatsRow {
 
 APIレスポンスが `i32` を要求するなら、無条件な `as i32` より `i32::try_from` を使うと、将来件数が範囲を超えた場合に壊れ方を明示できます。ISUCONでは速度だけでなく、変換失敗をどのHTTPエラーへするかも設計対象です。
 
+## 実行時queryとcompile時検証を区別する
+
+Benchmark 16のnearby検索は、関数版の `sqlx::query_as` を使っています。
+
+```rust
+let chairs: Vec<NearbyChair> = sqlx::query_as(
+    r#"
+    SELECT ...
+    "#,
+)
+.fetch_all(pool)
+.await?;
+```
+
+関数版はSQL文字列を実行時にDBへ渡し、返った行を `FromRow` でRust型へ変換します。
+各列は `Decode` でき、対象Rust型と `Type::compatible()` を満たす必要があります。
+列名、型、NULL可否が合わなければrequest実行時にエラーになります。
+
+一方 `query_as!` macroは、build時にDBまたはoffline metadataを使ってSQLと型を検証
+できます。名前が似ていますが、次の違いがあります。
+
+| 方法 | SQLを検証する時点 | 利点 | 注意点 |
+|---|---|---|---|
+| `sqlx::query_as` | request実行時 | 動的SQLを扱え、build時DB接続が不要 | compile成功だけではSQL成功を証明しない |
+| `sqlx::query_as!` | compile時 | 列名・型の不一致を早く検出 | build時DBまたはoffline metadataの管理が必要 |
+
+今回変更したのは `WHERE` 条件だけで、`SELECT` の列、列順、alias、Rustの
+`NearbyChair` は変えていません。そのためRustの結果型を変える必要はありません。
+ただし、関数版である以上、`cargo check` や `cargo clippy` だけではMySQL構文と実行時
+mappingを確認できません。Docker上のMySQLへ接続するsmoke test、結果集合の比較、
+公式ベンチを組み合わせました。
+
+### `SELECT *` を避ける理由
+
+`FromRow` がstructへ名前で対応付ける場合でも、`SELECT *` は不要な列の転送とdecodeを
+増やし、table変更時の影響範囲を広げます。tupleでは先頭から列順に対応するため、
+joinを含む `SELECT *` はさらに壊れやすくなります。
+
+hot queryでは必要な列を明示すると、次の3つを同時に管理できます。
+
+- MySQLから送るbyte数
+- SQLxがdecodeして所有値へ変換する仕事量
+- covering INDEXを検討するときに必要な列
+
+ただし、projectionを狭めただけで速くなるとは限りません。行走査やsortが支配的なら、
+`EXPLAIN ANALYZE` と60秒ベンチで寄与を確認します。
+
+## 履歴と現在状態を使い分ける
+
+`ride_statuses` は状態遷移の履歴、`rides.evaluation` は評価確定後に値が入る現在状態
+です。履歴は「いつ何が起きたか」を復元できますが、現在状態を知るたびに
+`ORDER BY created_at DESC LIMIT 1` が必要になります。
+
+Benchmark 16の変更前は、nearby検索のたびに各rideの最新statusを履歴から復元し、
+1回の実行計画で相関subqueryが1,671回動いていました。変更後は次の条件を使います。
+
+```sql
+rides.evaluation IS NULL
+```
+
+現在状態の列を読む利点は、履歴のsortとlookupを省けることです。ただし速さと引き換えに、
+履歴と現在状態を同時に更新する責任が生まれます。
+
+### この高速化が依存する不変条件
+
+評価handlerは1つのSQLx transactionで次を行います。
+
+```text
+SELECT ride ... FOR UPDATE
+UPDATE rides SET evaluation = ...
+INSERT ride_statuses (..., 'COMPLETED')
+決済処理
+COMMIT
+```
+
+SQLxの `Transaction` は明示的な `commit` または `rollback` で終了します。どちらも
+呼ばれずにスコープを抜けた場合はrollbackされます。そのため、決済や後続処理で
+`?` が早期returnさせても、評価だけがcommitされることはありません。
+
+ただし、同じtransactionに入れただけでは次の同値性は保証できません。
+
+```text
+evaluation IS NULL
+    ⇔ 最新statusがCOMPLETEDではない
+```
+
+原子性は評価transactionの途中だけを隠します。評価のcommitを待っていた古い
+`ENROUTE` requestが、その後でstatusを追加することまでは防ぎません。実際、最初の
+queryだけの版はこの並行順序を防げていなかったため不採用にしました。
+
+最終版では、この不変条件を変更し得るwriterを同じride row lockへ合流させます。
+
+```text
+評価handler             ┐
+chair status handler    ├─ SELECT rides ... FOR UPDATE
+座標の遷移候補          ┘       ↓
+                         lock取得後のevaluationを再確認
+                         statusをFOR UPDATEでcurrent read
+                                ↓
+                         条件を満たす場合だけstatusを追加
+```
+
+座標handlerは高頻度なので、すべての座標でlockしません。現在座標がpickupまたは
+destinationと一致した場合だけlockし、待機中に状態が変わった可能性を考えて最新statusを
+読み直します。通常座標はrideのID、evaluation、4座標だけを読み、status queryなしで
+commitします。
+
+MySQLの `REPEATABLE READ` では、通常SELECTの再読は、lock待ちの間にcommitされた
+statusではなく、transactionの古いsnapshotを返す場合があります。そのため座標遷移の
+status queryにも `FOR UPDATE` を付け、current readにしています。ride row lockが
+writerの順番を作り、statusのcurrent readが直前writerの結果を観測します。
+
+この設計から得た要点は次です。
+
+1. transactionの原子性と、複数transactionの実行順制御は別問題
+2. 不変条件に関与するwriterを列挙し、同じlock順序へ揃える
+3. lock前に読んだ値を信用せず、lock取得後にcurrent readする
+4. 状態を変更しない高頻度経路までlockしない
+5. 同じ `ENROUTE` の再送は追加INSERTせず成功扱いにする
+
+これはRustの型システムだけで保証される条件ではありません。handlerのtransaction境界、
+DBのrow lock、状態遷移の期待値を含むアプリケーション全体の不変条件です。
+
+### なぜ差分queryも必要か
+
+コード監査は「現在の書込み経路なら一致する」ことを説明しますが、手動SQL、過去の
+bug、初期データ、別の書込み経路による不整合までは否定しません。そこで初期状態と
+負荷中3時点に、旧判定と新判定のXORを数え、すべて0件であることを確認しました。
+
+`evaluation IS NOT NULL` なのに最新statusが `COMPLETED` でないrideがあれば、新判定は
+椅子を誤って空きと判断します。高速な現在状態を使うときは、次の3層を組み合わせます。
+
+1. 同一transactionで履歴と現在状態を更新する
+2. 全writerを同じride row lockへ合流させ、lock後に条件を再確認する
+3. 旧ロジックとの結果集合を実データで比較する
+4. official benchmarkerと競合再現でAPI全体の不整合を検証する
+
+詳細な反例、比較SQL、実行計画は
+[Benchmark 16](./16-nearby-evaluation-filter.md) に記録しています。
+
+### Rustの所有権が助ける部分と助けない部分
+
+`&mut Transaction` を同時に2箇所へ貸せないため、1つのtask内ではtransaction操作を
+順番に書けます。これは同じconnectionを誤って並行使用しにくくする助けになります。
+
+一方、別HTTP requestは別task・別connectionで動きます。Rustがdata raceを防いでも、
+DB上の論理raceは残ります。`FOR UPDATE` と期待する直前statusの確認は、型ではなく
+database protocolで守る部分です。「Rustだから競合安全」と「同じmemoryを未定義動作
+なく触れる」は同じ意味ではありません。
+
 ## `Cargo.lock` と再現可能なDocker build
 
 このRust実装はアプリケーションなので、`Cargo.lock` をコミットします。Dockerfileは次のオプションを使います。
@@ -253,8 +403,14 @@ Cargoはtargetのないmanifestをpackageとして解決できません。依存
 | batch matcher変更後の再build | 42.89秒 | 未分離 | 同じcacheでもホスト負荷により増加 |
 | 近傍優先matcher変更後の再build | 39.77秒 | 未分離 | 同じ4 CPU / 4 GiB、cache hit |
 | 座標更新変更後の再build | 13.36秒 | 未分離 | query統合と結果型追加、cache hit |
+| nearby未完了判定変更後の再build | 3.45秒 | 未分離 | WHERE条件だけの変更、cache hit |
+| 全座標ride lock版の再build | 4.40秒 | 未分離 | 競合安全だがhot pathのlock過多 |
+| 遷移候補だけlockする版の再build | 4.06秒 | 未分離 | lock範囲をpickup / destinationへ限定 |
+| 通常座標のstatus取得除去後 | 4.52秒 | 未分離 | current rideのprojectionと分岐を縮小 |
+| 同一座標ride対応後 | 4.67秒 | 未分離 | statusを見てpickup / destination遷移を選択 |
+| status locking read対応後 | 3.63秒 | 未分離 | `REPEATABLE READ` の古いsnapshotを回避 |
 
-最良の実測では、source変更後のDocker build壁時計は約168分の1になりました。その後のCargo時間は6.79〜42.89秒と幅があります。座標更新変更後も13.36秒で再buildできました。cache hitは「必ず同じ秒数になる」という意味ではなく、変更範囲、link対象、同じホストのI/O・CPU負荷でも変わります。それでもlegacy buildの30分52秒より大幅に短く、チューニングの再計測を現実的な時間で回せました。
+最良の実測では、source変更後のDocker build壁時計は約168分の1になりました。その後のCargo時間は3.45〜42.89秒と幅があります。nearby未完了判定の変更は3.45秒で再buildできました。cache hitは「必ず同じ秒数になる」という意味ではなく、変更範囲、link対象、同じホストのI/O・CPU負荷でも変わります。それでもlegacy buildの30分52秒より大幅に短く、チューニングの再計測を現実的な時間で回せました。
 
 初回と再buildを混ぜると誤解を招くため、fresh cloneでは最初にcache作成時間が必要なこと、再build時間は複数回の分布で見ることを明記します。
 
@@ -266,6 +422,11 @@ Cargoはtargetのないmanifestをpackageとして解決できません。依存
 - 近傍優先matcherまで含む60秒公式ベンチ: `pass=true`、スコア16,909、エラー0
 - 座標更新とcoupon code INDEXまで含む60秒公式ベンチ: `pass=true`、スコア15,415、エラー0
 - 決済HTTP client再利用まで含む60秒公式ベンチ: 3走中央値80,354点、全run `pass=true`・エラー0
+- nearby queryだけの暫定版: 3走中央値100,310点。ただし完了後status追記の競合反例により不採用
+- ride row lockで全writerを直列化し、通常座標のstatus取得を除き、遷移時statusを
+  current readする最終版: エラー0の3走中央値98,580点、全run `pass=true`
+- 同一pickup / destinationのHTTP遷移: `MATCHING -> ENROUTE -> PICKUP -> CARRYING -> ARRIVED`
+- ride lock後ろへ同時に待たせた2座標request: 両方200、`PICKUP` は1行
 
 ### 注意点と他の選択肢
 
@@ -714,6 +875,8 @@ cacheの有無で数字の意味が変わるため、最低3種類を分けま�
 - [rustc book: Codegen options](https://doc.rust-lang.org/rustc/codegen-options/index.html)
 - [Tokio: `spawn_blocking`](https://docs.rs/tokio/1.42.0/tokio/task/fn.spawn_blocking.html)
 - [Tokio: Next steps with Tracing / Tokio Console](https://tokio.rs/tokio/topics/tracing-next-steps)
+- [sqlx 0.8.2: `query_as`](https://docs.rs/sqlx/0.8.2/sqlx/fn.query_as.html)
+- [sqlx 0.8.2: `Transaction`](https://docs.rs/sqlx/0.8.2/sqlx/struct.Transaction.html)
 - [sqlx 0.8.2: `Pool`](https://docs.rs/sqlx/0.8.2/sqlx/struct.Pool.html)
 - [sqlx 0.8.2: `PoolOptions`](https://docs.rs/sqlx/0.8.2/sqlx/pool/struct.PoolOptions.html)
 - [Docker Docs: Optimize cache usage in builds](https://docs.docker.com/build/cache/optimize/)

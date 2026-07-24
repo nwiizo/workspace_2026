@@ -1,0 +1,46 @@
+digraph TransitionLock {
+  graph [bgcolor="#f7f4ed", pad="0.25", nodesep="0.42", ranksep="0.5", fontname="Hiragino Sans", labelloc="t", label="Benchmark 16: 同じride rowをlockし、確認と書込みの間へ別処理を入れない", fontsize="22"];
+  node [shape=box, style="rounded,filled", fillcolor="#ffffff", color="#17324d", fontcolor="#17324d", fontname="Hiragino Sans", fontsize="13", penwidth="1.8", margin="0.16,0.11"];
+  edge [color="#58708a", fontcolor="#58708a", fontname="Hiragino Sans", fontsize="11", penwidth="1.8", arrowsize="0.8"];
+
+  subgraph cluster_race {
+    label="共通lockがない場合";
+    color="#d98757";
+    fontcolor="#8a3f16";
+    fontname="Hiragino Sans";
+    fontsize="16";
+    style="rounded";
+
+    read_old [label="遅延ENROUTE request\n古いstatus=MATCHINGを確認"];
+    evaluation [label="評価transaction\nevaluation更新 + COMPLETED追加"];
+    eval_commit [label="COMMIT"];
+    stale_write [label="遅延requestが\n古い判断のままENROUTE追加"];
+    broken [label="evaluationあり\n最新status=ENROUTE\n判定が不一致", fillcolor="#fde2cf"];
+
+    read_old -> evaluation [label="確認後に割り込み"];
+    evaluation -> eval_commit -> stale_write -> broken;
+  }
+
+  subgraph cluster_serial {
+    label="全writerが同じride rowをlockする場合";
+    color="#2e8b7d";
+    fontcolor="#1e6259";
+    fontname="Hiragino Sans";
+    fontsize="16";
+    style="rounded";
+
+    writers [label="評価 / ENROUTE / CARRYING\n座標によるPICKUP・ARRIVED"];
+    ride_lock [label="SELECT ride ... FOR UPDATE\n同じ1行のlockへ合流", fillcolor="#d8efeb"];
+    reread [label="lock取得後に\nevaluationと最新statusを読み直す"];
+    decide [shape=diamond, label="現在値で\n遷移可能か判定", fillcolor="#ffffff"];
+    valid [label="期待した直前状態なら\n次statusを1回だけ追加"];
+    reject [label="評価済み・重複・古いrequestは\n追加せず終了"];
+    invariant [label="evaluationあり\n⇔ 最新status=COMPLETED\n不変条件を維持", fillcolor="#d8efeb"];
+
+    writers -> ride_lock -> reread -> decide;
+    decide -> valid [label="可能"];
+    decide -> reject [label="不可"];
+    valid -> invariant;
+    reject -> invariant;
+  }
+}

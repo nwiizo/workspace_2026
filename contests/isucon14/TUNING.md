@@ -73,12 +73,12 @@
 | 改善対象 | 現在の状態 | 次の検証 |
 |---|---|---|
 | 高頻度検索へのINDEX | 主要INDEX、`coupons(code)`、`coupons(used_by)` を追加済み。`users(access_token)` と `users(invitation_code)` は既存の `UNIQUE` INDEXで充足 | prepared statement統計で次の全件走査を探し、未使用INDEXを増やさない |
-| nearbyの2N+1解消 | `LATERAL` と `NOT EXISTS` で1 SQL化済み | 未完了判定を `rides.evaluation IS NULL` へ単純化して比較 |
+| nearbyの2N+1解消 | `LATERAL` と `NOT EXISTS` で1 SQL化。未完了判定を `rides.evaluation IS NULL` へ単純化し、全status writerをride row lockで直列化済み | 最新位置の履歴走査とsortが残る理由を実行計画から特定 |
 | owner椅子一覧をownerで先に絞る | 実装・単独ベンチ済み | 最新位置と累積距離のcurrent-state化 |
 | 最新位置と累積距離をUPSERT管理 | 未実装 | 履歴INSERTと同じtransactionでcurrent-stateを更新 |
 | pending rideと空き椅子のbatch matching | 最大64件、近傍優先まで実装済み | 地域間の距離上限、実行間隔、二部マッチングを比較 |
 | JSON通知のcache | 未実装 | 同じpayloadの再計算をなくし、long pollingをSSEより先に比較 |
-| 座標更新の非同期・bulk INSERT | 通常経路を4 SQLから2 SQLへ削減済み | per-chair順序付きqueueと3秒以内のbulk反映を実験 |
+| 座標更新の非同期・bulk INSERT | 通常経路を4 SQLから2 SQLへ削減。pickup / destination候補だけlockし、statusをcurrent readする | per-chair順序付きqueueと3秒以内のbulk反映を実験 |
 | 決済HTTP client | process内で1個を共有し、POST / GET / retryでconnection poolを再利用済み | TCP connect回数を診断runで採取 |
 | 決済の `Idempotency-Key` | 未実装 | ride IDをkeyにして遅い確認GETを除去 |
 
@@ -502,6 +502,119 @@ transactionが長いと、その間DB connection、snapshot、行lockを保持�
 資源を占有します。短くする価値はありますが、正当性を保つ更新まで別々にすると
 中間状態や欠落が見えるため、境界設計が先です。
 
+#### 原子性と「後から来るtransaction」
+
+原子性は、1つのtransactionに含めた変更を全部見せるか、全部見せないかを保証する
+性質です。たとえば `evaluation` 更新と `COMPLETED` 追加を同時にcommitすれば、
+片方だけが見える途中状態をなくせます。
+
+ただし原子性は、そのcommit後に別transactionが `ENROUTE` を追加することまでは
+禁止しません。Benchmark 16で最初に見落としたのがこの境界です。
+
+```text
+T1: evaluation更新 + COMPLETED追加 -> COMMIT
+T2: 待機解除後、古い実装のままENROUTE追加 -> COMMIT
+```
+
+この結果、現在状態の `evaluation` は完了を示す一方、履歴の最新statusは
+`ENROUTE` になります。「同じtransactionに入れたから安全」という説明は、
+その不変条件を変更するwriterをすべて列挙して初めて成立します。
+
+確認するlogとqueryは次です。
+
+- server logの400、deadlock、lock wait
+- `SHOW ENGINE INNODB STATUS`
+- Performance Schemaの最大実行時間とlock時間
+- `evaluation` と最新statusのXORを数える差分query
+- 並行順序を意図的に作る競合test
+
+#### `SELECT ... FOR UPDATE` と行lock
+
+`SELECT ... FOR UPDATE` は、読み取ったInnoDB rowをtransaction終了まで他の更新者と
+排他的に調整するlocking readです。通常の `SELECT` は値を読むだけなので、
+読んだ直後に別transactionが変更できます。
+
+ISUCON14ではride IDを主キーで検索するため、対象は基本的に1 ride rowです。同じrideの
+status writerがすべてこのrowを先にlockすれば、writerは一列に並びます。
+
+```text
+評価       ┐
+ENROUTE    ├─ rides.id のrow lock ─ lock取得後に最新状態を確認 ─ 書込み
+CARRYING   │
+PICKUP     │
+ARRIVED    ┘
+```
+
+lockは「取れば正しい」のではありません。次も揃える必要があります。
+
+1. 同じ不変条件へ関与する全writerが同じlockを使う
+2. 複数rowを取る場合は取得順を統一する
+3. lockを取った後の値で条件を再確認する
+4. 外部HTTPやsleepをlock保持中に入れない
+5. 状態を書かないreadまで不必要に直列化しない
+
+Benchmark 16では全座標をlockすると中央値が93,606点から90,523点へ下がりました。
+pickup / destination候補だけに絞り、通常座標を待ち行列から外した最終版は98,580点です。
+正しさに必要な境界と、性能上避けたい過剰lockを実測で分けました。
+
+#### TOCTOU・lock後の再読
+
+TOCTOU（Time Of Check to Time Of Use）は、条件を確認してから結果を使うまでに、
+別処理が条件を変える競合です。
+
+```text
+座標A: 最新status=CARRYINGを確認
+座標B: ARRIVEDを追加
+評価 : COMPLETEDを追加してcommit
+座標A: 古いCARRYING判断でARRIVEDを追加
+```
+
+座標Aが最初のstatusを信じ続けると、完了後の履歴末尾が `ARRIVED` になります。
+対策は「先に読んだ値をlock取得後も使う」ことではありません。共通rowをlockし、
+待機中に状態が変わった可能性を考えて最新statusを読み直します。
+
+MySQLの既定 `REPEATABLE READ` では、通常の `SELECT` はtransaction内の最初の
+consistent readで作ったsnapshotを使い続けます。row lock待ちが終わった後に同じ通常
+SELECTを実行しても、待機中のcommitが見えるとは限りません。Benchmark 17ではstatus側も
+`FOR UPDATE` にし、最新commitを見るcurrent readへ変更しました。2本の座標requestを
+同じride lockの後ろへ待たせる再現で、両方200でも `PICKUP` が1行だけになることを
+確認しています。
+
+観測上は不整合0件でも、たまたまその順序が発生しなかっただけかもしれません。
+結果集合の比較は必要ですが、writerとlock順序のコード監査を置き換えません。
+
+#### 状態機械・期待する直前状態・compare-and-swap
+
+状態機械は、許される状態と遷移を明示したものです。この実装の主な流れは次です。
+
+```text
+MATCHING -> ENROUTE -> PICKUP -> CARRYING -> ARRIVED -> COMPLETED
+```
+
+「次statusを追加してよいか」は、現在statusが期待する直前状態かで判断します。
+たとえばpickup座標へ到達しただけでは `PICKUP` にせず、lock取得後の最新statusが
+`ENROUTE` の場合だけ追加します。
+
+compare-and-swapは「現在値が期待値なら次の値へ変える」操作です。現在は
+履歴tableなのでlock後にSELECTとINSERTを行っています。将来current-state表を作るなら、
+`UPDATE ... WHERE current_status = 'ENROUTE'` の影響行数で同じ考えを1 SQLにできます。
+
+状態遷移を明示すると、次を判断しやすくなります。
+
+- 重複requestを成功扱いにしてよいか
+- 順序を飛ばしたrequestを400にするか
+- retryしても履歴が重複しないか
+- 完了後にどのwriterも状態を戻せないか
+
+#### 冪等な状態更新
+
+同じrequestを2回送っても、最終状態が1回分と同じなら冪等です。Benchmark 16では
+`ENROUTE` がすでに最新なら、もう1行追加せず204を返します。network timeout後に
+clientが再送しても、status履歴を重複させません。
+
+「2回目も204を返す」だけでは冪等とは限りません。内部で2行INSERTしてから204なら、
+通知順序と集計結果は変わります。HTTP statusとDBの最終状態を両方確認します。
+
 #### lock・deadlock・isolation
 
 lockは、同じrowや範囲を並行更新したときに矛盾を起こさないための待ちです。INDEXが
@@ -663,6 +776,8 @@ retryは一時的な通信失敗時に同じ処理を再試行すること、bac
 | [13-mysql-commit-durability.md](./tuning/13-mysql-commit-durability.md) | redo / binary logのcommit同期を緩和 | 3走中央値53,198→60,102点、`COMMIT`平均中央値48.6%減 | 各条件実測n=3、中央値を推定代表値に使用 |
 | [14-payment-client-reuse.md](./tuning/14-payment-client-reuse.md) | 決済HTTP clientとconnection poolを再利用 | 3走76,761–88,638点、中央値80,354点、エラー0 | 実測n=3、中央値を推定代表値に使用 |
 | [15-coupon-used-by-index.md](./tuning/15-coupon-used-by-index.md) | rideに適用済みのcoupon検索をB-tree lookup化 | 3走88,805–100,606点、中央値93,606点、エラー0 | 実測n=3、中央値を推定代表値に使用 |
+| [16-nearby-evaluation-filter.md](./tuning/16-nearby-evaluation-filter.md) | nearbyのstatus相関subqueryを除去し、全status writerをride row lockで直列化 | エラー0の3走98,311–98,628点、中央値98,580点 | 実測n=3、中央値を推定代表値に使用。queryだけの100,310点は競合反例により不採用 |
+| [17-coordinate-transition-query.md](./tuning/17-coordinate-transition-query.md) | 通常座標のstatus取得を除き、遷移候補だけlock後にcurrent read | 3走98,311–98,628点、中央値98,580点。直前版比+6.6% | 実測n=3、中央値を推定代表値に使用 |
 | [80-rust-implementation.md](./tuning/80-rust-implementation.md) | Rust / sqlxとrelease buildの知識 | 再build 30分52秒→11.02秒 | build時間の実測。スコア推定対象外 |
 | [90-local-environment.md](./tuning/90-local-environment.md) | build context、BuildKit、固定Colima資源 | context 467MB→32.5KB | sizeの実測。スコア推定対象外 |
 

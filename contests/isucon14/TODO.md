@@ -82,6 +82,21 @@
   - 直前中央値80,354点から+13,252点、約+16.5%
   - 対象SQLの平均0.928ms→0.060ms、全run `pass=true`・error map空
   - 詳細: [`tuning/15-coupon-used-by-index.md`](./tuning/15-coupon-used-by-index.md)
+- [x] nearbyの未完了判定を `rides.evaluation IS NULL` へ単純化し、全status writerをride row lockで直列化
+  - queryだけの60秒3走は96,546 / 108,073 / 100,310点だったが、完了後に遅延した `ENROUTE` / `ARRIVED` を追記できる競合反例があり不採用
+  - 全座標をlockする安全版は3走中央値90,523点へ悪化したため、pickup / destination候補だけlock後に再読
+  - 最終版のエラー0の60秒3走: 98,628 / 98,311 / 98,580点
+  - 観測範囲98,311–98,628点、推定代表値の中央値98,580点
+  - 直前採用版中央値93,606点から+4,974点、約+5.3%
+  - 初期状態、負荷中3時点、最終run終了時で旧判定との差0件
+  - 詳細: [`tuning/16-nearby-evaluation-filter.md`](./tuning/16-nearby-evaluation-filter.md)
+- [x] 座標更新の通常経路から最新status相関subqueryを除去
+  - 遷移候補だけlockする直前版の中央値92,484点から98,580点へ+6,096点、約+6.6%
+  - current ride query平均0.288ms→0.112ms、遷移候補は全座標の約4.5%
+  - `PICKUP` / `ARRIVED` はride row lock取得後、statusをlocking readし、期待値の場合だけ追加
+  - pickupとdestinationが同一のrideも `PICKUP -> CARRYING -> ARRIVED` へ進むことを統合確認
+  - 2本の並行座標更新を同じride lockで待たせても `PICKUP` は1行だけ
+  - 詳細: [`tuning/17-coordinate-transition-query.md`](./tuning/17-coordinate-transition-query.md)
 - [x] nearbyの集合SQL、chair statsの集約SQL、batch matcherを実装
 - [x] 上記3変更を別々のBenchmarkとして正当性・性能検証する
 
@@ -90,11 +105,11 @@
 | 優先度 | 対象 | 現在の処理 | 主な問題 |
 |---|---|---|---|
 | P0 | `internal_get_matching` | 64件batch + 近傍優先、外部pollは500ms | 空き定義の集約、500msの最小待ち |
-| P0 | `app_get_nearby_chairs` | `LATERAL` + `NOT EXISTS` の集合SQL | INDEX後runでも累積129.226秒・平均109.980ms。status相関subqueryと最新位置履歴のsort |
+| P0 | `app_get_nearby_chairs` | `evaluation IS NULL` + `LATERAL` の集合SQL、writer直列化済み | 最終runでも1,838回・累積82.451秒・平均44.859ms。最新位置履歴を100行超/chair読み、sortが残る |
 | P0 | 通知2経路 | 30ms pollingごとに認証、最新ride、status、表示データを取得 | 60秒で通知GET 34,360回、同じレスポンスの再計算 |
 | P0 | `get_chair_stats` | 1集約SQLを実装・ベンチ検証済み | 初期データ全件の旧実装との照合は未実施 |
 | P0 | `app_post_ride_evaluation` | DB transaction中に外部決済HTTPと最大5回の100ms sleep | connection・snapshot・lockを外部I/O中も保持 |
-| P0 | `chair_post_coordinate` | INSERT後に同じ位置を再SELECTし、rideとstatusも個別取得 | 全椅子が高頻度で通る書き込み経路の往復過多 |
+| P0 | `chair_post_coordinate` | 通常2 SQL、遷移候補だけride lock + 最新status再読 | HTTP応答と永続化が同期し、全椅子の高頻度INSERTが残る |
 | P1 | `app_get_rides` | rideごとにstatus、coupon、chair、ownerを取得 | 履歴増加に比例するN+1 |
 | P1 | `owner_get_sales` | ownerのchairごとに完了rideを取得 | N+1、read transactionが暗黙ROLLBACK |
 | P1 | `app_post_rides` | userの全rideとride別最新statusを取得 | ライド作成ごとに履歴全体を再走査 |
@@ -126,7 +141,7 @@
 
 - [x] INDEX、nearbyのN+1解消、owner椅子一覧の事前絞り込みを実装済みであることを確認する
 - [x] `users(access_token)` と `users(invitation_code)` は既存の `UNIQUE` INDEXで検索できることを確認する
-- [x] nearbyの「割当済み判定には `evaluation IS NULL` を利用できる」という前提が、評価と `COMPLETED` を同じtransactionで確定する仕様に基づくことを確認する
+- [x] nearbyの「割当済み判定には `evaluation IS NULL` を利用できる」という前提を、同一transactionだけでなく全status writerのride row lockとlock後再読で保証する
 - [x] `coupons.used_by` 全走査をprepared statement統計で特定し、単独INDEX追加を3走比較する
 - [ ] 新しい施策は1つずつ単独ベンチし、現在のRust実装で改善することを確認してから採用する
 - [ ] 完了数だけでなく、空車移動距離、乗車中移動距離、matching / pickup / drive評価を記録してスコアの増減理由を分解する
@@ -516,7 +531,12 @@
 - [x] 集合SQLだけをBenchmark 04として60秒計測する
 - [x] nearbyの内容不一致とtimeoutがないことを60秒ベンチで確認する
 - [ ] `CODE=26` 1件との因果を切り分けるため、同一revisionを3回以上走らせる
-- [ ] 未完了ride判定のstatus相関subqueryを `rides.evaluation IS NULL` へ置き換え、実行計画と結果を比較する
+- [x] 未完了ride判定のstatus相関subqueryを `rides.evaluation IS NULL` へ置き換え、実行計画と結果を比較する
+  - 旧新のride判定とnearby結果を負荷中3時点で比較し、差分0件
+  - `EXPLAIN ANALYZE`: 28.2ms→10.1ms、status subquery 1,671 loopsを除去
+  - queryだけの中央値100,310点は競合反例があるため不採用
+  - 全status writerをride row lockへ合流させ、statusもcurrent/locking readする最終版はエラー0の3走中央値98,580点
+  - 詳細: [`tuning/16-nearby-evaluation-filter.md`](./tuning/16-nearby-evaluation-filter.md)
 - [ ] 座標だけを最大3秒cacheし、`is_active` と割当可否は毎回最新状態を合成する案を比較する
 - [ ] nearbyレスポンス全体の3秒cacheは割当済み椅子を返すため採用しない
 
@@ -571,8 +591,16 @@
 - [x] `recorded_at` はINSERTへ渡した時刻をそのままレスポンスへ使う
 - [x] rideと最新statusを別々に取得せず、現在rideだけを1 SQLで取得する
 - [x] 座標がpickup/destinationと一致しない通常経路では、status INSERTなしで早くcommitする
-- [ ] 同じstatusを重複INSERTしない条件付き遷移へする
+- [x] pickup / destination候補だけride rowをlockし、lock後の最新statusを再読する
+- [x] MySQL `REPEATABLE READ` の古いsnapshotを避けるため、遷移判定のstatusを `FOR UPDATE` でcurrent readする
+- [x] `ENROUTE -> PICKUP` / `CARRYING -> ARRIVED` の期待する直前状態だけを条件付き遷移する
+- [x] 通常座標のcurrent ride queryから最新status相関subqueryを除去する
+- [x] 同じ `ENROUTE` の再送を追加INSERTなしの204にする
 - [x] 通常の1座標更新あたりのSQL回数を4回から2回へ削減する
+- [x] 遷移候補だけlockする版と、通常座標のstatus取得も除いた版を60秒3走で比較する
+  - 直前版: 90,858 / 107,091 / 92,484点、中央値92,484点
+  - 最終版: 98,628 / 98,311 / 98,580点、中央値98,580点
+  - 詳細: [`tuning/17-coordinate-transition-query.md`](./tuning/17-coordinate-transition-query.md)
 - [ ] 座標更新のtransaction保持時間、p95 / p99を比較する
 - [ ] 座標更新をper-chair順序付きのbounded queueへ投入し、HTTP応答と永続化・status判定を分離する実験を行う
 - [ ] 最新座標をメモリ上では即時更新し、`chair_locations` を30 / 50 / 100ms単位でbulk INSERTする
@@ -582,6 +610,8 @@
 - [ ] HTTP 200をqueue投入時とDB commit後のどちらで返すか比較し、応答p99と再起動時の座標欠落リスクを記録する
 - [ ] 非同期化後も座標は3秒以内、割当可否と到着statusは通知評価を落とさない時間内に反映する
 - [ ] 同じ椅子の座標順序、累積距離、`PICKUP` / `ARRIVED` の一度だけの遷移を並行負荷で検証する
+- [ ] 今回の手動再現（同一pickup / destination、ride lock後ろの並行座標2本）を自動integration testへ移す
+- [ ] `PICKUP` 後にpickupへ滞在中、`ARRIVED` 後から評価前にdestinationへ滞在中のlocking read回数と待機時間を分離計測する
 
 ### 招待couponのINDEX
 
@@ -804,7 +834,7 @@
 ### Rust
 
 - [x] `cargo fmt -- --check`
-- [ ] `cargo clippy --all-targets --all-features -- -D warnings`
+- [x] `cargo clippy --all-targets --all-features -- -D warnings`
 - [x] `cargo test --all --all-targets`
 - [x] `cargo build --release --locked`
 
@@ -814,7 +844,8 @@
 - [x] 公式prevalidation
 - [ ] 通知の全遷移・順序・重複許容・取りこぼし
 - [ ] chair statsが走行中は固定され、`COMPLETED` で当該評価を含むこと
-- [ ] nearbyの空車・座標・3秒猶予
+- [x] nearbyの空車判定（初期状態、負荷中3時点、60秒3走）
+- [ ] nearbyの座標・3秒猶予
 - [ ] ownerの距離・売上・0件行
 - [ ] 並行ride作成と並行matching
 - [ ] 決済retryとexactly-once相当の結果
@@ -840,20 +871,19 @@
 
 ## 推奨する直近の実行順
 
-1. nearbyの未完了判定を `evaluation IS NULL` へ単純化し、現在のstatus相関subqueryを除去する
-2. nearbyの最新位置で、既存 `(chair_id, created_at)` のbackward scan可否とsortが残る理由を
+1. nearbyの最新位置で、既存 `(chair_id, created_at)` のbackward scan可否とsortが残る理由を
    `EXPLAIN ANALYZE` で特定し、必要ならprojectionを狭めたcovering案を単独比較する
-3. 1と2で不足する場合、chairごとのcurrent location別表と履歴tableを同じtransactionで更新する
-4. chair statsと最新statusを含む通知payload cacheを実装し、30ms pollingよりDB負荷と通知遅延が減るか確認する
-5. 座標更新の非同期queueとbulk INSERTを単独実験し、3秒制約とstatus遷移を検証する
-6. matcherへ地域間の距離上限を追加し、500 / 100 / 30msの実行間隔と組み合わせて比較する
-7. 決済へ `Idempotency-Key` を導入してGET照合をなくす
-8. 外部決済HTTPをDB transactionの外へ出し、障害時の二重決済・欠落を回復できるようにする
-9. app history、owner sales、ride作成のN+1を順に除去する
-10. current-state別表で最新status・statsをO(1)化する
-11. JSON long pollingで不足する場合だけSSEへ移し、状態変更時の即時pushまで実装する
-12. 貪欲matcherと最小費用二部マッチングを比較する
-13. 最後にpool、MySQL、nginx、compiler設定をprofileに基づいて調整する
+2. INDEXだけで不足する場合、chairごとのcurrent location別表と履歴tableを同じtransactionで更新する
+3. chair statsと最新statusを含む通知payload cacheを実装し、30ms pollingよりDB負荷と通知遅延が減るか確認する
+4. 座標更新の非同期queueとbulk INSERTを単独実験し、3秒制約とstatus遷移を検証する
+5. matcherへ地域間の距離上限を追加し、500 / 100 / 30msの実行間隔と組み合わせて比較する
+6. 決済へ `Idempotency-Key` を導入してGET照合をなくす
+7. 外部決済HTTPをDB transactionの外へ出し、障害時の二重決済・欠落を回復できるようにする
+8. app history、owner sales、ride作成のN+1を順に除去する
+9. current-state別表で最新status・statsをO(1)化する
+10. JSON long pollingで不足する場合だけSSEへ移し、状態変更時の即時pushまで実装する
+11. 貪欲matcherと最小費用二部マッチングを比較する
+12. 最後にpool、MySQL、nginx、compiler設定をprofileに基づいて調整する
 
 ## 記録ルール
 
