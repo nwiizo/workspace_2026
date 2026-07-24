@@ -95,6 +95,13 @@ WHERE chairs.is_active = TRUE
 
 *DBでactive・最新状態・最新位置をまとめて絞り、Rust側は小さな候補集合の距離計算に集中します。*
 
+> **用語補足**
+>
+> - **`LATERAL`**: 外側queryの1行を参照できるsubqueryです。ここでは「このchairの最新位置」を同じSQL内で取得します。
+> - **materialize**: queryの途中結果を実際に作ってから次の処理へ渡すことです。対象行が多いと作成とsortが重くなります。
+> - **snapshot**: 1つのstatementまたはtransactionが基準にする、整合した時点のデータです。
+> - **p50 / p95 / p99**: 応答時間を短い順に並べた百分位です。p99は99%がその値以下で、遅い側の1%を含む「裾の遅さ」を見る指標です。
+
 ## INDEXが効く理由
 
 このSQLはBenchmark 01で追加した次のB-treeを使います。
