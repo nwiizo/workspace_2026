@@ -405,7 +405,10 @@
 
 - [ ] `EXPLAIN ANALYZE` とstatement digestで使われていないINDEXを特定する
 - [ ] 非正規化後に不要になった履歴検索用INDEXを削除し、INSERT/UPDATEのwrite amplificationを減らす
-- [ ] statusだけを読むqueryにcovering INDEXが有効か比較する
+- [x] statusだけを読むqueryにcovering INDEXが有効か比較する
+  - `Covering index lookup` へ変化し、単発計画は改善
+  - 60秒ベンチは45,075点で対照53,198点を下回ったため不採用
+  - schemaは `(ride_id, created_at)` へ復元
 - [ ] ULIDやtoken列を `CHAR/VARCHAR ... CHARACTER SET ascii` またはbinary表現に変えた場合のINDEXサイズを比較する
 - [ ] `chairs.model` の `TEXT` を上限付き `VARCHAR` へ変える
 - [ ] buffer pool hit率、temporary table、sort、redo量を採取する
