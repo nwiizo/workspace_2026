@@ -142,6 +142,7 @@ CREATE TABLE coupons
   created_at DATETIME(6)  NOT NULL DEFAULT CURRENT_TIMESTAMP(6) COMMENT '付与日時',
   used_by    VARCHAR(26)  NULL COMMENT 'クーポンが適用されたライドのID',
   PRIMARY KEY (user_id, code),
-  INDEX idx_coupons_code (code)
+  INDEX idx_coupons_code (code),
+  INDEX idx_coupons_used_by (used_by)
 )
   COMMENT 'クーポンテーブル';
