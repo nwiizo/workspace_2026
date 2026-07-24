@@ -83,7 +83,7 @@
 | 決済HTTP client | process内で1個を共有し、冪等なPOST / retryでconnection poolを再利用済み。診断203 sampleは608 attempts、途中5xx 405回、最終204 | TCP connect回数とconnection再利用率を採取 |
 | 決済の `Idempotency-Key` | ride IDを全POSTへ設定し、確認GETとuser全ride取得を削除済み | 準備transactionと完了transactionの間に決済を置く構成まで実装。TCP connect回数と再利用率を採取する |
 | 招待登録 | 招待者のUNIQUE行を `FOR UPDATE` して同一コードだけを直列化。couponは `COUNT(*)`、reward codeは新規user IDで一意化 | 上限が増えてCOUNTが支配的になった場合だけ、条件付きcounter UPDATEを比較 |
-| SQLx connection pool | 上限50。決済中のconnection保持を除去後も、評価sampleの初回66.5%、完了時66.0%でsize 50 / idle 0 | 評価の接続所有は平均319.754msから19.241msへ短縮済み。残る短時間acquire待ちを前提に上限50 / 75 / 100を比較する |
+| SQLx connection pool | 同じhot-path実装で上限50 / 75 / 100を各3走比較し、50を維持。中央値107,234 / 105,867 / 103,720点 | 上限を増やすほどDB内滞在とrow-lock待ちが増加。接続上限ではなくquery・lock保持を減らす |
 
 SSEは形式だけ変更しても、DB query数とpayload生成量が同じなら効果が薄いと考えます。
 Benchmark 26ではJSON payload cacheと状態不変時だけ100msにするpollingを実装し、
@@ -794,7 +794,7 @@ TCP handshake、HTTPSならTLS handshakeが必要です。
 #### DB connection pool
 
 MySQL connectionを毎回作らず、一定本数を複数requestで貸し借りする仕組みです。
-handlerはpoolから1本借り、SQLやtransactionを終えたら返します。上限50なら、
+handlerはpoolから1本借り、SQLやtransactionを終えたら返します。維持した上限50なら、
 51個目の同時処理は空きが返るまで待ちます。
 
 上限を増やせば必ず速くなるわけではありません。MySQLが処理できる量を超えると
@@ -904,6 +904,7 @@ amountを記録するため、ride IDを同じkeyとして再利用すれば、�
 | [30-coordinate-pool-acquisition.md](./tuning/30-coordinate-pool-acquisition.md) | coordinateの `pool.begin()` をpool acquireとSQL BEGINへ分離 | acquire p95 113.156ms、BEGIN p95 2.327ms。1,173 sampleの78.1%でsize 50 / idle 0。この群のacquire平均54.762msに対しidleあり群は3.968ms | 診断instrumentation付き実測n=1・未推定。score 124,064、`pass=true`・error map空。current write支配仮説を棄却し、長時間connectionを保持する評価APIを次にphase分解 |
 | [31-evaluation-phase-diagnostics.md](./tuning/31-evaluation-phase-diagnostics.md) | 評価APIをpool、DB準備、決済HTTP、retry sleep、完了write、COMMITへ分解 | connection所有平均319.754msのうち決済302.507ms、retry sleep 201.719ms。203 sampleで5xx 405回、最大active評価38 | 診断instrumentation付き実測n=1・未推定。score 114,109、`pass=true`・error map空。決済中のconnection保持を外す仮説を支持 |
 | [32-evaluation-transaction-split.md](./tuning/32-evaluation-transaction-split.md) | 評価を準備transaction、transaction外の冪等決済、再検証付き完了transactionへ分割 | connection所有平均319.754→19.241ms（-94.0%）、p95 695.556→36.764ms（-94.7%）。通常3走99,633–106,035点、中央値99,689点 | 診断n=1は118,204点。通常3走は全て`pass=true`・error map空だが、Benchmark 29中央値比-2.8%で得点寄与は未確定。資源保持の改善と正当性テストを理由に採用 |
+| [33-sqlx-pool-capacity.md](./tuning/33-sqlx-pool-capacity.md) | 評価の長時間connection保持を除去した後、同じhot-path実装でSQLx pool上限50 / 75 / 100を比較 | 通常3走中央値107,234 / 105,867 / 103,720点。75は50比-1.3%、100は-3.3% | 各条件実測n=3、全run `pass=true`・error map空。上限増加でDB内滞在も増え、既定50を維持 |
 | [80-rust-implementation.md](./tuning/80-rust-implementation.md) | Rust / sqlxとrelease buildの知識 | 再build 30分52秒→11.02秒 | build時間の実測。スコア推定対象外 |
 | [81-evaluation-authorization.md](./tuning/81-evaluation-authorization.md) | 評価rideを認証ユーザー所有へ制限 | 公式prevalidation `pass=true`、別ユーザーHTTP回帰成功 | 正当性修正。60秒スコアはBenchmark 20から更新しない |
 | [90-local-environment.md](./tuning/90-local-environment.md) | build context、BuildKit、固定Colima資源 | context 467MB→32.5KB | sizeの実測。スコア推定対象外 |

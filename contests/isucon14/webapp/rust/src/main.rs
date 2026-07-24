@@ -12,6 +12,22 @@ use tokio::net::TcpListener;
 use tokio::sync::RwLock;
 use tokio::time::{Duration, MissedTickBehavior};
 
+const DEFAULT_DB_MAX_CONNECTIONS: u32 = 50;
+
+fn parse_db_max_connections(value: Option<&str>) -> anyhow::Result<u32> {
+    let Some(value) = value else {
+        return Ok(DEFAULT_DB_MAX_CONNECTIONS);
+    };
+    let max_connections = value.parse::<u32>().with_context(|| {
+        format!("ISUCON_DB_MAX_CONNECTIONS must be a positive integer: {value}")
+    })?;
+    anyhow::ensure!(
+        max_connections > 0,
+        "ISUCON_DB_MAX_CONNECTIONS must be greater than zero"
+    );
+    Ok(max_connections)
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     if std::env::var_os("RUST_LOG").is_none() {
@@ -30,9 +46,18 @@ async fn main() -> anyhow::Result<()> {
     let user = std::env::var("ISUCON_DB_USER").unwrap_or_else(|_| "isucon".to_owned());
     let password = std::env::var("ISUCON_DB_PASSWORD").unwrap_or_else(|_| "isucon".to_owned());
     let dbname = std::env::var("ISUCON_DB_NAME").unwrap_or_else(|_| "isuride".to_owned());
+    let db_max_connections = match std::env::var("ISUCON_DB_MAX_CONNECTIONS") {
+        Ok(value) => Some(value),
+        Err(std::env::VarError::NotPresent) => None,
+        Err(error) => {
+            return Err(anyhow::Error::new(error)
+                .context("ISUCON_DB_MAX_CONNECTIONS must contain valid Unicode"));
+        }
+    };
+    let db_max_connections = parse_db_max_connections(db_max_connections.as_deref())?;
 
     let pool = sqlx::mysql::MySqlPoolOptions::new()
-        .max_connections(50)
+        .max_connections(db_max_connections)
         .connect_with(
             sqlx::mysql::MySqlConnectOptions::default()
                 .host(&host)
@@ -90,6 +115,34 @@ async fn main() -> anyhow::Result<()> {
     axum::serve(tcp_listener, app).await?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_db_max_connections, DEFAULT_DB_MAX_CONNECTIONS};
+
+    #[test]
+    fn db_max_connections_defaults_to_fifty() {
+        assert_eq!(
+            parse_db_max_connections(None).expect("default pool size"),
+            DEFAULT_DB_MAX_CONNECTIONS
+        );
+    }
+
+    #[test]
+    fn db_max_connections_accepts_a_positive_integer() {
+        assert_eq!(
+            parse_db_max_connections(Some("75")).expect("configured pool size"),
+            75
+        );
+    }
+
+    #[test]
+    fn db_max_connections_rejects_zero_and_non_numbers() {
+        assert!(parse_db_max_connections(Some("0")).is_err());
+        assert!(parse_db_max_connections(Some("")).is_err());
+        assert!(parse_db_max_connections(Some("many")).is_err());
+    }
 }
 
 fn spawn_latest_chair_location_reconciliation(app_state: &AppState) {

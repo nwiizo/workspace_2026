@@ -1737,6 +1737,56 @@ API契約内で二重課金を避けつつ、長いDB資源保持をなくす設
 個々のhandler latencyとシステム全体の資源効率は同じ指標ではないため、両方を記録します。
 詳細は[Benchmark 32](./32-evaluation-transaction-split.md)に記載しています。
 
+## SQLx pool上限を設定値として安全に扱う
+
+### 上限は型・範囲・既定値を起動時に確定する
+
+pool上限を比較するため、`ISUCON_DB_MAX_CONNECTIONS`を追加しました。requestごとに環境変数を
+読む必要はなく、起動時に1回だけ`u32`へ変換します。
+
+```rust
+fn parse_db_max_connections(value: Option<&str>) -> anyhow::Result<u32> {
+    let Some(value) = value else {
+        return Ok(50);
+    };
+    let max_connections = value.parse::<u32>()?;
+    anyhow::ensure!(max_connections > 0, "must be greater than zero");
+    Ok(max_connections)
+}
+```
+
+0や非数値を黙って既定値へ戻すと、設定したつもりの比較が別条件で動きます。起動失敗に
+すればhealthcheckで気づけます。純粋関数へ分けたため、process全体の環境変数を書き換えて
+testを並行不安全にせず、None、75、0、非数値をunit testできます。
+
+### `max_connections`はtask数でもthread数でもない
+
+SQLx pool上限50は、MySQL connectionを同時に最大50本まで貸す設定です。Tokio taskは
+それ以上存在でき、51件目は`acquire().await`で待ちます。待機中のtaskはOS threadを
+占有しません。
+
+```text
+Tokio task数 >= 同時HTTP request数
+SQLx貸出connection数 <= 50
+Tokio worker thread数 ≈ CPU上でfutureをpollするthread数
+```
+
+これらを同じ「並列数」として一緒に増やすと、どの資源が効いたか分かりません。
+Benchmark 33ではCPU / memory、Tokio runtime、MySQL設定を固定し、pool上限だけを
+50 / 75 / 100へ変えました。
+
+### acquire短縮だけで採用しない
+
+診断では上限を増やすほど初回acquire平均が32.447→24.173→20.848msへ短縮しました。
+一方、connectionを取得してから返すまでの平均は18.637→26.527→30.410msへ増えました。
+MySQLへ入るqueryが増え、row lockや実行待ちが長くなったためと考えられます。
+
+同じhot-path実装による通常3走中央値は50 / 75 / 100で
+107,234 / 105,867 / 103,720点でした。上限を増やすほど中央値が下がっています。
+asyncコードの局所latencyだけでなく、下流DBの滞在時間とシステム全体のscoreを
+同時に見る必要があります。詳細は
+[Benchmark 33](./33-sqlx-pool-capacity.md)に記録しています。
+
 ## 避けるショートカット
 
 - N+1を無制限の `tokio::spawn` で隠す

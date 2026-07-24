@@ -311,6 +311,9 @@ queueのat-least-once配送、再試行、完了通知も必要です。競技�
    HTTP故障注入する
 5. process crash後に「決済済み・DB未完了」を自動回収する必要性と状態設計を検討する
 
+pool比較は[Benchmark 33](./33-sqlx-pool-capacity.md)で完了し、同じhot-path実装による
+通常3走中央値が最も高い50を維持しました。上の1と2は完了済みの履歴として残しています。
+
 ## 実行したコマンド
 
 ```sh

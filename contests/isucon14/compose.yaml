@@ -32,6 +32,7 @@ services:
       ISUCON_DB_PASSWORD: isucon
       ISUCON_DB_PORT: "3306"
       ISUCON_DB_USER: isucon
+      ISUCON_DB_MAX_CONNECTIONS: "${ISUCON_DB_MAX_CONNECTIONS-50}"
       RUST_LOG: ${RUST_LOG:-info}
     expose:
       - "8080"

@@ -254,6 +254,15 @@
   - 初回sampleの66.5%、完了sampleの66.0%はpool size 50 / idle 0だったため、
     次は上限50 / 75 / 100を比較する
   - 詳細: [`tuning/32-evaluation-transaction-split.md`](./tuning/32-evaluation-transaction-split.md)
+- [x] 評価分割後のSQLx pool上限50 / 75 / 100を比較する
+  - 同じhot-path実装による通常3走中央値は107,234 / 105,867 / 103,720点
+  - 全9 run `pass=true`・error map空。75は50比-1.3%、100は-3.3%で既定50を維持
+  - 診断上の初回acquire平均は32.447 / 24.173 / 20.848msと単調に短縮
+  - 一方、connection所有平均は18.637 / 26.527 / 30.410ms、InnoDBの1 wait平均は
+    18 / 23 / 26msと増え、上限追加とDB内競合悪化の兆候が整合する
+  - `ISUCON_DB_MAX_CONNECTIONS`を追加し、正の整数だけを許可。未指定時は50
+  - CPU / memory / diskは4 CPU / 4 GiB / 100 GiBから変更していない
+  - 詳細: [`tuning/33-sqlx-pool-capacity.md`](./tuning/33-sqlx-pool-capacity.md)
 - [ ] `CODE=26` のowner累積距離が座標responseの受信境界より先へ進む競合を検証する
   - 期待値より実値が4–40程度大きく、直近1回の移動距離に近い例を確認
   - ベンチマーカーのcoordinate POST、world更新、owner検証の順序を同じchairで追う
@@ -274,7 +283,7 @@
 | P0 | 通知2経路 | recipient + chair stats dependency revision付きpayload cache。未送信statusは30ms、定常cacheは100ms。cursorはDBに維持 | 診断runのp95はapp 166ms / chair 181ms。response ACKなしの配送loss、cache missのphase分解、long pollingが未検証 |
 | P0 | `get_chair_stats` | 評価時差分更新 + 主キーreadへ変更 | SQL累積は約89%減、スコア中央値は約3.5%低下したため次の通知施策と合わせて再評価 |
 | P0 | `app_post_ride_evaluation` | 準備transaction、transaction外の冪等決済、ride再lock付き完了transactionへ分割済み | connection所有平均は94.0%短縮。完了時の追加acquireとprocess crash後の自動回収を検討する |
-| P0 | `chair_post_coordinate` | 履歴INSERT + current UPDATE、遷移候補だけride lock + 最新status再読 | 評価分割後も初回評価sampleの66.5%でpool 50接続が全使用中。pool上限50 / 75 / 100を比較する |
+| P0 | `chair_post_coordinate` | 履歴INSERT + current UPDATE、遷移候補だけride lock + 最新status再読 | pool 50維持。上限追加で通常中央値は改善しなかったため、connection取得後のDB滞在をquery別に減らす |
 | P1 | `app_get_rides` | rideごとにstatus、coupon、chair、ownerを取得 | 履歴増加に比例するN+1 |
 | P1 | `owner_get_sales` | ownerのchairごとに完了rideを取得し、評価responseと重なったride IDを除外 | N+1、read transactionが暗黙ROLLBACK。複数processではtracker共有が必要 |
 | P1 | `app_post_rides` | userの全rideとride別最新statusを取得 | ライド作成ごとに履歴全体を再走査 |
@@ -282,7 +291,7 @@
 | P1 | 認証middleware | 初期tokenはprocess cache、動的主体は最初のmissだけDB検索 | DB外のtoken失効と複数processのcache invalidationは未対応 |
 | P1 | `payment_gateway` | process共有client + ride IDの冪等POST。エラー時の履歴GETは削除済み | TCP connect回数、retry status別回数、connection再利用率の直接計測は未実施 |
 | P2 | nginx / Rustログ | stock設定のまま全リクエストを処理 | 高頻度経路のログI/Oとproxy overheadが未計測 |
-| P2 | MySQL / sqlx pool | stock MySQL、pool上限50固定 | 実負荷に対するbuffer・接続数が未調整 |
+| P2 | MySQL / sqlx pool | stock MySQL、SQLx pool上限50。50 / 75 / 100の通常各3走で維持を決定 | 上限追加でrow-lock待ちとDB内滞在が増えたため、query・lock保持を減らす |
 
 ## Fable独立レビューで追加した正当性不変条件
 
@@ -838,10 +847,12 @@
 - [x] 正常系、決済retry、重複評価、遅延決済のテストを追加する
   - network timeout時のhandler cancelとprocess crash後の自動回収は別途検証する
 - [ ] `CODE=6`、`CODE=34`、`CODE=35` と評価APIのp99を比較する
-- [ ] 評価分割後のSQLx pool上限50 / 75 / 100を各3走で比較する
+- [x] 評価分割後のSQLx pool上限50 / 75 / 100を各3走で比較する
   - scoreだけでなく初回・完了acquire p95、MySQL `Threads_running`、
     `Max_used_connections`、row lock waitを同時に記録する
   - ホストのCPU / memoryは4 CPU / 4 GiBのまま変更しない
+  - 同じhot-path実装の中央値107,234 / 105,867 / 103,720点から50を維持
+  - 詳細: [`tuning/33-sqlx-pool-capacity.md`](./tuning/33-sqlx-pool-capacity.md)
 
 ### 座標更新
 
@@ -1044,13 +1055,15 @@
 - [ ] response件数が分かる `Vec` はcapacityを事前確保する
 - [ ] `RUST_LOG=info` と `warn` でログ行数、byte数、CPU、スコアを比較する
 - [ ] TraceLayerとエラーログの量を測り、成功requestログだけを抑制する
-- [ ] poolの `min_connections`、`max_connections`、`acquire_timeout` を計測で調整する
-  - 現在はmax 50。Benchmark 30でacquire saturationを確認したが、上限はまだ変更しない
+- [x] poolの `max_connections` を50 / 75 / 100で比較し、50を維持する
+  - 同じhot-path実装の3走中央値107,234 / 105,867 / 103,720点、全run
+    `pass=true`・error map空
+- [ ] poolの `min_connections`、`acquire_timeout` を必要な症状が出た場合に調整する
   - 起動時handshakeではなく定常時size 50 / idle 0が主要状態なので、`min_connections` は
     直近の解決策にしない
-- [ ] pool上限を増やす前にMySQL CPUと実行中thread数に余裕があることを確認する
-  - run後はMySQL `max_connections=151`、`Max_used_connections=51`だが、
-    run中のCPU・Threads_running・row lock悪化を同時採取してから比較する
+- [x] pool上限比較でMySQL接続数とrow-lock悪化を同時採取する
+  - `Max_used_connections`は51 / 77 / 101
+  - InnoDBの1 wait平均は18 / 23 / 26msで、上限を増やさない根拠にした
 - [ ] release binaryをperf / samply / Instrumentsでprofileする
 - [ ] DB待ちが支配的でなくなった後だけLTO、codegen-units、`target-cpu` を比較する
 - [ ] allocationがhotになった場合だけallocator変更を比較する

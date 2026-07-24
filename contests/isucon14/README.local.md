@@ -305,6 +305,13 @@ stop-then-startです。複数instanceのrolling restartはこの結果へ含め
 BENCHMARK_DURATION=10 ./scripts/benchmark.sh
 ```
 
+SQLx pool上限は既定で50です。比較や別構成での再計測時だけ正の整数で上書きできます。
+
+```sh
+ISUCON_DB_MAX_CONNECTIONS=50 ./scripts/benchmark.sh 60
+ISUCON_DB_MAX_CONNECTIONS=100 ./scripts/benchmark.sh 60
+```
+
 ベンチマーカーは実行開始時に `POST /api/initialize` を呼ぶため、DB は初期データへ戻ります。フロントエンドの静的ファイル検証だけを省略したい場合は、公式オプションを次のように有効化できます。
 
 ```sh
@@ -474,6 +481,18 @@ DB connection所有の合計は平均319.754msから19.241ms、p95 695.556msか�
 CPU / memoryを変えずにSQLx pool上限だけを比較します。詳細は
 [`tuning/32-evaluation-transaction-split.md`](./tuning/32-evaluation-transaction-split.md)を
 参照してください。
+
+Benchmark 33では、評価の長時間connection保持を除去した後にSQLx pool上限50 / 75 / 100を
+比較しました。同じhot-path実装による通常60秒3走の中央値は
+107,234 / 105,867 / 103,720点で、全9 run `pass=true`・error map空でした。
+75は50比-1.3%、100は-3.3%です。
+
+上限を増やすほど評価の初回acquire平均は32.447 / 24.173 / 20.848msと短くなりましたが、
+connection取得後の所有平均は18.637 / 26.527 / 30.410ms、InnoDBの1 wait平均は
+18 / 23 / 26msと長くなりました。pool待ちの短縮と引き換えにMySQL内の競合が増えた兆候があり、
+通常中央値も下がるため、既定値50を維持しています。ホスト資源は4 CPU / 4 GiB / 100 GiBの
+ままです。詳細は
+[`tuning/33-sqlx-pool-capacity.md`](./tuning/33-sqlx-pool-capacity.md)を参照してください。
 
 過去のBenchmark 19では、診断runで `CARRYING` の後に古い `PICKUP` を返す
 CODE=11を再現したため、
