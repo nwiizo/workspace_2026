@@ -50,6 +50,9 @@
 - [x] `get_chair_stats` を1 SQLへ集約した60秒ベンチ: `pass=false`、スコア4,460、`CODE=32` 2件
 - [x] matcherを最大64件のbatchへ変更した60秒ベンチ: `pass=true`、スコア2,393、error map空
 - [x] 乗車地点に近い空き椅子を優先した60秒ベンチ: `pass=true`、スコア16,909、error map空
+- [x] 座標更新を通常4 SQLから2 SQLへ削減した60秒ベンチ: `pass=true`、スコア11,599、`CODE=17` 2件
+- [x] `SHOW ENGINE INNODB STATUS` で `coupons.code` 全走査に起因する登録deadlockを特定
+- [x] `coupons(code)` 追加後の60秒ベンチ: `pass=true`、スコア15,415、error map空
 - [x] BuildKit、release incremental、LLDでRust source変更後の再buildを高速化
   - Cargo: 7.03秒
   - Docker build壁時計: 11.02秒
@@ -177,19 +180,23 @@
 
 ### 座標更新
 
-- [ ] INSERT直後の `chair_locations` 再SELECTをなくす
-- [ ] `recorded_at` はINSERTへ渡した時刻をそのままレスポンスへ使う
-- [ ] rideと最新statusを別々に取得せず、現在rideだけを1 SQLで取得する
-- [ ] 座標がpickup/destinationと一致しない通常経路では、status INSERTなしで早くcommitする
+- [x] INSERT直後の `chair_locations` 再SELECTをなくす
+- [x] `recorded_at` はINSERTへ渡した時刻をそのままレスポンスへ使う
+- [x] rideと最新statusを別々に取得せず、現在rideだけを1 SQLで取得する
+- [x] 座標がpickup/destinationと一致しない通常経路では、status INSERTなしで早くcommitする
 - [ ] 同じstatusを重複INSERTしない条件付き遷移へする
-- [ ] 1座標更新あたりのSQL回数、transaction保持時間、p99を比較する
+- [x] 通常の1座標更新あたりのSQL回数を4回から2回へ削減する
+- [ ] 座標更新のtransaction保持時間、p95 / p99を比較する
 
 ### 招待couponのINDEX
 
-- [ ] `coupons(code)` をPhase 2より先に単独追加する
-- [ ] `SELECT * FROM coupons WHERE code = ? FOR UPDATE` の全走査とlock範囲を変更前後で比較する
-- [ ] `SHOW ENGINE INNODB STATUS` でride作成とのlock待ち・deadlockが減ることを確認する
-- [ ] このINDEXだけで60秒ベンチを行い、登録・ride作成のp99を比較する
+- [x] `coupons(code)` をPhase 2より先に単独追加する
+- [x] `SELECT * FROM coupons WHERE code = ? FOR UPDATE` の全走査とlock範囲を変更前後で比較する
+  - 変更前: coupon 698行をtable scan、約6.41ms、対象2行
+  - 変更後: coupon 766行中3行をindex lookup、約0.389ms
+- [x] `SHOW ENGINE INNODB STATUS` でcoupon検索同士のlock待ち・deadlock原因を確認する
+- [x] このINDEXだけで60秒ベンチを行い、`CODE=17` が2件から0件になることを確認する
+- [ ] 利用者登録とride作成のp95 / p99を比較する
 
 ## Phase 2: N+1と重複計算をなくす
 

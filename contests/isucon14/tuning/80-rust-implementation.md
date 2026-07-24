@@ -252,8 +252,9 @@ Cargoはtargetのないmanifestをpackageとして解決できません。依存
 | chair stats変更後の再build | 10.34秒 | 未分離 | 小さいsource変更、cache hit |
 | batch matcher変更後の再build | 42.89秒 | 未分離 | 同じcacheでもホスト負荷により増加 |
 | 近傍優先matcher変更後の再build | 39.77秒 | 未分離 | 同じ4 CPU / 4 GiB、cache hit |
+| 座標更新変更後の再build | 13.36秒 | 未分離 | query統合と結果型追加、cache hit |
 
-最良の実測では、source変更後のDocker build壁時計は約168分の1になりました。その後のCargo時間は6.79〜42.89秒と幅があります。cache hitは「必ず同じ秒数になる」という意味ではなく、変更範囲、link対象、同じホストのI/O・CPU負荷でも変わります。それでもlegacy buildの30分52秒より大幅に短く、チューニングの再計測を現実的な時間で回せました。
+最良の実測では、source変更後のDocker build壁時計は約168分の1になりました。その後のCargo時間は6.79〜42.89秒と幅があります。座標更新変更後も13.36秒で再buildできました。cache hitは「必ず同じ秒数になる」という意味ではなく、変更範囲、link対象、同じホストのI/O・CPU負荷でも変わります。それでもlegacy buildの30分52秒より大幅に短く、チューニングの再計測を現実的な時間で回せました。
 
 初回と再buildを混ぜると誤解を招くため、fresh cloneでは最初にcache作成時間が必要なこと、再build時間は複数回の分布で見ることを明記します。
 
@@ -263,6 +264,7 @@ Cargoはtargetのないmanifestをpackageとして解決できません。依存
 - Docker smoke test: `GET /` 200、`POST /api/initialize` 正常
 - owner SQL時点の60秒公式ベンチ: `pass=true`、スコア5,601、エラー0
 - 近傍優先matcherまで含む60秒公式ベンチ: `pass=true`、スコア16,909、エラー0
+- 座標更新とcoupon code INDEXまで含む60秒公式ベンチ: `pass=true`、スコア15,415、エラー0
 
 ### 注意点と他の選択肢
 

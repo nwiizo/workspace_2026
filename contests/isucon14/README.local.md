@@ -208,8 +208,10 @@ RESET=1 ./scripts/down.sh
 | 椅子統計集約後 | `pass=false`、スコア4,460、`CODE=32` 2件 |
 | matcherバッチ化後 | `pass=true`、スコア2,393、エラー0 |
 | 近傍優先matcher後 | `pass=true`、スコア16,909、エラー0 |
+| 座標更新のDB往復削減後 | `pass=true`、スコア11,599、`CODE=17` 2件 |
+| coupon code INDEX追加後 | `pass=true`、スコア15,415、エラー0 |
 
-初期60秒走行ではMySQLのqueryが十数秒以上へ遅延し、ベンチマーカーの期限を超えました。INDEX、空通知polling、owner距離集計、N+1削減、matcherを1変更ずつ計測しました。最終走行はホストとColimaを4 CPU / 4 GiBのまま、初期スコア0から16,909まで改善してエラー0で完走しました。詳細は [TUNING.md](./TUNING.md) からベンチマーク単位の記録を参照してください。
+初期60秒走行ではMySQLのqueryが十数秒以上へ遅延し、ベンチマーカーの期限を超えました。INDEX、空通知polling、owner距離集計、N+1削減、matcherを1変更ずつ計測しました。観測した最高値は16,909です。最新走行はホストとColimaを4 CPU / 4 GiBのまま、coupon検索のdeadlock原因を修正した状態で15,415、エラー0で完走しました。スコアには走行ごとの揺れがあるため、変更の判断には実行計画とエラーログも併用しています。詳細は [TUNING.md](./TUNING.md) からベンチマーク単位の記録を参照してください。
 
 ## 構成
 

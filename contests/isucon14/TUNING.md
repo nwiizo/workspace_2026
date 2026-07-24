@@ -61,6 +61,8 @@
 | [05-chair-stats.md](./tuning/05-chair-stats.md) | 通知内の椅子統計を1 SQLへ集約 | `pass=false`、スコア4,460、`CODE=32` 2件 |
 | [06-matcher-batch.md](./tuning/06-matcher-batch.md) | matcherを最大64件のバッチ処理へ変更 | `pass=true`、スコア2,393、エラー0 |
 | [07-matcher-nearest.md](./tuning/07-matcher-nearest.md) | 乗車地点に近い空き椅子を優先 | `pass=true`、スコア16,909、エラー0 |
+| [08-coordinate-hot-path.md](./tuning/08-coordinate-hot-path.md) | 座標更新の通常経路を4 SQLから2 SQLへ削減 | `pass=true`、スコア11,599、`CODE=17` 2件 |
+| [09-coupon-code-index.md](./tuning/09-coupon-code-index.md) | 招待coupon検索の全走査とlock範囲を削減 | `pass=true`、スコア15,415、エラー0 |
 | [80-rust-implementation.md](./tuning/80-rust-implementation.md) | Rust / sqlxとrelease buildの知識 | 再build 30分52秒→11.02秒 |
 | [90-local-environment.md](./tuning/90-local-environment.md) | build context、BuildKit、固定Colima資源 | context 467MB→32.5KB |
 
