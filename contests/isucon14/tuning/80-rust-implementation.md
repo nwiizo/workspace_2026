@@ -1557,6 +1557,104 @@ DBで行うため正しさへ影響しません。
 `AuthenticatedChair { id }` のような不変identityへ縮め、可変属性は必要なhandlerで
 正本から読む方が境界を明確にできます。
 
+## async handlerの待ち時間をRAIIで計測する
+
+### `pool.begin()` を分ける
+
+`pool.begin().await` の1区間だけを測ると、poolからconnectionを借りる待ちと、
+MySQLへ `BEGIN` を送る時間を区別できません。SQLxの `Acquire` traitを使うと、次の
+2区間へ分けられます。
+
+```rust
+use sqlx::Acquire;
+
+let mut connection = pool.acquire().await?;
+let mut tx = connection.begin().await?;
+```
+
+これは診断のために別のtransactionを追加する変更ではありません。`Pool::begin()` が
+内部で行う取得と開始を呼出し側へ展開し、それぞれの前後で `Instant` を読む変更です。
+
+ただし `acquire()` の時間をすべてqueue待ちとは呼べません。SQLxのconnection検査、
+新規接続、返却側のprotocol処理などが含まれる可能性があります。`pool.size()` と
+`pool.num_idle()` も別々に読むため、完全に原子的なsnapshotではありません。
+
+### `Drop` で早期returnとcancelを記録する
+
+正常系の最後だけlogを書く実装は、遅いerrorやtimeoutを集計から消します。診断objectへ
+現在のterminal phaseを持たせ、未出力のままdropされたときにも1件出力します。
+
+```rust
+impl Drop for EvaluationDiagnostic {
+    fn drop(&mut self) {
+        if !self.emitted {
+            self.emit_record();
+        }
+    }
+}
+```
+
+handler内の `?`、明示的な `return Err(...)`、futureのcancelはいずれもscopeを抜けるため、
+RAIIで同じ終了処理へ集約できます。正常終了時はoutcomeを `success` に変更して先に出力し、
+`emitted` flagで二重出力を防ぎます。
+
+### 未観測と実測0を型で分ける
+
+pool状態やHTTP terminal statusは `Option` にします。phaseへ到達しなかったrequestは
+`None`、到達して実測0だった値は `Some(0)` です。
+
+```rust
+pool_idle_before: Option<u64>,
+payment_terminal_status: Option<u16>,
+```
+
+すべてを0初期化すると、pool観測前にcancelされたrequestを「idle 0」、network errorを
+「HTTP status 0」と誤集計します。JSONでは `null` と0を分け、集計側も
+`select(.field != null)` を明示します。
+
+### 子のasync処理へ診断objectだけを渡す
+
+決済関数のattempt時間とretry sleepをhandler外から分けることはできません。一方、
+決済moduleを評価handler専用のlog形式へ結合すると再利用しにくくなります。
+
+今回は値だけを持つ `PaymentGatewayDiagnostic` をoptionalなmutable referenceで渡し、
+決済関数はattempt、status分類、sleep時間だけを更新します。JSON出力とsamplingの判断は
+呼出し側に残します。
+
+```rust
+let payment_diagnostic = evaluation_diagnostic
+    .as_mut()
+    .map(|diagnostic| &mut diagnostic.payment_diagnostic);
+
+request_payment_gateway_post_payment(
+    client,
+    url,
+    token,
+    ride_id,
+    request,
+    payment_diagnostic,
+)
+.await;
+```
+
+診断なしの通常requestでは `None` です。子へ渡すobjectは親の評価診断objectが所有します。
+HTTPまたはretry sleepの途中でfutureがcancelされても、親の `Drop` が同じobjectから
+開始済みattempt、分類済みerror、進行中phaseの経過時間をsampleへ同期できます。
+`.await` 完了後だけ別の一時objectからコピーする設計では、cancel時に値を失います。
+
+`Instant::now()` も診断objectが `Some` のときだけ呼びます。JSONを出さない通常runへ、
+attemptごとの不要な時計読取りを持ち込まないためです。
+
+### connectionをdropした時点の意味
+
+SQLx 0.8.2のpool connectionはdrop時に同期的にidleへ戻るとは限りません。返却時のpingや
+protocol flushを行う非同期taskが開始されます。そのため計測名は
+`connection_available_us` ではなく、handler側の所有範囲を表す
+`connection_owned_us` としました。
+
+計測名は実装できた値ではなく、実際に表す境界に合わせます。誤った名前は、精密な数値を
+出しても誤った施策へ導きます。
+
 ## 避けるショートカット
 
 - N+1を無制限の `tokio::spawn` で隠す

@@ -451,6 +451,17 @@ impl ActiveRideEvaluationTracker {
         }
     }
 
+    pub(crate) fn diagnostic_counts(&self, ride_id: &str) -> (usize, usize) {
+        let state = self
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        (
+            state.active_ride_counts.values().sum(),
+            state.active_ride_counts.get(ride_id).copied().unwrap_or(0),
+        )
+    }
+
     #[cfg(test)]
     fn chair_ids(&self) -> HashSet<String> {
         self.inner
@@ -1165,10 +1176,13 @@ mod tests {
         let first_guard = tracker.begin("chair-1".to_owned(), "ride-1".to_owned());
         let second_guard = tracker.begin("chair-1".to_owned(), "ride-1".to_owned());
 
+        assert_eq!(tracker.diagnostic_counts("ride-1"), (2, 2));
         assert!(tracker.chair_ids().contains("chair-1"));
         drop(first_guard);
+        assert_eq!(tracker.diagnostic_counts("ride-1"), (1, 1));
         assert!(tracker.chair_ids().contains("chair-1"));
         drop(second_guard);
+        assert_eq!(tracker.diagnostic_counts("ride-1"), (0, 0));
         assert!(!tracker.chair_ids().contains("chair-1"));
     }
 

@@ -229,6 +229,17 @@
     connection保持時間を次にphase分解する
   - pool上限は変更せず、長いtransactionを先に短縮する
   - 詳細: [`tuning/30-coordinate-pool-acquisition.md`](./tuning/30-coordinate-pool-acquisition.md)
+- [x] 評価APIをpool、DB準備、決済、完了write、COMMITへ分解する
+  - 診断runは `pass=true`、114,109点、error map空。診断n=1なのでscoreは未推定
+  - 成功203 sampleでconnection所有は平均319.754ms、p95 695.556ms
+  - 決済は平均302.507msで、connection所有平均の約94.6%
+  - 内訳は決済HTTP平均100.785ms、retry sleep平均201.719ms
+  - 203 sampleで608 attempts、途中5xx 405回、すべて最終204
+  - 最大active評価38、同じrideの並行評価sampleは0
+  - 172 sample、約84.7%でacquire直前がpool size 50 / idle 0
+  - この群のacquire平均58.172msに対し、idleあり群は平均4.379ms
+  - pool上限は変更せず、決済中のconnectionとride row lockを先に解放する
+  - 詳細: [`tuning/31-evaluation-phase-diagnostics.md`](./tuning/31-evaluation-phase-diagnostics.md)
 - [ ] `CODE=26` のowner累積距離が座標responseの受信境界より先へ進む競合を検証する
   - 期待値より実値が4–40程度大きく、直近1回の移動距離に近い例を確認
   - ベンチマーカーのcoordinate POST、world更新、owner検証の順序を同じchairで追う
@@ -248,7 +259,7 @@
 | P0 | `app_get_nearby_chairs` | 最新座標はcurrent-state表 + process cache、active / 割当可否はDB、評価はsnapshot + revision + delivery leaseで除外 | 最終run例8.079ms。ride antijoinとtracker確認の内訳を測る |
 | P0 | 通知2経路 | recipient + chair stats dependency revision付きpayload cache。未送信statusは30ms、定常cacheは100ms。cursorはDBに維持 | 診断runのp95はapp 166ms / chair 181ms。response ACKなしの配送loss、cache missのphase分解、long pollingが未検証 |
 | P0 | `get_chair_stats` | 評価時差分更新 + 主キーreadへ変更 | SQL累積は約89%減、スコア中央値は約3.5%低下したため次の通知施策と合わせて再評価 |
-| P0 | `app_post_ride_evaluation` | ride IDの冪等keyで決済retry。完了時刻は決済後の最終SQL。ただしDB transaction中に外部HTTPと最大5回の100ms sleep | 診断runで平均403ms・p95 769ms。DB準備、決済await、完了write、COMMITのholding timeを分け、pending状態とcrash recoveryを設計する |
+| P0 | `app_post_ride_evaluation` | ride IDの冪等keyで決済retry。DB transaction中に外部HTTPと最大5回の100ms sleep | connection所有平均319.754msの約94.6%が決済。準備transaction、transaction外決済、ride再lock付き完了transactionへ分ける |
 | P0 | `chair_post_coordinate` | 履歴INSERT + current UPDATE、遷移候補だけride lock + 最新status再読 | acquire p95 113.156ms、SQL BEGIN p95 2.327ms。78.1%のsampleでpool 50接続が全使用中 |
 | P1 | `app_get_rides` | rideごとにstatus、coupon、chair、ownerを取得 | 履歴増加に比例するN+1 |
 | P1 | `owner_get_sales` | ownerのchairごとに完了rideを取得し、評価responseと重なったride IDを除外 | N+1、read transactionが暗黙ROLLBACK。複数processではtracker共有が必要 |
@@ -787,7 +798,10 @@
 - [x] `reqwest::Client` を `AppState` に1個保持し、POST/GETとretryでconnectionを再利用する
   - 3走中央値80,354点、直前中央値比約+33.7%、全runエラー0
 - [ ] 診断runで決済先のTCP connect回数、connection再利用率、TIME_WAITを採取する
-- [ ] 評価handlerをpool取得、SQL、外部HTTP、retry sleepへ分け、p95 / p99を採取する
+- [x] 評価handlerをpool取得、SQL、外部HTTP、retry sleepへ分け、p95 / p99を採取する
+  - connection所有平均319.754ms・p95 695.556ms、決済平均302.507ms・p95 691.875ms
+  - retry sleep平均201.719ms・p95 502.523ms、完了write平均6.417ms・p95 20.904ms
+  - 詳細: [`tuning/31-evaluation-phase-diagnostics.md`](./tuning/31-evaluation-phase-diagnostics.md)
 - [ ] 決済URLをinitialize時にメモリへ読み込み、評価ごとのsettings検索をなくす
 - [ ] ride、payment token、fareの読取りを短い区間へまとめる
 - [ ] 外部決済HTTPとretry sleep中はDB transactionを保持しない
@@ -1108,10 +1122,10 @@
 1. `CODE=26` を再現し、ベンチマーカーがresponseを受信済みの座標と
    `owner_get_chairs` が集計する座標のwatermark差を同じchairで特定する。
    再現しない間も以下のP0計測は止めない
-2. 評価APIをpool acquire、ride lock、DB準備、決済HTTP、完了write、COMMITへ分け、
-   connection保持時間とpayment retry回数を計測する
-3. 決済awaitが支配的なら、短いclaim transaction、transaction外の冪等決済、
-   短い完了transaction、失敗・crash時の回収を設計する
+2. 評価APIのphase計測は完了。connection所有平均319.754msの約94.6%が決済で、
+   retry sleepだけで平均201.719msと確認した
+3. 短い準備transaction、transaction外の冪等決済、rideを再lockする短い完了transactionへ
+   分ける。決済成功後のDB失敗は同じkeyで再開し、二重status・stats更新を防ぐ
 4. app / chair通知cache missのtransaction保持時間を計測し、
    高頻度pollが50接続を占有する割合を評価APIと分ける
 5. 長い保持区間を短縮した後もacquire待ちが残る場合だけ、pool上限を比較する。

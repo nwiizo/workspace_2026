@@ -2,6 +2,13 @@ use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum_extra::extract::CookieJar;
+use sqlx::Acquire;
+use std::io::Write as _;
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    OnceLock,
+};
+use std::time::Instant;
 use ulid::Ulid;
 
 use crate::models::{Chair, Coupon, Owner, PaymentToken, Ride, RideStatus, User};
@@ -547,6 +554,185 @@ struct AppPostRideEvaluationResponse {
     completed_at: i64,
 }
 
+const EVALUATION_DIAGNOSTIC_SAMPLE_EVERY: u64 = 8;
+static EVALUATION_DIAGNOSTIC_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+static EVALUATION_DIAGNOSTICS_ENABLED: OnceLock<bool> = OnceLock::new();
+
+#[derive(serde::Serialize)]
+struct EvaluationDiagnosticSample {
+    sequence: u64,
+    validation_us: u64,
+    pool_acquire_us: u64,
+    transaction_begin_us: u64,
+    pool_size_before: Option<u64>,
+    pool_idle_before: Option<u64>,
+    pool_in_use_before: Option<u64>,
+    ride_lock_status_us: u64,
+    tracker_begin_us: u64,
+    active_evaluations: Option<u64>,
+    same_ride_evaluations: Option<u64>,
+    preparation_us: u64,
+    payment_us: u64,
+    payment_attempts: u32,
+    payment_request_us: u64,
+    payment_retry_sleep_us: u64,
+    payment_network_errors: u32,
+    payment_conflict_errors: u32,
+    payment_server_errors: u32,
+    payment_other_status_errors: u32,
+    payment_terminal_status: Option<u16>,
+    completion_write_us: u64,
+    commit_us: u64,
+    cache_response_us: u64,
+    connection_owned_us: u64,
+    total_us: u64,
+    outcome: &'static str,
+    terminal_phase: &'static str,
+}
+
+struct EvaluationDiagnostic {
+    started_at: Instant,
+    checkpoint_at: Instant,
+    connection_acquired_at: Option<Instant>,
+    payment_started_at: Option<Instant>,
+    payment_diagnostic: crate::payment_gateway::PaymentGatewayDiagnostic,
+    sample: EvaluationDiagnosticSample,
+    emitted: bool,
+}
+
+impl EvaluationDiagnostic {
+    fn sampled() -> Option<Self> {
+        let enabled = *EVALUATION_DIAGNOSTICS_ENABLED.get_or_init(|| {
+            std::env::var_os("ISUCON_DIAGNOSTIC").as_deref() == Some(std::ffi::OsStr::new("1"))
+        });
+        if !enabled {
+            return None;
+        }
+
+        let sequence = EVALUATION_DIAGNOSTIC_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        if sequence.checked_rem(EVALUATION_DIAGNOSTIC_SAMPLE_EVERY) != Some(0) {
+            return None;
+        }
+
+        let started_at = Instant::now();
+        Some(Self {
+            started_at,
+            checkpoint_at: started_at,
+            connection_acquired_at: None,
+            payment_started_at: None,
+            payment_diagnostic: crate::payment_gateway::PaymentGatewayDiagnostic::default(),
+            sample: EvaluationDiagnosticSample {
+                sequence,
+                validation_us: 0,
+                pool_acquire_us: 0,
+                transaction_begin_us: 0,
+                pool_size_before: None,
+                pool_idle_before: None,
+                pool_in_use_before: None,
+                ride_lock_status_us: 0,
+                tracker_begin_us: 0,
+                active_evaluations: None,
+                same_ride_evaluations: None,
+                preparation_us: 0,
+                payment_us: 0,
+                payment_attempts: 0,
+                payment_request_us: 0,
+                payment_retry_sleep_us: 0,
+                payment_network_errors: 0,
+                payment_conflict_errors: 0,
+                payment_server_errors: 0,
+                payment_other_status_errors: 0,
+                payment_terminal_status: None,
+                completion_write_us: 0,
+                commit_us: 0,
+                cache_response_us: 0,
+                connection_owned_us: 0,
+                total_us: 0,
+                outcome: "error_or_cancelled",
+                terminal_phase: "validation",
+            },
+            emitted: false,
+        })
+    }
+
+    fn elapsed_since_checkpoint_us(&mut self) -> u64 {
+        let now = Instant::now();
+        let elapsed = now.duration_since(self.checkpoint_at).as_micros();
+        self.checkpoint_at = now;
+        elapsed.min(u128::from(u64::MAX)) as u64
+    }
+
+    fn connection_acquired(&mut self) {
+        self.connection_acquired_at = Some(Instant::now());
+    }
+
+    fn connection_released(&mut self) {
+        if let Some(acquired_at) = self.connection_acquired_at.take() {
+            self.sample.connection_owned_us =
+                acquired_at.elapsed().as_micros().min(u128::from(u64::MAX)) as u64;
+        }
+    }
+
+    fn sync_payment_sample(&mut self) {
+        self.sample.payment_attempts = self.payment_diagnostic.attempts();
+        self.sample.payment_request_us = self.payment_diagnostic.request_us();
+        self.sample.payment_retry_sleep_us = self.payment_diagnostic.retry_sleep_us();
+        self.sample.payment_network_errors = self.payment_diagnostic.network_errors();
+        self.sample.payment_conflict_errors = self.payment_diagnostic.conflict_errors();
+        self.sample.payment_server_errors = self.payment_diagnostic.server_errors();
+        self.sample.payment_other_status_errors = self.payment_diagnostic.other_status_errors();
+        self.sample.payment_terminal_status = self.payment_diagnostic.terminal_status();
+    }
+
+    fn payment_started(&mut self) {
+        self.payment_started_at = Some(Instant::now());
+    }
+
+    fn payment_finished(&mut self) {
+        if let Some(started_at) = self.payment_started_at.take() {
+            let now = Instant::now();
+            self.sample.payment_us = now
+                .duration_since(started_at)
+                .as_micros()
+                .min(u128::from(u64::MAX)) as u64;
+            self.checkpoint_at = now;
+        }
+    }
+
+    fn emit_record(&mut self) {
+        self.emitted = true;
+        if self.payment_started_at.is_some() {
+            self.payment_finished();
+        }
+        self.sync_payment_sample();
+        if self.connection_acquired_at.is_some() {
+            self.connection_released();
+        }
+        self.sample.total_us = self
+            .started_at
+            .elapsed()
+            .as_micros()
+            .min(u128::from(u64::MAX)) as u64;
+        if let Ok(json) = serde_json::to_string(&self.sample) {
+            let _ = writeln!(std::io::stdout().lock(), "EVALUATION_DIAGNOSTIC {json}");
+        }
+    }
+
+    fn emit_success(mut self) {
+        self.sample.outcome = "success";
+        self.sample.terminal_phase = "complete";
+        self.emit_record();
+    }
+}
+
+impl Drop for EvaluationDiagnostic {
+    fn drop(&mut self) {
+        if !self.emitted {
+            self.emit_record();
+        }
+    }
+}
+
 async fn app_post_ride_evaluation(
     State(AppState {
         pool,
@@ -559,11 +745,31 @@ async fn app_post_ride_evaluation(
     Path((ride_id,)): Path<(String,)>,
     axum::Json(req): axum::Json<AppPostRideEvaluationRequest>,
 ) -> Result<Response, Error> {
+    let mut diagnostic = EvaluationDiagnostic::sampled();
     if req.evaluation < 1 || req.evaluation > 5 {
         return Err(Error::BadRequest("evaluation must be between 1 and 5"));
     }
 
-    let mut tx = pool.begin().await?;
+    if let Some(diagnostic) = &mut diagnostic {
+        diagnostic.sample.validation_us = diagnostic.elapsed_since_checkpoint_us();
+        let pool_size = u64::from(pool.size());
+        let pool_idle = u64::try_from(pool.num_idle()).unwrap_or(u64::MAX);
+        diagnostic.sample.pool_size_before = Some(pool_size);
+        diagnostic.sample.pool_idle_before = Some(pool_idle);
+        diagnostic.sample.pool_in_use_before = Some(pool_size.saturating_sub(pool_idle));
+        diagnostic.sample.terminal_phase = "pool_acquire";
+    }
+    let mut connection = pool.acquire().await?;
+    if let Some(diagnostic) = &mut diagnostic {
+        diagnostic.connection_acquired();
+        diagnostic.sample.pool_acquire_us = diagnostic.elapsed_since_checkpoint_us();
+        diagnostic.sample.terminal_phase = "transaction_begin";
+    }
+    let mut tx = connection.begin().await?;
+    if let Some(diagnostic) = &mut diagnostic {
+        diagnostic.sample.transaction_begin_us = diagnostic.elapsed_since_checkpoint_us();
+        diagnostic.sample.terminal_phase = "ride_lock_status";
+    }
 
     let Some(ride): Option<Ride> =
         sqlx::query_as("SELECT * FROM rides WHERE id = ? AND user_id = ? FOR UPDATE")
@@ -579,6 +785,10 @@ async fn app_post_ride_evaluation(
     if status != "ARRIVED" {
         return Err(Error::BadRequest("not arrived yet"));
     }
+    if let Some(diagnostic) = &mut diagnostic {
+        diagnostic.sample.ride_lock_status_us = diagnostic.elapsed_since_checkpoint_us();
+        diagnostic.sample.terminal_phase = "tracker_begin";
+    }
 
     // The evaluation transaction also performs an external payment request.
     // Keep the assigned chair unavailable after the DB commit until Axum has
@@ -593,6 +803,16 @@ async fn app_post_ride_evaluation(
         .chair_id
         .clone()
         .ok_or(Error::BadRequest("chair not assigned"))?;
+    if let Some(diagnostic) = &mut diagnostic {
+        let (active_evaluations, same_ride_evaluations) =
+            active_ride_evaluations.diagnostic_counts(&ride_id);
+        diagnostic.sample.active_evaluations =
+            Some(u64::try_from(active_evaluations).unwrap_or(u64::MAX));
+        diagnostic.sample.same_ride_evaluations =
+            Some(u64::try_from(same_ride_evaluations).unwrap_or(u64::MAX));
+        diagnostic.sample.tracker_begin_us = diagnostic.elapsed_since_checkpoint_us();
+        diagnostic.sample.terminal_phase = "preparation";
+    }
 
     let Some(payment_token): Option<PaymentToken> =
         sqlx::query_as("SELECT * FROM payment_tokens WHERE user_id = ?")
@@ -619,14 +839,31 @@ async fn app_post_ride_evaluation(
             .fetch_one(&mut *tx)
             .await?;
 
-    crate::payment_gateway::request_payment_gateway_post_payment(
+    if let Some(diagnostic) = &mut diagnostic {
+        diagnostic.sample.preparation_us = diagnostic.elapsed_since_checkpoint_us();
+        diagnostic.sample.terminal_phase = "payment";
+        diagnostic.payment_started();
+    }
+    let payment_diagnostic = diagnostic
+        .as_mut()
+        .map(|diagnostic| &mut diagnostic.payment_diagnostic);
+    let payment_result = crate::payment_gateway::request_payment_gateway_post_payment(
         &payment_client,
         &payment_gateway_url,
         &payment_token.token,
         &ride_id,
         &crate::payment_gateway::PaymentGatewayPostPaymentRequest { amount: fare },
+        payment_diagnostic,
     )
-    .await?;
+    .await;
+    if let Some(diagnostic) = &mut diagnostic {
+        diagnostic.payment_finished();
+        diagnostic.sync_payment_sample();
+    }
+    payment_result?;
+    if let Some(diagnostic) = &mut diagnostic {
+        diagnostic.sample.terminal_phase = "completion_write";
+    }
 
     sqlx::query("INSERT INTO ride_statuses (id, ride_id, status) VALUES (?, ?, ?)")
         .bind(Ulid::new().to_string())
@@ -676,7 +913,19 @@ ON DUPLICATE KEY UPDATE
         return Err(Error::NotFound("ride not found"));
     }
 
+    if let Some(diagnostic) = &mut diagnostic {
+        diagnostic.sample.completion_write_us = diagnostic.elapsed_since_checkpoint_us();
+        diagnostic.sample.terminal_phase = "commit";
+    }
     tx.commit().await?;
+    if let Some(diagnostic) = &mut diagnostic {
+        diagnostic.sample.commit_us = diagnostic.elapsed_since_checkpoint_us();
+    }
+    drop(connection);
+    if let Some(diagnostic) = &mut diagnostic {
+        diagnostic.connection_released();
+        diagnostic.sample.terminal_phase = "cache_response";
+    }
     notification_cache.invalidate_app(&user.id);
     notification_cache.invalidate_chair(&chair_id);
     notification_cache.invalidate_chair_stats(&chair_id);
@@ -686,6 +935,10 @@ ON DUPLICATE KEY UPDATE
         completed_at: completed_at.timestamp_millis(),
     })
     .into_response();
+    if let Some(mut diagnostic) = diagnostic {
+        diagnostic.sample.cache_response_us = diagnostic.elapsed_since_checkpoint_us();
+        diagnostic.emit_success();
+    }
 
     Ok(crate::hold_active_evaluation_until_response_drop(
         response,

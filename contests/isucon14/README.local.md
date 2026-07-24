@@ -59,6 +59,7 @@ git -C "$source_dir/isucon14" archive HEAD | tar -x -C contests/isucon14
 | `scripts/benchmark.sh` | 決済モックを含む公式ベンチマーカーの実行 |
 | `scripts/report-endpoint-latency.sh` | 診断runのnginx timing logをendpoint別に集計 |
 | `scripts/report-coordinate-phases.sh` | 診断runのcoordinate phase、row lock、current-state writeを集計 |
+| `scripts/report-evaluation-phases.sh` | 診断runの評価APIをpool、DB、決済HTTP、retry sleep、完了writeへ分解 |
 | `.dockerignore` / `webapp/rust/.dockerignore` | Dockerへ不要なソース・`target/` を送らない |
 
 ## 初期構築方法
@@ -242,13 +243,14 @@ diagnostic_since=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 ISUCON_DIAGNOSTIC=1 ./scripts/benchmark.sh 60
 DIAGNOSTIC_SINCE="$diagnostic_since" ./scripts/report-endpoint-latency.sh
 DIAGNOSTIC_SINCE="$diagnostic_since" ./scripts/report-coordinate-phases.sh
+DIAGNOSTIC_SINCE="$diagnostic_since" ./scripts/report-evaluation-phases.sh
 ```
 
 `ISUCON_DIAGNOSTIC=1` は
 [`compose.diagnostics.yaml`](./compose.diagnostics.yaml) から
 [`docker/nginx.diagnostic.conf`](./docker/nginx.diagnostic.conf) をmountし、APIのmethod、
 URI、status、request time、upstream response time、request / response bytesを
-JSONでstdoutへ記録します。同じoverlayがRust webappのcoordinate phase samplingも
+JSONでstdoutへ記録します。同じoverlayがRust webappのcoordinateとevaluationのphase samplingも
 有効にします。64 requestに1件について、pool取得、SQL `BEGIN`、履歴INSERT、
 current-state write、ride検索、status遷移、COMMIT、cache更新を分け、
 成功・error / cancellationと最後のphaseをJSONで記録します。
@@ -443,6 +445,19 @@ transaction内で待つため、次のphase計測対象です。pool上限とCPU
 いません。詳細は
 [`tuning/30-coordinate-pool-acquisition.md`](./tuning/30-coordinate-pool-acquisition.md)を
 参照してください。
+
+Benchmark 31では評価APIを8 requestに1件samplingし、pool acquire、SQL `BEGIN`、
+ride lock、DB準備、決済HTTP、retry sleep、完了write、`COMMIT`へ分けました。
+成功203 sampleで、connection所有平均319.754msのうち決済が302.507ms、約94.6%でした。
+決済内ではHTTP request合計が平均100.785ms、5xx後のretry sleepが201.719msです。
+203 sampleの決済は合計608 attempts、途中5xx 405回、すべて最終204でした。
+最大active評価は38で、acquire直前の84.7%がpool size 50・idle 0でした。
+このためpool上限は変更せず、短い準備transaction、transaction外の冪等決済、
+rideを再lockする短い完了transactionへ分けます。診断runは `pass=true`・114,109点ですが、
+instrumentation付き1走なので通常得点の推定には使いません。詳細は
+[`tuning/31-evaluation-phase-diagnostics.md`](./tuning/31-evaluation-phase-diagnostics.md)を
+参照してください。
+
 過去のBenchmark 19では、診断runで `CARRYING` の後に古い `PICKUP` を返す
 CODE=11を再現したため、
 通知と最新statusの順序をwall-clockではなくENUMの状態遷移順へ変更しました。

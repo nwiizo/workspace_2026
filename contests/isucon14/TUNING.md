@@ -80,10 +80,10 @@
 | pending rideと空き椅子のbatch matching | 最大64件、近傍優先まで実装済み | 地域間の距離上限、実行間隔、二部マッチングを比較 |
 | JSON通知のcache | recipient revisionとchair stats dependency revision付きprocess cacheを実装。未送信status中は30ms、定常cacheは100ms | response ACKなしの配送lossを故障注入し、cache missのp95分解とDB connectionを保持しないlong pollingをSSEより先に比較 |
 | 座標更新の非同期・bulk INSERT | 通常経路を4 SQLから2 SQLへ削減。pickup / destination候補だけlockし、statusをcurrent readする | per-chair順序付きqueueと3秒以内のbulk反映を実験 |
-| 決済HTTP client | process内で1個を共有し、冪等なPOST / retryでconnection poolを再利用済み | TCP connect回数とstatus別retry数を診断runで採取 |
-| 決済の `Idempotency-Key` | ride IDを全POSTへ設定し、確認GETとuser全ride取得を削除済み | pending状態とcrash recoveryを設計し、外部HTTPをDB transaction外へ出す |
+| 決済HTTP client | process内で1個を共有し、冪等なPOST / retryでconnection poolを再利用済み。診断203 sampleは608 attempts、途中5xx 405回、最終204 | TCP connect回数とconnection再利用率を採取 |
+| 決済の `Idempotency-Key` | ride IDを全POSTへ設定し、確認GETとuser全ride取得を削除済み | 短い準備transaction、transaction外の決済、再lockする完了transactionへ分ける |
 | 招待登録 | 招待者のUNIQUE行を `FOR UPDATE` して同一コードだけを直列化。couponは `COUNT(*)`、reward codeは新規user IDで一意化 | 上限が増えてCOUNTが支配的になった場合だけ、条件付きcounter UPDATEを比較 |
-| SQLx connection pool | 上限50。coordinate診断sampleの78.1%でsize 50 / idle 0、acquire p95 113.156msに対しSQL BEGIN p95 2.327ms | 評価APIのDB準備・決済HTTP・完了write・COMMITを分け、長い保持元を先に短縮する |
+| SQLx connection pool | 上限50。評価診断sampleの84.7%でsize 50 / idle 0。評価のconnection所有平均319.754msの約94.6%が外部決済 | 決済中のconnection保持を除き、その後も残るacquire待ちだけを再計測する |
 
 SSEは形式だけ変更しても、DB query数とpayload生成量が同じなら効果が薄いと考えます。
 Benchmark 26ではJSON payload cacheと状態不変時だけ100msにするpollingを実装し、
@@ -902,6 +902,7 @@ amountを記録するため、ride IDを同じkeyとして再利用すれば、�
 | [28-username-collision-retry.md](./tuning/28-username-collision-retry.md) | `users.username` のMySQL 1062だけを内部usernameで1回再試行 | 3走103,738–107,508点、推定代表値の中央値104,263点、全run `pass=true`、`CODE=17` 0件 | 実測n=3。Benchmark 26中央値比-4.7%のため高速化とは扱わず、通常経路の追加SQLなしで稀な登録失敗を防ぐ正当性修正として採用。`CODE=26` 0 / 136 / 142件は次のP0 |
 | [29-invitation-concurrency.md](./tuning/29-invitation-concurrency.md) | 招待者のUNIQUE行を直列化地点にし、coupon gap deadlockとreward codeのミリ秒衝突を除去 | 3走99,775–105,304点、推定代表値の中央値102,569点、全run `pass=true`・error map空 | 実測n=3。Benchmark 28中央値比-1.6%のため高速化とは扱わない。24種類の同時登録、同一codeの3成功・1拒否、MySQL 1062 / 1213増分0を根拠に正当性修正として採用 |
 | [30-coordinate-pool-acquisition.md](./tuning/30-coordinate-pool-acquisition.md) | coordinateの `pool.begin()` をpool acquireとSQL BEGINへ分離 | acquire p95 113.156ms、BEGIN p95 2.327ms。1,173 sampleの78.1%でsize 50 / idle 0。この群のacquire平均54.762msに対しidleあり群は3.968ms | 診断instrumentation付き実測n=1・未推定。score 124,064、`pass=true`・error map空。current write支配仮説を棄却し、長時間connectionを保持する評価APIを次にphase分解 |
+| [31-evaluation-phase-diagnostics.md](./tuning/31-evaluation-phase-diagnostics.md) | 評価APIをpool、DB準備、決済HTTP、retry sleep、完了write、COMMITへ分解 | connection所有平均319.754msのうち決済302.507ms、retry sleep 201.719ms。203 sampleで5xx 405回、最大active評価38 | 診断instrumentation付き実測n=1・未推定。score 114,109、`pass=true`・error map空。決済中のconnection保持を外す仮説を支持 |
 | [80-rust-implementation.md](./tuning/80-rust-implementation.md) | Rust / sqlxとrelease buildの知識 | 再build 30分52秒→11.02秒 | build時間の実測。スコア推定対象外 |
 | [81-evaluation-authorization.md](./tuning/81-evaluation-authorization.md) | 評価rideを認証ユーザー所有へ制限 | 公式prevalidation `pass=true`、別ユーザーHTTP回帰成功 | 正当性修正。60秒スコアはBenchmark 20から更新しない |
 | [90-local-environment.md](./tuning/90-local-environment.md) | build context、BuildKit、固定Colima資源 | context 467MB→32.5KB | sizeの実測。スコア推定対象外 |
