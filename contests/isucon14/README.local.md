@@ -212,6 +212,7 @@ RESET=1 ./scripts/down.sh
 | 座標更新のDB往復削減後 | `pass=true`、スコア11,599、`CODE=17` 2件 |
 | coupon code INDEX追加後 | `pass=true`、スコア15,415、エラー0 |
 | 通知polling間隔比較 | 30msを維持。100msは14,611、50msは6,986・`CODE=31` 1件 |
+| matcher間隔比較 | 500msを維持。100ms中央値53,943.5、30msは41,016 |
 
 初回の初期60秒走行ではMySQLのqueryが十数秒以上へ遅延し、ベンチマーカーの期限を
 超えました。同じ初期revisionを外部コンテナの大きな共有負荷がない条件で再計測

@@ -116,6 +116,7 @@ matcherは単純なマンハッタン距離だけでなく、椅子モデルのs
 | [08-coordinate-hot-path.md](./tuning/08-coordinate-hot-path.md) | 座標更新の通常経路を4 SQLから2 SQLへ削減 | `pass=true`、スコア11,599、`CODE=17` 2件 |
 | [09-coupon-code-index.md](./tuning/09-coupon-code-index.md) | 招待coupon検索の全走査とlock範囲を削減 | `pass=true`、スコア15,415、エラー0 |
 | [10-notification-retry-interval.md](./tuning/10-notification-retry-interval.md) | 通知pollingを30 / 50 / 100msで比較 | 30msを維持、50 / 100msは不採用 |
+| [11-matcher-interval.md](./tuning/11-matcher-interval.md) | matcherを500 / 100 / 30msで比較 | 500msを維持、30msは41,016点へ悪化 |
 | [80-rust-implementation.md](./tuning/80-rust-implementation.md) | Rust / sqlxとrelease buildの知識 | 再build 30分52秒→11.02秒 |
 | [90-local-environment.md](./tuning/90-local-environment.md) | build context、BuildKit、固定Colima資源 | context 467MB→32.5KB |
 

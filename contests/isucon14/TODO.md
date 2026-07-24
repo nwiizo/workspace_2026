@@ -363,7 +363,11 @@
 - [x] 1回のbatchで同じchairを2件へ割り当てない
 - [x] oldest ride優先を維持する
 - [x] `is_active = TRUE` をDB matcherの不変条件にする
-- [ ] matcher間隔を500 / 100 / 30msで比較し、matching latencyとDB負荷を測る
+- [x] matcher間隔を500 / 100 / 30msで比較し、matching latencyとDB負荷を測る
+  - 500ms対照: 53,198点、matching不満足度9.5%
+  - 100ms: 54,172 / 53,715点、中央値53,943.5点
+  - 30ms: 41,016点、matching不満足度0.2%だが最終評価数560へ低下
+  - 局所的な割当待ちは短縮しても総得点が下がるため、500msを維持
 - [ ] CODE=32または未マッチ滞留が悪化したら、他のP1施策よりmatcherを繰り上げる
 - [x] 乗車地点に近い椅子を優先するthroughput重視policyを計測する
 - [ ] 2地域をまたぐ遠距離割当を避ける距離上限を設け、近隣椅子がないrideは次batchへ保留する
