@@ -23,6 +23,10 @@
 
 通知は短い間隔でpollingされます。この内側で遅い処理を行うと、1 requestだけでなくMySQL connection poolを待つ他requestにも影響します。
 
+![通知polling内の統計queryがconnection poolを長く占有する場合と早く返す場合](./images/notification-stats-pool-impact.webp)
+
+_高頻度経路では、1回の差だけでなく「connectionを保持する時間 × 同時request数」が他APIの待ちへ波及します。_
+
 ## 変更前のN+1
 
 変更前の `get_chair_stats` は次を行いました。
@@ -34,6 +38,10 @@
 5. Rustで平均を計算
 
 chairに `R` 件のrideがあれば、SQLは `1 + R` 回です。通知transactionを開いたまま直列にqueryするため、履歴が増えるほどconnectionを長く専有します。
+
+![rideごとのstatus取得を繰り返すN+1と、1回の集約SQLで統計を返す方式](./images/chair-stats-n-plus-one-vs-aggregate.webp)
+
+_RustとMySQLをrideごとに往復せず、対象rideとstatusをDB内でまとめて1行の件数・平均へ集約します。_
 
 ## 実装したSQL
 
@@ -57,6 +65,10 @@ FROM (
 内側queryはride単位にstatusをまとめ、必要な3状態が1件以上あるrideだけを残します。外側queryが件数と平均を1行へ集約します。rideが0件でも `COUNT(*)` は0、`AVG` はNULLになるため、`COALESCE(..., 0)` で従来どおり平均0.0を返します。
 
 `AVG(INT)` はMySQLではDECIMAL系になり得ます。response fieldはRustの `f64` なので、`CAST(... AS DOUBLE)` をSQLに明記し、sqlxのdecode型を曖昧にしません。
+
+![必要な3状態をすべて持つrideだけを残し、件数と平均へ集約する流れ](./images/chair-stats-state-gate.webp)
+
+_ride単位にstatusをまとめ、必要な状態が欠けるrideを除外してから `COUNT` と `AVG` を計算します。_
 
 ## 実行計画
 

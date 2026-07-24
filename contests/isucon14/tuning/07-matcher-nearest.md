@@ -59,6 +59,10 @@ distance = |ride_latitude - chair_latitude|
 
 最小のchairを割り当てたら候補vectorから `swap_remove` し、同じbatchで再利用しません。最大64×64回の整数計算は4,096回で、DB queryを増やすより十分小さい処理です。
 
+![最古rideから順に候補chairとの距離を比べ、最も近い1台を候補から外す流れ](./images/matcher-nearest-greedy.webp)
+
+_各rideについてマンハッタン距離が最小のchairを選び、割当済みのchairを候補から除いて次のrideへ進みます。_
+
 ## なぜDBだけで最適化しなかったか
 
 SQLでrideとchairの全組合せを作り、距離順に順位を付ける方法もあります。しかし64×64の組合せをDBでmaterializeし、さらに「1 chairは1 rideだけ」という割当制約を解くqueryは複雑です。
@@ -68,6 +72,10 @@ SQLでrideとchairの全組合せを作り、距離順に順位を付ける方�
 - MySQL: pending・active・空き・最新位置という正しい候補集合を作り、行をlockする
 - Rust: 小さい候補集合に対して距離計算と貪欲割当を行う
 
+![MySQLが正しい候補集合を絞り、Rustが小さい集合の距離計算と割当を担う境界](./images/matcher-db-rust-responsibility.webp)
+
+_大量データのfilterとclaimはMySQLへ、小さな候補集合の組合せ計算はRustへ分け、全組合せの巨大な中間表を避けます。_
+
 この形なら既存の `calculate_distance` を再利用でき、距離定義もnearby APIと一致します。
 
 ## 貪欲法の性質
@@ -75,6 +83,10 @@ SQLでrideとchairの全組合せを作り、距離順に順位を付ける方�
 最古rideから「その時点で最も近いchair」を選ぶ方法を貪欲法と呼びます。各rideには良い選択ですが、batch全体の距離合計が必ず最小になるとは限りません。
 
 たとえばride Aがchair XとYのどちらにも近く、ride BはXにしか近くない場合、AへXを先に渡すとBが遠いYを使うことがあります。全体最適には二部マッチングやHungarian algorithmなどが候補です。
+
+![各rideの局所的な最短選択がbatch全体の距離最小にならない例](./images/matcher-greedy-vs-global.webp)
+
+_貪欲法はその時点の近さを選ぶため高速ですが、2組以上を同時に見れば総距離をさらに短くできる場合があります。_
 
 今回は次の理由で貪欲法を選びました。
 
