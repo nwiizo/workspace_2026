@@ -122,11 +122,11 @@ async fn chair_post_coordinate(
     #[derive(sqlx::FromRow)]
     struct CurrentRide {
         id: String,
+        evaluation: Option<i32>,
         pickup_latitude: i32,
         pickup_longitude: i32,
         destination_latitude: i32,
         destination_longitude: i32,
-        status: String,
     }
 
     let mut tx = pool.begin().await?;
@@ -147,17 +147,11 @@ async fn chair_post_coordinate(
     let ride: Option<CurrentRide> = sqlx::query_as(
         r#"
 SELECT rides.id,
+       rides.evaluation,
        rides.pickup_latitude,
        rides.pickup_longitude,
        rides.destination_latitude,
-       rides.destination_longitude,
-       (
-           SELECT ride_statuses.status
-           FROM ride_statuses
-           WHERE ride_statuses.ride_id = rides.id
-           ORDER BY ride_statuses.created_at DESC
-           LIMIT 1
-       ) AS status
+       rides.destination_longitude
 FROM rides
 WHERE rides.chair_id = ?
 ORDER BY rides.updated_at DESC
@@ -168,29 +162,41 @@ LIMIT 1
     .fetch_optional(&mut *tx)
     .await?;
     if let Some(ride) = ride {
-        if ride.status != "COMPLETED" && ride.status != "CANCELED" {
-            if req.latitude == ride.pickup_latitude
-                && req.longitude == ride.pickup_longitude
-                && ride.status == "ENROUTE"
-            {
-                sqlx::query("INSERT INTO ride_statuses (id, ride_id, status) VALUES (?, ?, ?)")
-                    .bind(Ulid::new().to_string())
-                    .bind(&ride.id)
-                    .bind("PICKUP")
-                    .execute(&mut *tx)
-                    .await?;
-            }
+        let is_pickup =
+            req.latitude == ride.pickup_latitude && req.longitude == ride.pickup_longitude;
+        let is_destination = req.latitude == ride.destination_latitude
+            && req.longitude == ride.destination_longitude;
 
-            if req.latitude == ride.destination_latitude
-                && req.longitude == ride.destination_longitude
-                && ride.status == "CARRYING"
-            {
-                sqlx::query("INSERT INTO ride_statuses (id, ride_id, status) VALUES (?, ?, ?)")
-                    .bind(Ulid::new().to_string())
+        if ride.evaluation.is_none() && (is_pickup || is_destination) {
+            let evaluation: Option<i32> =
+                sqlx::query_scalar("SELECT evaluation FROM rides WHERE id = ? FOR UPDATE")
                     .bind(&ride.id)
-                    .bind("ARRIVED")
-                    .execute(&mut *tx)
+                    .fetch_one(&mut *tx)
                     .await?;
+            // The earlier current-ride query is a consistent read and can establish a
+            // REPEATABLE READ snapshot before this request waits for the ride lock.
+            // Use a locking read here so the transition decision sees the status
+            // committed by the previous ride-lock holder instead of that old snapshot.
+            let latest_status: String = sqlx::query_scalar(
+                "SELECT status FROM ride_statuses WHERE ride_id = ? ORDER BY created_at DESC LIMIT 1 FOR UPDATE",
+            )
+            .bind(&ride.id)
+            .fetch_one(&mut *tx)
+            .await?;
+            let next_status = match latest_status.as_str() {
+                "ENROUTE" if is_pickup => Some("PICKUP"),
+                "CARRYING" if is_destination => Some("ARRIVED"),
+                _ => None,
+            };
+            if evaluation.is_none() {
+                if let Some(next_status) = next_status {
+                    sqlx::query("INSERT INTO ride_statuses (id, ride_id, status) VALUES (?, ?, ?)")
+                        .bind(Ulid::new().to_string())
+                        .bind(&ride.id)
+                        .bind(next_status)
+                        .execute(&mut *tx)
+                        .await?;
+                }
             }
         }
     }
@@ -322,10 +328,20 @@ async fn chair_post_ride_status(
     if ride.chair_id.is_none_or(|chair_id| chair_id != chair.id) {
         return Err(Error::BadRequest("not assigned to this ride"));
     }
+    if ride.evaluation.is_some() {
+        return Err(Error::BadRequest("ride already completed"));
+    }
 
     match req.status.as_str() {
         // Acknowledge the ride
         "ENROUTE" => {
+            let status = crate::get_latest_ride_status(&mut *tx, &ride.id).await?;
+            if status == "ENROUTE" {
+                return Ok(StatusCode::NO_CONTENT);
+            }
+            if status != "MATCHING" {
+                return Err(Error::BadRequest("ride is not waiting for acknowledgment"));
+            }
             sqlx::query("INSERT INTO ride_statuses (id, ride_id, status) VALUES (?, ?, ?)")
                 .bind(Ulid::new().to_string())
                 .bind(ride.id)

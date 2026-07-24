@@ -451,7 +451,7 @@ async fn app_post_ride_evaluation(
 
     let mut tx = pool.begin().await?;
 
-    let Some(ride): Option<Ride> = sqlx::query_as("SELECT * FROM rides WHERE id = ?")
+    let Some(ride): Option<Ride> = sqlx::query_as("SELECT * FROM rides WHERE id = ? FOR UPDATE")
         .bind(&ride_id)
         .fetch_optional(&mut *tx)
         .await?
@@ -773,13 +773,7 @@ WHERE chairs.is_active = TRUE
       SELECT 1
       FROM rides
       WHERE rides.chair_id = chairs.id
-        AND COALESCE((
-            SELECT ride_statuses.status
-            FROM ride_statuses
-            WHERE ride_statuses.ride_id = rides.id
-            ORDER BY ride_statuses.created_at DESC
-            LIMIT 1
-        ), '') <> 'COMPLETED'
+        AND rides.evaluation IS NULL
   )
         "#,
     )
