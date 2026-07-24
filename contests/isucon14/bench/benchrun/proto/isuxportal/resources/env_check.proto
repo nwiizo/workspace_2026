@@ -1,0 +1,25 @@
+syntax = "proto3";
+package isuxportal.proto.resources;
+
+
+import "google/protobuf/timestamp.proto";
+
+enum EnvCheckStatus {
+  PREPARING = 0;
+  NOT_STARTED = 1;
+  CREATED_INSTANCE = 2; // obtained instance ip successfully
+  DONE = 3; // confirmed ssh
+}
+
+message EnvCheck {
+  int64 id = 1;
+  int64 team_id = 2;
+  string name = 3;
+  string ip_address = 4;
+  bool passed = 5;
+  string message = 6;
+  string admin_message = 7;
+  string raw_data = 8;
+  google.protobuf.Timestamp created_at = 9;
+  google.protobuf.Timestamp updated_at = 10;
+}

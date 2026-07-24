@@ -1,0 +1,11 @@
+syntax = "proto3";
+package isuxportal.proto.services.contestant;
+
+
+import "isuxportal/resources/contestant_instance.proto";
+
+message ListContestantInstancesRequest {}
+
+message ListContestantInstancesResponse {
+  repeated isuxportal.proto.resources.ContestantInstance contestant_instances = 1;
+}

@@ -1,0 +1,84 @@
+name: Node CI
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - bench/**/*
+      - webapp/nodejs/**/*
+      - .github/workflows/node.yml
+      - development/compose-node.yml
+      - development/dockerfiles/Dockerfile.node
+  pull_request:
+    paths:
+      - bench/**/*
+      - webapp/nodejs/**/*
+      - .github/workflows/node.yml
+      - development/compose-node.yml
+      - development/dockerfiles/Dockerfile.node
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build
+    runs-on: codebuild-problem-github-actions-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: 'bench/go.mod'
+          cache-dependency-path: |
+            ./bench/go.sum
+      - name: Install Task
+        uses: arduino/setup-task@v2
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/setup-buildx-action@v3
+        with:
+          driver-opts: image=mirror.gcr.io/moby/buildkit:buildx-stable-1
+          buildkitd-config-inline: |
+            [registry."docker.io"]
+              mirrors = ["mirror.gcr.io"]
+      - name: Build webapp
+        uses: docker/bake-action@v5
+        with:
+          push: false
+          load: true
+          workdir: ./development
+          files: compose-node.yml
+          set: |
+            webapp.cache-from=type=gha,scope=webapp-node-cache
+            webapp.cache-to=type=gha,scope=webapp-node-cache,mode=max
+      - uses: pnpm/action-setup@v4
+        name: Install pnpm
+        with:
+          version: 9
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: "frontend/pnpm-lock.yaml"
+      - name: Build bench
+        working-directory: ./bench
+        run: |
+          task gen-frontend
+          task build
+      - name: Setup webapp/node
+        working-directory: ./development
+        run: |
+          sudo docker compose -f compose-node.yml up -d --wait
+      - name: sleep
+        run: sleep 20
+      - name: Run bench
+        working-directory: ./bench
+        run: |
+          task run-local -- --fail-on-error --payment-url http://host.docker.internal:12345
+      - name: Down webapp/go
+        working-directory: ./development
+        if: ${{ always() }}
+        run: |
+          sudo docker compose -f compose-node.yml down -v

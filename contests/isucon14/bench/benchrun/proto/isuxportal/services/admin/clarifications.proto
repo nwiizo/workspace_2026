@@ -1,0 +1,43 @@
+syntax = "proto3";
+package isuxportal.proto.services.admin;
+
+
+import "isuxportal/resources/clarification.proto";
+
+message ListClarificationsQuery {
+  // optional to filter
+  int64 team_id = 1;
+  bool unanswered_only = 2;
+}
+
+message ListClarificationsResponse {
+  repeated isuxportal.proto.resources.Clarification clarifications = 1;
+}
+
+message GetClarificationQuery { int64 id = 1; }
+
+message GetClarificationResponse {
+  isuxportal.proto.resources.Clarification clarification = 1;
+}
+
+message RespondClarificationRequest {
+  int64 id = 1;
+  bool disclose = 2;
+  string answer = 3;
+  // optional to override original question
+  string question = 4;
+}
+
+message RespondClarificationResponse {
+  isuxportal.proto.resources.Clarification clarification = 1;
+}
+
+message CreateClarificationRequest {
+  string answer = 2;
+  string question = 3;
+  int64 team_id = 4;
+}
+
+message CreateClarificationResponse {
+  isuxportal.proto.resources.Clarification clarification = 1;
+}

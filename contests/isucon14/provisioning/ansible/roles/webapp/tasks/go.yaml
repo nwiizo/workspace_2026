@@ -1,0 +1,28 @@
+---
+- name: Mkdir webapp for go
+  become: true
+  become_user: isucon
+  ansible.builtin.file:
+    path: /home/isucon/webapp/go
+    state: directory
+
+- name: Build isuride-go
+  become: true
+  become_user: isucon
+  shell: |
+    /home/isucon/local/golang/bin/go build -o /home/isucon/webapp/go/isuride -ldflags "-s -w"
+  args:
+    chdir: /home/isucon/webapp/go
+
+- name: Put systemd service
+  become: true
+  ansible.builtin.copy:
+    src: isuride-go.service
+    dest: /etc/systemd/system/
+
+- name: Start webapp
+  become: true
+  service:
+    name: isuride-go
+    enabled: true
+    state: restarted

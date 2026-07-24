@@ -1,0 +1,10 @@
+syntax = "proto3";
+package isuxportal.proto.resources;
+
+
+message Coupon {
+    int64 id = 1;
+    int64 team_id = 2;
+    repeated string code = 3;
+    bool activate = 4;
+}

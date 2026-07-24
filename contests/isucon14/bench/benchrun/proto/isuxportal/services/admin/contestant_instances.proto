@@ -1,0 +1,15 @@
+syntax = "proto3";
+package isuxportal.proto.services.admin;
+
+
+import "isuxportal/resources/contestant_instance.proto";
+
+message ListContestantInstancesQuery {
+  // optional filter by team_id
+  int64 team_id = 1;
+}
+
+message ListContestantInstancesResponse {
+  repeated isuxportal.proto.resources.ContestantInstance contestant_instances =
+      1;
+}

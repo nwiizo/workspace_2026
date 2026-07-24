@@ -1,0 +1,27 @@
+syntax = "proto3";
+package isuxportal.proto.services.contestant;
+
+
+import "isuxportal/resources/benchmark_job.proto";
+
+message ListBenchmarkJobsQuery { int64 limit = 1; }
+
+message ListBenchmarkJobsResponse {
+  repeated isuxportal.proto.resources.BenchmarkJob jobs = 1;
+}
+
+message EnqueueBenchmarkJobRequest {
+  // target ContestantInstance id
+  int64 target_id = 1;
+}
+
+message EnqueueBenchmarkJobResponse {
+  isuxportal.proto.resources.BenchmarkJob job = 1;
+}
+
+// Query parameter
+message GetBenchmarkJobQuery { int64 id = 1; }
+
+message GetBenchmarkJobResponse {
+  isuxportal.proto.resources.BenchmarkJob job = 1;
+}

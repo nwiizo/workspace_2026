@@ -1,0 +1,15 @@
+syntax = "proto3";
+package isuxportal.proto.misc;
+
+
+message BypassTokenPayload {
+  string filler = 1;
+  int64 expiry = 2;
+  enum Usage {
+    CREATE_TEAM = 0;
+    JOIN_TEAM = 1;
+    HIDDEN_TEAM = 2;
+    LEAVE_TEAM = 3;
+  }
+  repeated Usage usages = 3;
+}

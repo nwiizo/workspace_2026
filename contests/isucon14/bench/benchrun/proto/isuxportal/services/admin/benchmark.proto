@@ -1,0 +1,44 @@
+syntax = "proto3";
+package isuxportal.proto.services.admin;
+
+
+import "isuxportal/resources/benchmark_job.proto";
+
+message ListBenchmarkJobsQuery {
+  // optional filter by team_id
+  int64 team_id = 1;
+  // optional filter by status
+  isuxportal.proto.resources.BenchmarkJob.Status status = 2;
+  // optional paganation
+  int64 page = 3;
+  // return only failed
+  bool failed_only = 4;
+}
+
+message ListBenchmarkJobsResponse {
+  repeated isuxportal.proto.resources.BenchmarkJob jobs = 1;
+  int64 max_page = 2;
+}
+
+message EnqueueBenchmarkJobRequest {
+  int64 team_id = 1;
+  // target ContestantInstance id
+  int64 target_id = 2;
+}
+
+message EnqueueBenchmarkJobResponse {
+  isuxportal.proto.resources.BenchmarkJob job = 1;
+}
+
+message CancelBenchmarkJobQuery { int64 id = 1; }
+
+message CancelBenchmarkJobResponse {
+  isuxportal.proto.resources.BenchmarkJob job = 1;
+}
+
+// Query parameter
+message GetBenchmarkJobQuery { int64 id = 1; }
+
+message GetBenchmarkJobResponse {
+  isuxportal.proto.resources.BenchmarkJob job = 1;
+}

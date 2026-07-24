@@ -1,0 +1,33 @@
+#!/bin/sh
+
+set -eu
+
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+compose="$script_dir/compose.sh"
+duration=${BENCHMARK_DURATION:-${1:-60}}
+
+case "$duration" in
+  ""|*[!0-9]*)
+    echo "BENCHMARK_DURATION は 0 以上の整数で指定してください: $duration" >&2
+    exit 2
+    ;;
+esac
+
+"$script_dir/up.sh"
+"$compose" --profile benchmark build benchmark
+
+benchmark_name="isucon14-benchmark-$$"
+set -- run \
+  --target http://nginx \
+  --payment-url "http://$benchmark_name:12345" \
+  --load-timeout "$duration" \
+  --fail-on-error
+
+if [ "${SKIP_STATIC_SANITY_CHECK:-0}" = "1" ]; then
+  set -- "$@" --skip-static-sanity-check
+fi
+
+"$compose" --profile benchmark run \
+  --rm \
+  --name "$benchmark_name" \
+  benchmark "$@"

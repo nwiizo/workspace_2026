@@ -1,0 +1,22 @@
+syntax = "proto3";
+package isuxportal.proto.resources;
+
+
+import "google/protobuf/timestamp.proto";
+
+message Contest {
+  google.protobuf.Timestamp registration_opens_at = 1;
+  google.protobuf.Timestamp registration_closes_at = 2;
+  google.protobuf.Timestamp starts_at = 3;
+  google.protobuf.Timestamp freezes_at = 4;
+  google.protobuf.Timestamp ends_at = 5;
+
+  enum Status {
+    STANDBY = 0;
+    REGISTRATION = 1;
+    STARTED = 2;
+    FINISHED = 3;
+  }
+  Status status = 6;
+  bool frozen = 7;
+}

@@ -1,0 +1,24 @@
+syntax = "proto3";
+package isuxportal.proto.services.admin;
+
+
+import "isuxportal/resources/contestant_instance.proto";
+import "isuxportal/resources/leaderboard.proto";
+import "isuxportal/resources/team.proto";
+import "google/protobuf/timestamp.proto";
+
+message GetLeaderboardDumpQuery {
+  string when = 1; // ISO8601 or "contest-end"
+}
+
+message GetLeaderboardDumpResponse {
+  repeated LeaderboardDumpItem items = 1;
+
+  message LeaderboardDumpItem {
+    int64 position = 1;
+    isuxportal.proto.resources.Team team = 2;
+    isuxportal.proto.resources.LeaderboardItem.LeaderboardScore best_score = 3;
+    isuxportal.proto.resources.LeaderboardItem.LeaderboardScore latest_score = 4;
+    isuxportal.proto.resources.ContestantInstance target = 5;
+  }
+}

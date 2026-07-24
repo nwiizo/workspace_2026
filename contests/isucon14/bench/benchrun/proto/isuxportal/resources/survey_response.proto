@@ -1,0 +1,5 @@
+syntax = "proto3";
+package isuxportal.proto.resources;
+
+
+message SurveyResponse { string language = 1; }

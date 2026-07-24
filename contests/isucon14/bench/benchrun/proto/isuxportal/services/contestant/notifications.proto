@@ -1,0 +1,32 @@
+syntax = "proto3";
+package isuxportal.proto.services.contestant;
+
+
+import "isuxportal/resources/notification.proto";
+
+message ListNotificationsQuery {
+  // Last notifications.id that a user-agent has received through ListNotificationsQuery during a current session.
+  // If not specified (=0), uses server-side `read` column as a hint.
+  int64 after = 1;
+}
+
+message ListNotificationsResponse {
+  int64 last_answered_clarification_id = 1;
+  repeated isuxportal.proto.resources.Notification notifications = 2;
+}
+
+message SubscribeNotificationRequest {
+  string endpoint = 1;
+  string p256dh = 2;
+  string auth = 3;
+}
+
+message SubscribeNotificationResponse {
+}
+
+message UnsubscribeNotificationRequest {
+  string endpoint = 1;
+}
+
+message UnsubscribeNotificationResponse {
+}

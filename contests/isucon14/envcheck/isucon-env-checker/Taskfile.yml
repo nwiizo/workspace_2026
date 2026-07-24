@@ -1,0 +1,10 @@
+version: '3'
+
+tasks:
+  build:
+    cmds:
+      - go build -ldflags "-s -w"
+  build-linux-amd64:
+    cmds:
+      - GOOS=linux GOARCH=amd64 go build -ldflags "-s -w" -o ./envcheck
+      - mv envcheck ../../provisioning/ansible/roles/envcheck/files/

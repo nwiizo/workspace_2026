@@ -8,6 +8,7 @@ Programming contests and security challenges.
 |-----------|-------------|--------|
 | `juice_shop/` | OWASP Juice Shop CTF - Web security challenges | Active |
 | `cp/` | Competitive Programming (AtCoder, Codeforces, etc.) | - |
+| [`isucon14/`](isucon14/README.local.md) | ISUCON14 Rust Docker environment and benchmark | Active |
 
 ---
 

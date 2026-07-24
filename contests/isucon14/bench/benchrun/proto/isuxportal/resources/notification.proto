@@ -1,0 +1,28 @@
+syntax = "proto3";
+package isuxportal.proto.resources;
+
+
+import "google/protobuf/timestamp.proto";
+
+message Notification {
+  int64 id = 1;
+  google.protobuf.Timestamp created_at = 2;
+
+  message BenchmarkJobMessage {
+    int64 benchmark_job_id = 1;
+  }
+  message ClarificationMessage {
+    int64 clarification_id = 1;
+    bool owned = 2;   // True when a clarification is sent from a team of notification recipient
+    bool updated = 3; // True when a clarification was answered and have updated
+    bool admin = 4; // True when a clarification was opened by admin
+  }
+  message TestMessage {
+    int64 something = 1;
+  }
+  oneof content {
+    BenchmarkJobMessage content_benchmark_job = 3;
+    ClarificationMessage content_clarification = 4;
+    TestMessage content_test = 5;
+  }
+}

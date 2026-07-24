@@ -1,0 +1,95 @@
+name: isucon14-rust
+
+services:
+  db:
+    image: public.ecr.aws/docker/library/mysql:8
+    environment:
+      ENV: local-dev
+      MYSQL_DATABASE: isuride
+      MYSQL_ROOT_PASSWORD: isucon
+    ports:
+      - "127.0.0.1:${MYSQL_PORT:-13306}:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./webapp/sql:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-pisucon"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+
+  webapp:
+    build:
+      context: ./webapp/rust
+      dockerfile: ../../development/dockerfiles/Dockerfile.rust
+    environment:
+      ISUCON_DB_HOST: db
+      ISUCON_DB_NAME: isuride
+      ISUCON_DB_PASSWORD: isucon
+      ISUCON_DB_PORT: "3306"
+      ISUCON_DB_USER: isucon
+      RUST_LOG: ${RUST_LOG:-info}
+    expose:
+      - "8080"
+    volumes:
+      - ./webapp/sql:/home/isucon/webapp/sql:ro
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8080"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 10s
+
+  nginx:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: nginx
+    ports:
+      - "127.0.0.1:${APP_PORT:-8080}:80"
+    depends_on:
+      webapp:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "--show-error", "http://127.0.0.1/"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 5s
+
+  matcher:
+    image: mirror.gcr.io/curlimages/curl:latest
+    command:
+      - /bin/sh
+      - -c
+      - while true; do curl -fsS http://nginx/api/internal/matching >/dev/null; sleep 0.5; done
+    depends_on:
+      nginx:
+        condition: service_healthy
+    restart: unless-stopped
+
+  benchmark:
+    profiles: ["benchmark"]
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: benchmark
+    depends_on:
+      nginx:
+        condition: service_healthy
+    command:
+      - run
+      - --target
+      - http://nginx
+      - --payment-url
+      - http://benchmark:12345
+      - --load-timeout
+      - "${BENCHMARK_DURATION:-60}"
+      - --fail-on-error
+
+volumes:
+  mysql-data:

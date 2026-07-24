@@ -1,0 +1,71 @@
+name: Benchmarker Code CI
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - bench/**/*
+      - .github/workflows/go.yml
+  pull_request:
+    paths:
+      - bench/**/*
+      - .github/workflows/go.yml
+jobs:
+  build:
+    name: Build
+    runs-on: codebuild-problem-github-actions-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: 'bench/go.mod'
+          cache-dependency-path: |
+            ./bench/go.sum
+      - name: Install Task
+        uses: arduino/setup-task@v2
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: pnpm/action-setup@v4
+        name: Install pnpm
+        with:
+          version: 9
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: "frontend/pnpm-lock.yaml"
+      - name: Build bench
+        working-directory: ./bench
+        run: |
+          task gen-frontend
+          task build
+  test:
+    name: Bench Test
+    runs-on: codebuild-problem-github-actions-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: 'bench/go.mod'
+          cache-dependency-path: |
+            ./bench/go.sum
+      - name: Install Task
+        uses: arduino/setup-task@v2
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: pnpm/action-setup@v4
+        name: Install pnpm
+        with:
+          version: 9
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: "frontend/pnpm-lock.yaml"
+      - name: Run bench Test
+        working-directory: ./bench
+        run: |
+          task gen-frontend
+          task test

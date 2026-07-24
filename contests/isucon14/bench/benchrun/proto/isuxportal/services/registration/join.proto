@@ -1,0 +1,14 @@
+syntax = "proto3";
+package isuxportal.proto.services.registration;
+
+
+message JoinTeamRequest {
+  int64 team_id = 1;
+  string invite_token = 2;
+  string name = 3;
+  bool is_student = 4;
+  bool is_in_person = 5;
+  string avatar_url = 6;
+}
+
+message JoinTeamResponse {}

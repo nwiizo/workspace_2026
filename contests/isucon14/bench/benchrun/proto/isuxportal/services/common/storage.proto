@@ -1,0 +1,10 @@
+syntax = "proto3";
+package isuxportal.proto.services.common;
+
+message GetAvatarUrlRequest {
+}
+
+message GetAvatarUrlResponse {
+  string upload_presigned = 1;
+  string url = 2;
+}

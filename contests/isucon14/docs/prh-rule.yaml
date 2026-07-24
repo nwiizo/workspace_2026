@@ -1,0 +1,30 @@
+rules:
+  - expected: サーバー
+    patterns:
+      - /サーバー?/g
+  - expected: シミュレーター
+    patterns:
+      - /シ(ュミ|ミュ)レーター?/g
+  - expected: シミュレート
+    patterns:
+      - /シ(ュミ|ミュ)レート/g
+  - expected: AWSマネジメントコンソール
+    patterns:
+      - /AWSマネー?ジメントコンソール/g
+      - /(?<!AWS)マネー?ジメントコンソール/g
+  - expected: ユーザー
+    patterns:
+      - /ユーザー?/g
+  - expected: 競技サーバー
+    patterns:
+      - 競技インスタンス
+  - expected: 選手
+    patterns:
+      - ISUCON競技者
+  - expected: リファレンス実装
+    patterns:
+      - 初期実装
+      - 参考実装
+  - expected: FAIL
+    patterns:
+      - /FAIL/gi

@@ -1,0 +1,30 @@
+services:
+  db:
+    image: mysql:8
+    environment:
+      ENV: local-dev
+      MYSQL_ROOT_PASSWORD: isucon
+    ports:
+      - 3306:3306
+    volumes:
+      - ../webapp/sql:/docker-entrypoint-initdb.d
+    healthcheck:
+      test:
+        ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uisucon", "-pisucon"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+  waiter:
+    image: busybox
+    depends_on:
+      db:
+        condition: service_healthy
+  paymentmock:
+    build:
+      context: ../webapp/payment_mock
+    ports:
+      - 12345:12345
+  matcher:
+    image: curlimages/curl:latest
+    command: /bin/sh -c "while true; do curl -s http://host.docker.internal:8080/api/internal/matching; sleep 0.5; done"

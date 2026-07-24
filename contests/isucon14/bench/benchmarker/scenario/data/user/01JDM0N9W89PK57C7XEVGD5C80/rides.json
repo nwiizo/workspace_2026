@@ -1,0 +1,130 @@
+{
+  "rides": [
+    {
+      "id": "01JDM0TSN83Z2PAWG5FFECNSGC",
+      "pickup_coordinate": {
+        "latitude": 39,
+        "longitude": -33
+      },
+      "destination_coordinate": {
+        "latitude": 49,
+        "longitude": -25
+      },
+      "chair": {
+        "id": "01JDGTQQRG1EE3DYKC1ZB5BQNW",
+        "owner": "つくる椅子株式会社",
+        "name": "CB-09-6107",
+        "model": "ComfortBasic"
+      },
+      "fare": 2300,
+      "evaluation": 5,
+      "requested_at": 1732617529000,
+      "completed_at": 1732619872000
+    },
+    {
+      "id": "01JDM0TSN89Y82ST3N1SWJ80ZE",
+      "pickup_coordinate": {
+        "latitude": 1,
+        "longitude": -12
+      },
+      "destination_coordinate": {
+        "latitude": 2,
+        "longitude": 2
+      },
+      "chair": {
+        "id": "01JDGYS5BRD28RVBHA8P5MB7GN",
+        "owner": "NextStep Cab",
+        "name": "CB-09-1580",
+        "model": "ComfortBasic"
+      },
+      "fare": 2000,
+      "evaluation": 3,
+      "requested_at": 1732617529000,
+      "completed_at": 1732620232000
+    },
+    {
+      "id": "01JDM0TSN8BRGG783QCY98D1CP",
+      "pickup_coordinate": {
+        "latitude": 18,
+        "longitude": 37
+      },
+      "destination_coordinate": {
+        "latitude": 43,
+        "longitude": 57
+      },
+      "chair": {
+        "id": "01JDFTCEVG6KJGK253PSTPEN0Z",
+        "owner": "匠椅子製作所",
+        "name": "PE-X129-8964",
+        "model": "プロゲーマーエッジ X1"
+      },
+      "fare": 5000,
+      "evaluation": 3,
+      "requested_at": 1732617529000,
+      "completed_at": 1732619512000
+    },
+    {
+      "id": "01JDM0TSN8RV247THXQ86A5Y43",
+      "pickup_coordinate": {
+        "latitude": -26,
+        "longitude": -38
+      },
+      "destination_coordinate": {
+        "latitude": -36,
+        "longitude": -35
+      },
+      "chair": {
+        "id": "01JDGZ7V30WXBKQACDB7XR1K87",
+        "owner": "つくる椅子株式会社",
+        "name": "IC-LX38-6303",
+        "model": "インペリアルクラフト LUXE"
+      },
+      "fare": 500,
+      "evaluation": 5,
+      "requested_at": 1732617529000,
+      "completed_at": 1732618912000
+    },
+    {
+      "id": "01JDM0TSN8RYAWDY1XJCEGZA0K",
+      "pickup_coordinate": {
+        "latitude": -19,
+        "longitude": -37
+      },
+      "destination_coordinate": {
+        "latitude": 5,
+        "longitude": -46
+      },
+      "chair": {
+        "id": "01JDGNPBPGZ93J26PTMDWDNR6G",
+        "owner": "Seat Revival",
+        "name": "IS-33-74",
+        "model": "Infinity Seat"
+      },
+      "fare": 3800,
+      "evaluation": 3,
+      "requested_at": 1732617529000,
+      "completed_at": 1732618972000
+    },
+    {
+      "id": "01JDM0TSN8V128KQJYJTKW5CF7",
+      "pickup_coordinate": {
+        "latitude": -37,
+        "longitude": -47
+      },
+      "destination_coordinate": {
+        "latitude": -53,
+        "longitude": -75
+      },
+      "chair": {
+        "id": "01JDGTAD08SMWVBEY72CTZN5ZF",
+        "owner": "NextStep Cab",
+        "name": "MC-R30-4904",
+        "model": "モーションチェア RISE"
+      },
+      "fare": 4900,
+      "evaluation": 5,
+      "requested_at": 1732617529000,
+      "completed_at": 1732619272000
+    }
+  ]
+}

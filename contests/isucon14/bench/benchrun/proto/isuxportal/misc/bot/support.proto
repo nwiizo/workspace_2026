@@ -1,0 +1,12 @@
+syntax = "proto3";
+package isuxportal.proto.misc.bot;
+
+
+message SupportCommInfo {
+  message Usage {
+    uint64 message_id_since = 1;
+    int64 team_id = 2;
+    int64 clarification_id = 3;
+  }
+  Usage usage = 2;
+}

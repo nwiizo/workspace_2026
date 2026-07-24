@@ -1,0 +1,22 @@
+syntax = "proto3";
+package isuxportal.proto.services.common;
+
+
+import "isuxportal/resources/team.proto";
+import "isuxportal/resources/contestant.proto";
+import "isuxportal/resources/contestant_instance.proto";
+import "isuxportal/resources/contest.proto";
+
+message GetCurrentSessionRequest {}
+
+message GetCurrentSessionResponse {
+  isuxportal.proto.resources.Team team = 1;
+  isuxportal.proto.resources.Contestant contestant = 2;
+  string discord_server_id = 3;
+
+  isuxportal.proto.resources.Contest contest = 4;
+
+  repeated isuxportal.proto.resources.ContestantInstance contestant_instances = 5;
+
+  string push_vapid_key = 6;
+}

@@ -1,0 +1,29 @@
+syntax = "proto3";
+package isuxportal.proto.resources;
+
+
+import "isuxportal/resources/contestant.proto";
+
+message Team {
+  int64 id = 1;
+  string name = 2;
+  int64 leader_id = 3;
+  repeated int64 member_ids = 4;
+  bool final_participation = 5;
+  bool hidden = 6;
+  bool withdrawn = 7;
+  bool disqualified = 9;
+
+  message StudentStatus { bool status = 1; }
+  StudentStatus student = 10;
+
+  message TeamDetail {
+    string email_address = 1;
+
+    string invite_token = 16;
+  }
+  TeamDetail detail = 8;
+
+  Contestant leader = 16;
+  repeated Contestant members = 17;
+}

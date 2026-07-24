@@ -1,0 +1,109 @@
+{
+  "rides": [
+    {
+      "id": "01JDK5KZEGMS0MY1WYWNZJ4ZNW",
+      "pickup_coordinate": {
+        "latitude": 25,
+        "longitude": 0
+      },
+      "destination_coordinate": {
+        "latitude": -4,
+        "longitude": -2
+      },
+      "chair": {
+        "id": "01JDHDSS80G3A469PKA8HXA9M3",
+        "owner": "Seat Revival",
+        "name": "LA-C49-2076",
+        "model": "ルミナスエアクラウン"
+      },
+      "fare": 3600,
+      "evaluation": 5,
+      "requested_at": 1732588994000,
+      "completed_at": 1732589597000
+    },
+    {
+      "id": "01JDJT4GN872D9Z7MJ065NB22M",
+      "pickup_coordinate": {
+        "latitude": -43,
+        "longitude": 21
+      },
+      "destination_coordinate": {
+        "latitude": -66,
+        "longitude": 5
+      },
+      "chair": {
+        "id": "01JDH4ZF289XQHMHHHMNDCQ7SP",
+        "owner": "つくる椅子株式会社",
+        "name": "PU-46-9833",
+        "model": "Phoenix Ultra"
+      },
+      "fare": 4400,
+      "evaluation": 3,
+      "requested_at": 1732576953000,
+      "completed_at": 1732578216000
+    },
+    {
+      "id": "01JDJQGR00VWHGTY813RWE7MKM",
+      "pickup_coordinate": {
+        "latitude": -20,
+        "longitude": 38
+      },
+      "destination_coordinate": {
+        "latitude": -17,
+        "longitude": 36
+      },
+      "chair": {
+        "id": "01JDGBT0N0GMM9PPWCSY4QDB64",
+        "owner": "匠椅子製作所",
+        "name": "LL-06-7137",
+        "model": "LiteLine"
+      },
+      "fare": 1000,
+      "evaluation": 3,
+      "requested_at": 1732574208000,
+      "completed_at": 1732578171000
+    },
+    {
+      "id": "01JDJJGVS8BNC6CK3XVDBTV0GT",
+      "pickup_coordinate": {
+        "latitude": -13,
+        "longitude": -28
+      },
+      "destination_coordinate": {
+        "latitude": -36,
+        "longitude": -40
+      },
+      "chair": {
+        "id": "01JDGSWRFGS5TKN25GZ5MNN4MW",
+        "owner": "つくる椅子株式会社",
+        "name": "SG-S120-47",
+        "model": "ストリームギア S1"
+      },
+      "fare": 2500,
+      "evaluation": 4,
+      "requested_at": 1732568969000,
+      "completed_at": 1732571012000
+    },
+    {
+      "id": "01JDJF1Q4R0XMF4EA324503MD7",
+      "pickup_coordinate": {
+        "latitude": 1,
+        "longitude": 26
+      },
+      "destination_coordinate": {
+        "latitude": 8,
+        "longitude": 48
+      },
+      "chair": {
+        "id": "01JDFYK7BG0W46KY333WWRSS7W",
+        "owner": "Seat Revival",
+        "name": "ES-08-8997",
+        "model": "EasySit"
+      },
+      "fare": 3400,
+      "evaluation": 4,
+      "requested_at": 1732565327000,
+      "completed_at": 1732566770000
+    }
+  ]
+}

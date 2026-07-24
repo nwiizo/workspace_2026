@@ -1,0 +1,23 @@
+syntax = "proto3";
+package isuxportal.proto.resources;
+
+
+message Contestant {
+  int64 id = 1;
+  int64 team_id = 2;
+  string name = 3;
+  message ContestantDetail {
+    string github_login = 1;
+    string discord_tag = 2;
+    bool is_student = 3;
+    string avatar_url = 4;
+    bool is_in_person = 5;
+
+    string github_id = 16;
+    string discord_id = 17;
+
+    bool is_ssh_key_registered = 21;
+    bool is_discord_guild_member = 22;
+  }
+  ContestantDetail detail = 7;
+}

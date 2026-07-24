@@ -1,0 +1,29 @@
+---
+- name: Mkdir webapp for python
+  become: true
+  become_user: isucon
+  ansible.builtin.file:
+    path: /home/isucon/webapp/python
+    state: directory
+
+# ここでPythonインタプリタもダウンロードされる
+- name: Build isuride-python
+  become: true
+  become_user: isucon
+  shell: |
+    /home/isucon/.local/bin/uv sync --locked --no-dev
+  args:
+    chdir: /home/isucon/webapp/python
+
+- name: Put systemd service
+  become: true
+  ansible.builtin.copy:
+    src: isuride-python.service
+    dest: /etc/systemd/system/
+
+- name: Start webapp
+  become: true
+  service:
+    name: isuride-python
+    enabled: false
+    state: stopped

@@ -1,0 +1,165 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer components {
+  @keyframes shake {
+    2% {
+      transform: translate(0px, 0px);
+    }
+    4% {
+      transform: translate(1px, 1px);
+    }
+    6% {
+      transform: translate(1px, 0px);
+    }
+    8% {
+      transform: translate(1px, 0px);
+    }
+    10% {
+      transform: translate(1px, 1px);
+    }
+    12% {
+      transform: translate(1px, 0px);
+    }
+    14% {
+      transform: translate(0px, 1px);
+    }
+    16% {
+      transform: translate(1px, 1px);
+    }
+    18% {
+      transform: translate(0px, 1px);
+    }
+    20% {
+      transform: translate(0px, 0px);
+    }
+    22% {
+      transform: translate(0px, 0px);
+    }
+    24% {
+      transform: translate(1px, 0px);
+    }
+    26% {
+      transform: translate(1px, 1px);
+    }
+    28% {
+      transform: translate(0px, 0px);
+    }
+    30% {
+      transform: translate(0px, 0px);
+    }
+    32% {
+      transform: translate(0px, 0px);
+    }
+    34% {
+      transform: translate(0px, 0px);
+    }
+    36% {
+      transform: translate(1px, 1px);
+    }
+    38% {
+      transform: translate(0px, 1px);
+    }
+    40% {
+      transform: translate(0px, 0px);
+    }
+    42% {
+      transform: translate(1px, 0px);
+    }
+    44% {
+      transform: translate(0px, 0px);
+    }
+    46% {
+      transform: translate(1px, 1px);
+    }
+    48% {
+      transform: translate(1px, 0px);
+    }
+    50% {
+      transform: translate(1px, 1px);
+    }
+    52% {
+      transform: translate(1px, 0px);
+    }
+    54% {
+      transform: translate(0px, 0px);
+    }
+    56% {
+      transform: translate(1px, 0px);
+    }
+    58% {
+      transform: translate(0px, 1px);
+    }
+    60% {
+      transform: translate(1px, 1px);
+    }
+    62% {
+      transform: translate(1px, 1px);
+    }
+    64% {
+      transform: translate(1px, 0px);
+    }
+    66% {
+      transform: translate(0px, 0px);
+    }
+    68% {
+      transform: translate(1px, 0px);
+    }
+    70% {
+      transform: translate(1px, 1px);
+    }
+    72% {
+      transform: translate(1px, 0px);
+    }
+    74% {
+      transform: translate(0px, 0px);
+    }
+    76% {
+      transform: translate(0px, 1px);
+    }
+    78% {
+      transform: translate(1px, 0px);
+    }
+    80% {
+      transform: translate(1px, 0px);
+    }
+    82% {
+      transform: translate(0px, 0px);
+    }
+    84% {
+      transform: translate(1px, 1px);
+    }
+    86% {
+      transform: translate(0px, 1px);
+    }
+    88% {
+      transform: translate(1px, 1px);
+    }
+    90% {
+      transform: translate(0px, 0px);
+    }
+    92% {
+      transform: translate(0px, 1px);
+    }
+    94% {
+      transform: translate(1px, 0px);
+    }
+    96% {
+      transform: translate(0px, 1px);
+    }
+    98% {
+      transform: translate(1px, 0px);
+    }
+    0%,
+    100% {
+      transform: translate(0, 0) rotate(0);
+    }
+  }
+  .animate-shake {
+    animation-name: shake;
+    animation-duration: 2000ms;
+    animation-timing-function: ease-in-out;
+    animation-iteration-count: infinite;
+  }
+}

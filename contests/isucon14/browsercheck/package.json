@@ -1,0 +1,12 @@
+{
+	"name": "browsercheck",
+	"type": "module",
+	"version": "0.0.1",
+	"scripts": {
+		"start": "node run.js"
+	},
+	"devDependencies": {
+		"playwright-chromium": "^1.49.0"
+	},
+	"packageManager": "pnpm@9.14.4"
+}

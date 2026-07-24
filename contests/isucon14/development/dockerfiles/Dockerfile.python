@@ -1,0 +1,13 @@
+FROM python:3.13
+
+WORKDIR /home/isucon/webapp/python
+
+RUN apt-get update && apt-get install --no-install-recommends -y \
+  default-mysql-client-core=1.1.0 \
+ && apt-get clean \
+ && rm -rf /var/lib/apt/lists/*
+
+COPY . .
+RUN pip install uv && uv sync --locked --no-dev
+
+CMD ["/home/isucon/webapp/python/.venv/bin/gunicorn", "--bind", "0.0.0.0:8080"]

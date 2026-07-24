@@ -1,0 +1,36 @@
+syntax = "proto3";
+package isuxportal.proto.services.admin;
+
+
+import "isuxportal/resources/team.proto";
+import "isuxportal/resources/contestant.proto";
+
+message ListTeamsQuery {}
+
+message ListTeamsResponse {
+  repeated TeamListItem teams = 1;
+  message TeamListItem {
+    int64 team_id = 1;
+    string name = 2;
+    repeated string member_names = 3;
+    bool final_participation = 4;
+    bool is_student = 5;
+    bool withdrawn = 6;
+    bool disqualified = 7;
+    bool hidden = 8;
+  }
+}
+
+message GetTeamQuery { int64 id = 1; }
+
+message GetTeamResponse { isuxportal.proto.resources.Team team = 1; }
+
+message UpdateTeamQuery { int64 id = 1; }
+
+message UpdateTeamRequest {
+  isuxportal.proto.resources.Team team = 1;
+  // Update only specified contestants
+  repeated isuxportal.proto.resources.Contestant contestants = 2;
+}
+
+message UpdateTeamResponse {}

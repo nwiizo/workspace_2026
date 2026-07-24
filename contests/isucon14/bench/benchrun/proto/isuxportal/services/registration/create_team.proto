@@ -1,0 +1,15 @@
+syntax = "proto3";
+package isuxportal.proto.services.registration;
+
+
+message CreateTeamRequest {
+  string team_name = 1;
+  string name = 2; // contestant name
+  string email_address = 3;
+  bool is_student = 4;
+  bool is_in_person = 5;
+  string avatar_url = 6;
+  bool hidden = 16; // requires bypass token
+}
+
+message CreateTeamResponse { int64 team_id = 1; }

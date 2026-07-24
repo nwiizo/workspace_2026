@@ -1,0 +1,81 @@
+---
+- name: "roles/nginx/tasks: Install package"
+  become: true
+  apt:
+    name:
+      - nginx
+    update_cache: yes
+
+- name: "roles/nginx/tasks: Mkdir for config files"
+  become: true
+  file:
+    path: /etc/nginx/conf.d
+    state: directory
+    mode: 0755
+
+- name: "roles/nginx/tasks: Mkdir for tls certificates"
+  become: true
+  file:
+    path: /etc/nginx/tls
+    state: directory
+    mode: 0755
+
+- name: "roles/nginx/tasks: Deploy nginx configs"
+  become: true
+  copy:
+    src: "{{ item }}"
+    dest: "/{{ item }}"
+    owner: "root"
+    group: "root"
+    mode: "0644"
+  with_items:
+    - etc/nginx/sites-available/isuride.conf
+    - etc/nginx/sites-available/isuride-php.conf
+
+- name: "roles/nginx/tasks: Enable nginx configs"
+  become: true
+  file:
+    src: "/etc/nginx/sites-available/{{ item }}"
+    dest: "/etc/nginx/sites-enabled/{{ item }}"
+    state: link
+  with_items:
+    - isuride.conf
+
+- name: "roles/nginx/tasks: Deploy tls certificates"
+  become: true
+  copy:
+    src: "{{ item }}"
+    dest: "/{{ item }}"
+    owner: "root"
+    group: "root"
+    mode: "0644"
+  with_items:
+    - etc/nginx/tls/dummy.crt
+    - etc/nginx/tls/dummy.key
+    - etc/nginx/tls/_.xiv.isucon.net.crt
+    - etc/nginx/tls/_.xiv.isucon.net.key
+
+- name: "roles/nginx/tasks: Delete old config"
+  become: true
+  file:
+    path: /etc/nginx/conf.d/nginx.conf
+    state: absent
+
+- name: "roles/nginx/tasks: Delete default config"
+  become: true
+  file:
+    path: /etc/nginx/sites-enabled/default
+    state: absent
+
+- name: "roles/nginx/tasks: check nginx config"
+  become: true
+  shell: |
+    nginx -t
+
+- name: "roles/nginx/tasks: Start nginx"
+  become: true
+  systemd:
+    daemon_reload: "yes"
+    name: "nginx"
+    state: "reloaded"
+    enabled: "yes"

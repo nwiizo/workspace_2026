@@ -1,0 +1,29 @@
+name: Front-end CI
+on:
+  push:
+    paths:
+      - .github/workflows/frontend.yml
+      - frontend/**/*
+defaults:
+  run:
+    working-directory: ./frontend
+jobs:
+  build:
+    name: lint
+    runs-on: codebuild-problem-github-actions-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        name: Install pnpm
+        with:
+          version: 9
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: "frontend/pnpm-lock.yaml"
+      - run: pnpm install
+      - run: pnpm run lint
+      - run: pnpm run fmtcheck
+      - run: pnpm run typecheck

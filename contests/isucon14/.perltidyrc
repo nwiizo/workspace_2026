@@ -1,0 +1,16 @@
+--character-encoding=utf8
+--cuddled-else
+--add-whitespace
+--comma-arrow-breakpoints=1
+--continuation-indentation=4
+--freeze-newlines
+--indent-block-comments
+--indent-columns=4
+--long-block-line-count=1
+--maximum-line-length=0
+--no-blanks-before-comments
+--no-opening-sub-brace-on-new-line
+--no-space-for-semicolon
+--paren-tightness=2
+--valign-exclusion-list='q'
+--backup-file-extension=/

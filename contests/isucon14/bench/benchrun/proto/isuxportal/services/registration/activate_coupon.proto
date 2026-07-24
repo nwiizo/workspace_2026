@@ -1,0 +1,11 @@
+syntax = "proto3";
+package isuxportal.proto.services.registration;
+
+
+message ActivateCouponRequest {
+  int64 team_id = 1;
+}
+
+message ActivateCouponResponse {}
+
+

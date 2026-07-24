@@ -1,0 +1,36 @@
+syntax = "proto3";
+package isuxportal.proto.resources;
+
+
+import "google/protobuf/timestamp.proto";
+import "isuxportal/resources/team.proto";
+import "isuxportal/resources/contest.proto";
+
+message LeaderboardItem {
+  message LeaderboardScore {
+    int64 score = 1;
+    google.protobuf.Timestamp started_at = 2;
+    google.protobuf.Timestamp marked_at = 3;
+  }
+
+  message History {
+    repeated LeaderboardScore scores = 1;
+  }
+
+  LeaderboardScore best_score = 2;
+  LeaderboardScore latest_score = 3;
+  Team team = 16;
+
+  History score_history = 17;
+}
+
+message Leaderboard {
+  repeated LeaderboardItem teams = 1;
+  repeated LeaderboardItem hidden_teams = 7;
+  repeated LeaderboardItem progresses = 4;
+  google.protobuf.Timestamp generated_at = 6;
+
+  Contest contest = 5;
+}
+
+

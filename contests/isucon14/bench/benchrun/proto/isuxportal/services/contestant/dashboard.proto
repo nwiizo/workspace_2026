@@ -1,0 +1,11 @@
+syntax = "proto3";
+package isuxportal.proto.services.contestant;
+
+
+import "isuxportal/resources/leaderboard.proto";
+
+message DashboardQuery {}
+
+message DashboardResponse {
+  isuxportal.proto.resources.LeaderboardItem leaderboard_item = 1;
+}

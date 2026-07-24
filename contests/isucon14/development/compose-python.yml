@@ -1,0 +1,45 @@
+services:
+  nginx:
+    image: public.ecr.aws/docker/library/nginx:latest
+    container_name: nginx
+    volumes:
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ../frontend/build/client:/home/isucon/webapp/public:ro
+    ports:
+      - "8080:80"
+    depends_on:
+      - webapp
+  webapp:
+    build:
+      context: ../webapp/python
+      dockerfile: ../../development/dockerfiles/Dockerfile.python
+    image: webapp-python
+    expose:
+      - 8080
+    volumes:
+      - ../webapp/sql:/home/isucon/webapp/sql
+    working_dir: /home/isucon/webapp/python
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      ISUCON_DB_HOST: db
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+  db:
+    image: public.ecr.aws/docker/library/mysql:8
+    environment:
+      ENV: local-dev
+      MYSQL_ROOT_PASSWORD: isucon
+      MYSQL_DATABASE: isuride
+    ports:
+      - 3306:3306
+    volumes:
+      - ./mysql/db:/var/lib/mysql
+      - ../webapp/sql:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: mysqladmin ping -h 127.0.0.1 -uisucon -pisucon
+      start_period: 60s
+  matcher:
+    image: mirror.gcr.io/curlimages/curl:latest
+    command: /bin/sh -c "while true; do curl -s http://nginx/api/internal/matching; sleep 0.5; done"

@@ -1,0 +1,355 @@
+package world
+
+import (
+	"fmt"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/isucon/isucon14/bench/internal/concurrent"
+	"github.com/neilotoole/slogt"
+	"github.com/oklog/ulid/v2"
+	"github.com/samber/lo"
+)
+
+type requestEntry struct {
+	ServerID     string
+	ServerUserID string
+	QueuedTime   time.Time
+}
+
+type eventEntry struct {
+	handler   NotificationReceiverFunc
+	event     NotificationEvent
+	afterFunc func()
+}
+
+type chairState struct {
+	ProviderID      string
+	ServerID        string
+	Name            string
+	Model           string
+	Active          bool
+	RegisteredAt    time.Time
+	AssignedRequest *requestEntry
+	sync.RWMutex
+}
+
+type providerClient struct {
+	serverProviderID  string
+	providerName      string
+	fs                *FastServerStub
+	completedRequests *concurrent.SimpleSlice[*Request]
+}
+
+func (pc *providerClient) GetProviderSales(ctx *Context, args *GetProviderSalesRequest) (*GetProviderSalesResponse, error) {
+	time.Sleep(pc.fs.latency)
+	return &GetProviderSalesResponse{
+		Total: lo.SumBy(lo.Filter(pc.completedRequests.ToSlice(), func(r *Request, _ int) bool { return !r.ServerCompletedAt.After(args.Until) }), func(r *Request) int { return r.Fare() }),
+	}, nil
+}
+
+func (pc *providerClient) GetProviderChairs(ctx *Context, args *GetProviderChairsRequest) (*GetProviderChairsResponse, error) {
+	time.Sleep(pc.fs.latency)
+	return &GetProviderChairsResponse{
+		Chairs: lo.Map(lo.Filter(pc.fs.chairDB.ToSlice(), func(c *chairState, _ int) bool {
+			return c.ProviderID == pc.serverProviderID
+		}), func(c *chairState, _ int) *ProviderChair {
+			return &ProviderChair{
+				ID:           c.ServerID,
+				Name:         c.Name,
+				Model:        c.Model,
+				Active:       c.Active,
+				RegisteredAt: c.RegisteredAt,
+			}
+		}),
+	}, nil
+}
+
+func (pc *providerClient) RegisterChair(ctx *Context, provider *Provider, data *RegisterChairRequest) (*RegisterChairResponse, error) {
+	time.Sleep(pc.fs.latency)
+	c := &chairState{ProviderID: provider.ServerID, ServerID: ulid.Make().String(), Name: data.Name, Model: data.Model, Active: false, RegisteredAt: time.Now()}
+	pc.fs.chairDB.Set(c.ServerID, c)
+	return &RegisterChairResponse{ServerChairID: c.ServerID, Client: pc.fs}, nil
+}
+
+type FastServerStub struct {
+	t                            *testing.T
+	chairDB                      *concurrent.SimpleMap[string, *chairState]
+	providerDB                   *concurrent.SimpleMap[string, *providerClient]
+	latency                      time.Duration
+	matchingTimeout              time.Duration
+	requestQueue                 chan *requestEntry
+	deniedRequests               *concurrent.SimpleMap[string, *concurrent.SimpleSet[string]]
+	userNotificationReceiverMap  *concurrent.SimpleMap[string, NotificationReceiverFunc]
+	chairNotificationReceiverMap *concurrent.SimpleMap[string, NotificationReceiverFunc]
+	eventQueue                   chan *eventEntry
+}
+
+func (s *FastServerStub) SendChairCoordinate(ctx *Context, chair *Chair) (*SendChairCoordinateResponse, error) {
+	time.Sleep(s.latency)
+	req := chair.Request
+	if req != nil {
+		if req.Statuses.Desired != req.Statuses.User {
+			if f, ok := s.userNotificationReceiverMap.Get(req.User.ServerID); ok {
+				switch req.Statuses.Desired {
+				case RequestStatusDispatched:
+					s.eventQueue <- &eventEntry{handler: f, event: &UserNotificationEventDispatched{ServerRequestID: req.ServerID}}
+				case RequestStatusArrived:
+					s.eventQueue <- &eventEntry{handler: f, event: &UserNotificationEventArrived{ServerRequestID: req.ServerID}}
+				}
+			}
+		}
+	}
+	return &SendChairCoordinateResponse{RecordedAt: time.Now()}, nil
+}
+
+func (s *FastServerStub) SendAcceptRequest(ctx *Context, chair *Chair, req *Request) error {
+	time.Sleep(s.latency)
+	if req.Statuses.Desired != RequestStatusMatching {
+		return fmt.Errorf("expected request status %v, got %v", RequestStatusMatching, req.Statuses.Desired)
+	}
+	if f, ok := s.userNotificationReceiverMap.Get(req.User.ServerID); ok {
+		s.eventQueue <- &eventEntry{handler: f, event: &UserNotificationEventDispatching{ServerRequestID: req.ServerID}}
+	}
+	return nil
+}
+
+func (s *FastServerStub) SendDenyRequest(ctx *Context, chair *Chair, serverRequestID string) error {
+	time.Sleep(s.latency)
+	list, _ := s.deniedRequests.GetOrSetDefault(serverRequestID, concurrent.NewSimpleSet[string])
+	list.Add(chair.ServerID)
+	c, ok := s.chairDB.Get(chair.ServerID)
+	if !ok {
+		return fmt.Errorf("chair not found")
+	}
+	c.Lock()
+	s.requestQueue <- c.AssignedRequest
+	c.AssignedRequest = nil
+	c.Unlock()
+	return nil
+}
+
+func (s *FastServerStub) SendDepart(ctx *Context, req *Request) error {
+	time.Sleep(s.latency)
+	if f, ok := s.userNotificationReceiverMap.Get(req.User.ServerID); ok {
+		s.eventQueue <- &eventEntry{handler: f, event: &UserNotificationEventCarrying{ServerRequestID: req.ServerID}}
+	}
+	return nil
+}
+
+func (s *FastServerStub) SendEvaluation(ctx *Context, req *Request, score int) (*SendEvaluationResponse, error) {
+	time.Sleep(s.latency)
+	c, ok := s.chairDB.Get(req.Chair.ServerID)
+	if !ok {
+		return nil, fmt.Errorf("chair not found")
+	}
+	p, ok := s.providerDB.Get(req.Chair.Provider.ServerID)
+	if !ok {
+		return nil, fmt.Errorf("provider not found")
+	}
+	p.completedRequests.Append(req)
+	if f, ok := s.userNotificationReceiverMap.Get(req.User.ServerID); ok {
+		s.eventQueue <- &eventEntry{handler: f, event: &UserNotificationEventCompleted{ServerRequestID: req.ServerID}}
+	}
+	if f, ok := s.chairNotificationReceiverMap.Get(req.Chair.ServerID); ok {
+		s.eventQueue <- &eventEntry{handler: f, event: &ChairNotificationEventCompleted{ServerRequestID: req.ServerID}, afterFunc: func() {
+			c.Lock()
+			c.AssignedRequest = nil
+			c.Unlock()
+		}}
+	}
+	return &SendEvaluationResponse{
+		Fare:        req.Fare(),
+		CompletedAt: time.Now(),
+	}, nil
+}
+
+func (s *FastServerStub) SendCreateRequest(ctx *Context, req *Request) (*SendCreateRequestResponse, error) {
+	time.Sleep(s.latency)
+	id := ulid.Make().String()
+	s.requestQueue <- &requestEntry{ServerID: id, ServerUserID: req.User.ServerID, QueuedTime: time.Now()}
+	return &SendCreateRequestResponse{ServerRequestID: id}, nil
+}
+
+func (s *FastServerStub) SendActivate(ctx *Context, chair *Chair) error {
+	time.Sleep(s.latency)
+	c, ok := s.chairDB.Get(chair.ServerID)
+	if !ok {
+		return fmt.Errorf("chair does not exist")
+	}
+	c.Lock()
+	c.Active = true
+	c.Unlock()
+	return nil
+}
+
+func (s *FastServerStub) SendDeactivate(ctx *Context, chair *Chair) error {
+	time.Sleep(s.latency)
+	c, ok := s.chairDB.Get(chair.ServerID)
+	if !ok {
+		return fmt.Errorf("chair does not exist")
+	}
+	c.Lock()
+	c.Active = false
+	c.Unlock()
+	return nil
+}
+
+func (s *FastServerStub) GetRequestByChair(ctx *Context, chair *Chair, serverRequestID string) (*GetRequestByChairResponse, error) {
+	time.Sleep(s.latency)
+	return &GetRequestByChairResponse{}, nil
+}
+
+func (s *FastServerStub) RegisterUser(ctx *Context, data *RegisterUserRequest) (*RegisterUserResponse, error) {
+	time.Sleep(s.latency)
+	return &RegisterUserResponse{ServerUserID: ulid.Make().String(), Client: s}, nil
+}
+
+func (s *FastServerStub) RegisterProvider(ctx *Context, data *RegisterProviderRequest) (*RegisterProviderResponse, error) {
+	time.Sleep(s.latency)
+	id := ulid.Make().String()
+	client := &providerClient{
+		serverProviderID:  id,
+		providerName:      data.Name,
+		fs:                s,
+		completedRequests: concurrent.NewSimpleSlice[*Request](),
+	}
+	s.providerDB.Set(client.serverProviderID, client)
+	return &RegisterProviderResponse{ServerProviderID: id, Client: client}, nil
+}
+
+func (s *FastServerStub) RegisterPaymentMethods(ctx *Context, user *User) error {
+	time.Sleep(s.latency)
+	return nil
+}
+
+type notificationConnectionImpl struct {
+	close func()
+}
+
+func (c *notificationConnectionImpl) Close() {
+	c.close()
+}
+
+func (s *FastServerStub) ConnectUserNotificationStream(ctx *Context, user *User, receiver NotificationReceiverFunc) (NotificationStream, error) {
+	time.Sleep(s.latency)
+	s.userNotificationReceiverMap.Set(user.ServerID, receiver)
+	return &notificationConnectionImpl{close: func() { s.userNotificationReceiverMap.Delete(user.ServerID) }}, nil
+}
+
+func (s *FastServerStub) ConnectChairNotificationStream(ctx *Context, chair *Chair, receiver NotificationReceiverFunc) (NotificationStream, error) {
+	time.Sleep(s.latency)
+	s.chairNotificationReceiverMap.Set(chair.ServerID, receiver)
+	return &notificationConnectionImpl{close: func() { s.chairNotificationReceiverMap.Delete(chair.ServerID) }}, nil
+}
+
+func (s *FastServerStub) MatchingLoop() {
+	for entry := range s.requestQueue {
+		matched := false
+		denied, _ := s.deniedRequests.GetOrSetDefault(entry.ServerID, concurrent.NewSimpleSet[string])
+		for _, chair := range s.chairDB.Iter() {
+			chair.Lock()
+			if chair.Active && chair.AssignedRequest == nil && !denied.Has(chair.ServerID) {
+				chair.AssignedRequest = entry
+				chair.Unlock()
+				if f, ok := s.chairNotificationReceiverMap.Get(chair.ServerID); ok {
+					s.eventQueue <- &eventEntry{handler: f, event: &ChairNotificationEventMatched{ServerRequestID: entry.ServerID}}
+				}
+				matched = true
+				break
+			}
+			chair.Unlock()
+		}
+		if !matched {
+			s.requestQueue <- entry
+		}
+	}
+}
+
+func (s *FastServerStub) SendEventLoop() {
+	for entry := range s.eventQueue {
+		entry.handler(entry.event)
+		if entry.afterFunc != nil {
+			entry.afterFunc()
+		}
+		time.Sleep(s.latency)
+	}
+}
+
+func TestWorld(t *testing.T) {
+	var (
+		completedRequestChan = make(chan *Request, 1000)
+		client               = &FastServerStub{
+			t:                            t,
+			chairDB:                      concurrent.NewSimpleMap[string, *chairState](),
+			providerDB:                   concurrent.NewSimpleMap[string, *providerClient](),
+			latency:                      1 * time.Millisecond,
+			matchingTimeout:              200 * time.Millisecond,
+			requestQueue:                 make(chan *requestEntry, 1000),
+			deniedRequests:               concurrent.NewSimpleMap[string, *concurrent.SimpleSet[string]](),
+			userNotificationReceiverMap:  concurrent.NewSimpleMap[string, NotificationReceiverFunc](),
+			chairNotificationReceiverMap: concurrent.NewSimpleMap[string, NotificationReceiverFunc](),
+			eventQueue:                   make(chan *eventEntry, 1000),
+		}
+		world = NewWorld(30*time.Millisecond, completedRequestChan, client, slogt.New(t))
+		ctx   = &Context{
+			world: world,
+		}
+	)
+
+	// MEMO: chan が詰まらないように
+	go func() {
+		for req := range completedRequestChan {
+			t.Log(req)
+		}
+	}()
+
+	for i := range 5 {
+		provider, err := world.CreateProvider(ctx, &CreateProviderArgs{
+			Region: world.Regions[i%len(world.Regions)],
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		for range 10 {
+			_, err := world.CreateChair(ctx, &CreateChairArgs{
+				Provider:          provider,
+				InitialCoordinate: RandomCoordinateOnRegion(provider.Region),
+				Model:             ChairModelA,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+
+	for i := range 20 {
+		_, err := world.CreateUser(ctx, &CreateUserArgs{Region: world.Regions[i%len(world.Regions)]})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	go client.MatchingLoop()
+	go client.SendEventLoop()
+
+	for range ConvertHour(1) {
+		if err := world.Tick(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	for _, user := range world.UserDB.Iter() {
+		t.Log(user)
+	}
+	sales := 0
+	for _, req := range world.RequestDB.Iter() {
+		t.Log(req)
+		if req.Statuses.Desired == RequestStatusCompleted {
+			sales += req.Fare()
+		}
+	}
+	t.Logf("sales: %d", sales)
+}

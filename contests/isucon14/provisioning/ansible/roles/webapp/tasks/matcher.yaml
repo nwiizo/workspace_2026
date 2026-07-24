@@ -1,0 +1,13 @@
+---
+- name: Put systemd service
+  become: true
+  ansible.builtin.copy:
+    src: isuride-matcher.service
+    dest: /etc/systemd/system/
+
+- name: Start matcher
+  become: true
+  service:
+    name: isuride-matcher
+    enabled: true
+    state: restarted

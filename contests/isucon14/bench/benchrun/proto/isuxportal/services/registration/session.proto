@@ -1,0 +1,51 @@
+syntax = "proto3";
+package isuxportal.proto.services.registration;
+
+
+import "isuxportal/resources/team.proto";
+import "isuxportal/resources/coupon.proto";
+import "isuxportal/resources/env_check.proto";
+
+// query parameter
+message GetRegistrationSessionQuery {
+  int64 team_id = 1;
+  string invite_token = 2;
+  string bypass_token = 16;
+}
+
+message GetRegistrationSessionResponse {
+  isuxportal.proto.resources.Team team = 1;
+  enum Status {
+    CLOSED = 0;
+    NOT_JOINABLE = 1;
+    NOT_LOGGED_IN = 2;
+    CREATABLE = 3;
+    JOINABLE = 4;
+    JOINED = 5;
+    DISQUALIFIED = 6;
+  }
+  Status status = 2;
+  string github_login = 3;
+  string github_avatar_url = 4;
+  string discord_tag = 5;
+  string discord_avatar_url = 6;
+  string member_invite_url = 7;
+  string discord_server_id = 8;
+  isuxportal.proto.resources.EnvCheckStatus env_check_status = 9;
+  isuxportal.proto.resources.Coupon coupon = 10;
+}
+
+message UpdateRegistrationRequest {
+  string team_name = 1;
+  string name = 2; // contestant name
+  string email_address = 3;
+  bool is_student = 4;
+  bool is_in_person = 5;
+  string avatar_url = 6;
+}
+
+message UpdateRegistrationResponse {}
+
+message DeleteRegistrationRequest {}
+
+message DeleteRegistrationResponse {}

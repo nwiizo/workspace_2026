@@ -1,0 +1,55 @@
+{
+  "name": "frontend",
+  "private": true,
+  "sideEffects": false,
+  "type": "module",
+  "scripts": {
+    "build": "API_BASE_URL=/api remix vite:build",
+    "dev": "API_BASE_URL=/api remix vite:dev",
+    "lint": "eslint --ignore-path .gitignore --cache --cache-location ./node_modules/.cache/eslint .",
+    "preview": "vite preview",
+    "start": "pnpm run build && API_BASE_URL=/api pnpm run preview",
+    "typecheck": "tsc",
+    "fmtcheck": "prettier ./*.{cjs,ts,js} ./app --check",
+    "fmt": "prettier ./*.{cjs,ts,js} ./app --write",
+    "codegen": "rm -rf ./app/api && npx openapi-codegen gen isucon"
+  },
+  "dependencies": {
+    "@remix-run/node": "^2.11.1",
+    "@remix-run/react": "^2.11.1",
+    "@tanstack/react-query": "^5.56.2",
+    "canvas-confetti": "^1.9.3",
+    "event-source-polyfill": "^1.0.31",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "tailwind-merge": "^2.5.3"
+  },
+  "devDependencies": {
+    "@openapi-codegen/cli": "^2.0.2",
+    "@openapi-codegen/typescript": "^8.0.2",
+    "@remix-run/dev": "^2.11.1",
+    "@types/canvas-confetti": "^1.6.4",
+    "@types/event-source-polyfill": "^1.0.5",
+    "@types/react": "^18.2.20",
+    "@types/react-dom": "^18.2.7",
+    "@typescript-eslint/eslint-plugin": "^6.7.4",
+    "@typescript-eslint/parser": "^6.7.4",
+    "autoprefixer": "^10.4.19",
+    "eslint": "^8.38.0",
+    "eslint-import-resolver-typescript": "^3.6.1",
+    "eslint-plugin-import": "^2.28.1",
+    "eslint-plugin-jsx-a11y": "^6.7.1",
+    "eslint-plugin-react": "^7.33.2",
+    "eslint-plugin-react-hooks": "^4.6.0",
+    "fdir": "^6.4.2",
+    "postcss": "^8.4.38",
+    "prettier": "^3.3.3",
+    "tailwindcss": "^3.4.4",
+    "typescript": "^5.1.6",
+    "vite": "^5.1.0",
+    "vite-tsconfig-paths": "^4.2.1"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

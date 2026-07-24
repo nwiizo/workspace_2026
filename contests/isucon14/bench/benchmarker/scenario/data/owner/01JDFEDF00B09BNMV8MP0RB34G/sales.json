@@ -1,0 +1,683 @@
+{
+  "total_sales": 474300,
+  "chairs": [
+    {
+      "id": "01JDFFT9J8JVCFVJAG4WN2B666",
+      "name": "AS-14-7016",
+      "sales": 4700
+    },
+    {
+      "id": "01JDFFVTCRFCWZS7C3CFS069ZH",
+      "name": "ES-RG40-1413",
+      "sales": 5900
+    },
+    {
+      "id": "01JDFGQRXR0C4T3DFMS37GG7YG",
+      "name": "PE-X129-3173",
+      "sales": 5000
+    },
+    {
+      "id": "01JDFK55FRKFD8F0MGBEYNHXYJ",
+      "name": "ES-RG40-3723",
+      "sales": 9200
+    },
+    {
+      "id": "01JDFM1TFG01NRWT038PTCEBN7",
+      "name": "SS-R39-3032",
+      "sales": 7600
+    },
+    {
+      "id": "01JDFM2B2R13V0ZRE4P7YNVVRT",
+      "name": "BP-23-3164",
+      "sales": 9800
+    },
+    {
+      "id": "01JDFNB5Q8RC3MDGXVSTTPG5Z5",
+      "name": "MC-R30-2831",
+      "sales": 0
+    },
+    {
+      "id": "01JDFQGPAR50QP3FK0NRCGBE14",
+      "name": "ES-08-4079",
+      "sales": 10900
+    },
+    {
+      "id": "01JDFQWBC896KR4TS0RME4HJQG",
+      "name": "SE-45-1665",
+      "sales": 0
+    },
+    {
+      "id": "01JDFR7DW0WFKN0T3CK2EKRADD",
+      "name": "LL-06-8442",
+      "sales": 2900
+    },
+    {
+      "id": "01JDFR8ST8WGK88TK7EZQ9SHNK",
+      "name": "SS-HY17-8915",
+      "sales": 9300
+    },
+    {
+      "id": "01JDFRA0W8QESHHBCHEBWD4MJA",
+      "name": "PA-Z28-4759",
+      "sales": 3500
+    },
+    {
+      "id": "01JDFRQKEGPG19589KDKMCCZ8Y",
+      "name": "IG-V42-7961",
+      "sales": 0
+    },
+    {
+      "id": "01JDFRWKKG756DP8GBJWSX17M6",
+      "name": "OP-43-1805",
+      "sales": 0
+    },
+    {
+      "id": "01JDFTCEVG6KJGK253PSTPEN0Z",
+      "name": "PE-X129-8964",
+      "sales": 5000
+    },
+    {
+      "id": "01JDFTPSX8KFHT1YC1TZR2D0HJ",
+      "name": "RS-NEO01-4254",
+      "sales": 3600
+    },
+    {
+      "id": "01JDFV2HWGCZ3GPKFVAZA1S7DF",
+      "name": "TL-35-5838",
+      "sales": 7000
+    },
+    {
+      "id": "01JDFXJHERK5P0FCGFKQRZZ1RK",
+      "name": "RZ-07-2559",
+      "sales": 3100
+    },
+    {
+      "id": "01JDFXRYH85W06C96NJ393YCGR",
+      "name": "FS-V41-4040",
+      "sales": 0
+    },
+    {
+      "id": "01JDFYVNVRG13A044YFVMSRZCD",
+      "name": "TZ-PL51-8021",
+      "sales": 7500
+    },
+    {
+      "id": "01JDG0J8Y0GZ9MJD83KEF9EWXJ",
+      "name": "PE-X129-662",
+      "sales": 1200
+    },
+    {
+      "id": "01JDG24W2G3J82DV8TH84R3YQA",
+      "name": "RZ-07-4332",
+      "sales": 4600
+    },
+    {
+      "id": "01JDG31TTRS2P7CX55GRERVN7W",
+      "name": "LC-48-3592",
+      "sales": 8700
+    },
+    {
+      "id": "01JDG3NWE0GKSAT622FVJZKBPC",
+      "name": "NS-BE44-8284",
+      "sales": 0
+    },
+    {
+      "id": "01JDG3T648JRY7X3FECWKEP5ZR",
+      "name": "SE-05-120",
+      "sales": 3900
+    },
+    {
+      "id": "01JDG46TDRQ0MK8EBH64GCK0B7",
+      "name": "IS-33-1688",
+      "sales": 0
+    },
+    {
+      "id": "01JDG5WRZR2MF03HADBRTM7121",
+      "name": "AS-LT02-1592",
+      "sales": 0
+    },
+    {
+      "id": "01JDG72JYGGAGF3HP5RVRA80DY",
+      "name": "SE-05-2368",
+      "sales": 4100
+    },
+    {
+      "id": "01JDG737ERT0807TESZFTGPA91",
+      "name": "ES-08-5085",
+      "sales": 3500
+    },
+    {
+      "id": "01JDGANPHGJ59H6FSW2E9A17BP",
+      "name": "SF-01-9497",
+      "sales": 7800
+    },
+    {
+      "id": "01JDGB69SGGMFR9GQQEEN4RXKS",
+      "name": "FS-V41-685",
+      "sales": 3500
+    },
+    {
+      "id": "01JDGB8NZ01B8NFXEH17H1F5AG",
+      "name": "TL-35-2670",
+      "sales": 3600
+    },
+    {
+      "id": "01JDGB99G0SB4C8FB8BSCTN1WN",
+      "name": "FG-C24-3488",
+      "sales": 4100
+    },
+    {
+      "id": "01JDGBT0N0GMM9PPWCSY4QDB64",
+      "name": "LL-06-7137",
+      "sales": 11000
+    },
+    {
+      "id": "01JDGCVEZ09V23F2ZH49PSM2VV",
+      "name": "EF-22-4040",
+      "sales": 8500
+    },
+    {
+      "id": "01JDGD06ARDHT7546683T125CP",
+      "name": "TZ-P52-6555",
+      "sales": 0
+    },
+    {
+      "id": "01JDGDY4B0M8R1YCRKKMDWGYPR",
+      "name": "AS-LT02-8976",
+      "sales": 0
+    },
+    {
+      "id": "01JDGF0660JWM5CDD9CTZKKN86",
+      "name": "TZ-P52-5449",
+      "sales": 13600
+    },
+    {
+      "id": "01JDGF968RCVRCSSXE7ZMA9MJK",
+      "name": "VC-S50-4782",
+      "sales": 5900
+    },
+    {
+      "id": "01JDGFHHV8QQ9RBTV5Q16CWXTA",
+      "name": "ZB-A53-9319",
+      "sales": 5200
+    },
+    {
+      "id": "01JDGHCBP02TWWRE35F4FGPMKR",
+      "name": "BS-PL04-7977",
+      "sales": 3200
+    },
+    {
+      "id": "01JDGJ392RQEVY1FPTYHZK3CCZ",
+      "name": "PE-X129-8436",
+      "sales": 5900
+    },
+    {
+      "id": "01JDGM21W0Z2VN9008K3R0FNA1",
+      "name": "NS-BE44-7603",
+      "sales": 3900
+    },
+    {
+      "id": "01JDGN1XD0DPXAYSZJNMBKP0VG",
+      "name": "AS-14-6614",
+      "sales": 0
+    },
+    {
+      "id": "01JDGNEDSG7DPCY7AE2A38ZB13",
+      "name": "IC-LX38-151",
+      "sales": 1700
+    },
+    {
+      "id": "01JDGP7ANGN1MBS4W699G0H870",
+      "name": "AS-LT02-2827",
+      "sales": 0
+    },
+    {
+      "id": "01JDGPJ6AGJQHE81ZQN3YKBVKN",
+      "name": "ZC-36-7450",
+      "sales": 0
+    },
+    {
+      "id": "01JDGQ21581T2B4FA4MRNHS3Y2",
+      "name": "TL-35-2727",
+      "sales": 10600
+    },
+    {
+      "id": "01JDGQ5HF00F2E1Y05PCG178YV",
+      "name": "CB-09-4010",
+      "sales": 0
+    },
+    {
+      "id": "01JDGQA01GH6YY2Y306JTG3W4A",
+      "name": "ZB-EX25-1819",
+      "sales": 2300
+    },
+    {
+      "id": "01JDGQYH8R5GR92NGK5AGBRHEQ",
+      "name": "IC-LX38-3474",
+      "sales": 6300
+    },
+    {
+      "id": "01JDGR1D28D52CRD8T7VE14T6C",
+      "name": "SE-45-8953",
+      "sales": 2700
+    },
+    {
+      "id": "01JDGRTZDRQD3G2HHS7ZE96JVK",
+      "name": "US-X37-3936",
+      "sales": 1300
+    },
+    {
+      "id": "01JDGSQDJRJ7JFM3Y31VBA95Y1",
+      "name": "CA-S03-3098",
+      "sales": 5000
+    },
+    {
+      "id": "01JDGST0K0CA9STW3TDMX0XYF4",
+      "name": "ES-08-5132",
+      "sales": 8700
+    },
+    {
+      "id": "01JDGTB2FRB1Y0S6140Q64ABBZ",
+      "name": "TZ-PL51-174",
+      "sales": 0
+    },
+    {
+      "id": "01JDGTSFDRS4ZPB0T1PYXQ38T5",
+      "name": "ZB-A53-7197",
+      "sales": 10900
+    },
+    {
+      "id": "01JDGTWD5R0A85VK3Q8M5VAR1G",
+      "name": "VC-S50-6767",
+      "sales": 10700
+    },
+    {
+      "id": "01JDGV2DJ0RK6ET6SBBHZ8SWS5",
+      "name": "NS-BE44-4473",
+      "sales": 2900
+    },
+    {
+      "id": "01JDGW5KH8QDDC5M04JRSYZDP1",
+      "name": "SE-05-3839",
+      "sales": 2700
+    },
+    {
+      "id": "01JDGX34V822E1CW1FENGDRCBV",
+      "name": "TZ-PL51-8882",
+      "sales": 12000
+    },
+    {
+      "id": "01JDGXCYAGF35WWSZ8Y7DXAEBB",
+      "name": "IS-33-4419",
+      "sales": 0
+    },
+    {
+      "id": "01JDGYH1K8SSD5N6BZ0VVFDP3D",
+      "name": "ES-08-2537",
+      "sales": 1500
+    },
+    {
+      "id": "01JDH0B030JFW4HP7P257WEKNT",
+      "name": "SS-R39-8535",
+      "sales": 14900
+    },
+    {
+      "id": "01JDH0SD108S2R1M39JC627QG0",
+      "name": "GS-NX16-6219",
+      "sales": 6000
+    },
+    {
+      "id": "01JDH2B9PR3533PFDCRBS1QBWR",
+      "name": "GA-31-683",
+      "sales": 0
+    },
+    {
+      "id": "01JDH3EXBG24A365WVF5N5PD6X",
+      "name": "RC-SM21-2607",
+      "sales": 9900
+    },
+    {
+      "id": "01JDH3V11R3JCA36MTYEGTS05G",
+      "name": "FC-CR27-8725",
+      "sales": 7500
+    },
+    {
+      "id": "01JDH4S5WRMG7QBQHWB6TNSJFF",
+      "name": "GS-NX16-700",
+      "sales": 2900
+    },
+    {
+      "id": "01JDH59BF887HY5P3W3RCN1857",
+      "name": "CA-S03-7063",
+      "sales": 8000
+    },
+    {
+      "id": "01JDH5WDTGV0YVE8WPPQHPVSJQ",
+      "name": "FC-CR27-2779",
+      "sales": 2900
+    },
+    {
+      "id": "01JDH6SV7GTGSYYXV294PYDS7Z",
+      "name": "AS-14-7842",
+      "sales": 14100
+    },
+    {
+      "id": "01JDH6Z73GQ5V3QGDY8X9HG488",
+      "name": "CA-S03-4460",
+      "sales": 5800
+    },
+    {
+      "id": "01JDH6ZRP0Y32HFFPMAZDXJGJX",
+      "name": "RS-NEO01-8582",
+      "sales": 2300
+    },
+    {
+      "id": "01JDH7NVQ0QP1M0WYSYGT11521",
+      "name": "ES-RG40-9499",
+      "sales": 12700
+    },
+    {
+      "id": "01JDH83XX8GRMNZJ34S9RVBC0E",
+      "name": "SG-S120-3394",
+      "sales": 5600
+    },
+    {
+      "id": "01JDH8K0ARG2Z5AB94DMBAK2YH",
+      "name": "SF-01-4363",
+      "sales": 6700
+    },
+    {
+      "id": "01JDH9P3C81GEZG5Q376602JS7",
+      "name": "IG-V42-3626",
+      "sales": 3500
+    },
+    {
+      "id": "01JDHAJJGGFWF1XDRYMG241E7T",
+      "name": "BS-PL04-8332",
+      "sales": 0
+    },
+    {
+      "id": "01JDHB1C4R9HQ7Y4YBE0E4VKRK",
+      "name": "PA-Z28-4630",
+      "sales": 4200
+    },
+    {
+      "id": "01JDHB8ZA0JCX4N6HPTARFGAX6",
+      "name": "AG-54-1654",
+      "sales": 1700
+    },
+    {
+      "id": "01JDHD88PGZ50M7CWF2TTD1N27",
+      "name": "RS-NEO01-7678",
+      "sales": 4800
+    },
+    {
+      "id": "01JDHDCCH8J2WRJ75WNB38X8NV",
+      "name": "CA-S03-6533",
+      "sales": 1700
+    },
+    {
+      "id": "01JDHDJFV8H77NW06SQZSP9B41",
+      "name": "ES-08-8374",
+      "sales": 10800
+    },
+    {
+      "id": "01JDHDRQ28D2C7NNNSX47N4G4Z",
+      "name": "TF-U47-4006",
+      "sales": 6400
+    },
+    {
+      "id": "01JDHFJEQ8GQ2ZYYR8VSM1T3ST",
+      "name": "IS-33-1603",
+      "sales": 2300
+    },
+    {
+      "id": "01JDHFNKA0NT0XKP5Z77VZ9B4S",
+      "name": "MC-R30-2104",
+      "sales": 10400
+    },
+    {
+      "id": "01JDHFYY4G5MS7T17MPECC53J4",
+      "name": "GA-31-6741",
+      "sales": 6700
+    },
+    {
+      "id": "01JDHG0QR8TWY1YEGQ1MY4F0ZZ",
+      "name": "SS-HY17-618",
+      "sales": 3600
+    },
+    {
+      "id": "01JDHGTYM0YQMZ043DFBNR7VVV",
+      "name": "BS-PL04-5601",
+      "sales": 10900
+    },
+    {
+      "id": "01JDHJCV9RCNHTN98YVWR7T9Z1",
+      "name": "ZC-36-4713",
+      "sales": 2800
+    },
+    {
+      "id": "01JDHJNBRGSE02H0KK5VM9667Y",
+      "name": "SE-05-9534",
+      "sales": 7700
+    },
+    {
+      "id": "01JDHK3370KZFCNEH5JNWQ3RF5",
+      "name": "QC-L13-5995",
+      "sales": 5400
+    },
+    {
+      "id": "01JDHNAY1GPD8CXNB4V7KS8YEB",
+      "name": "AS-LT02-4151",
+      "sales": 0
+    },
+    {
+      "id": "01JDHRNYV8VM9GMEG0EEKRGJT6",
+      "name": "BS-PL04-5194",
+      "sales": 0
+    },
+    {
+      "id": "01JDHS6K2G1WFD0YRYMYNAJT1M",
+      "name": "BS-PL04-765",
+      "sales": 4200
+    },
+    {
+      "id": "01JDHTV8M0WJGVE9AA2KT3FAZG",
+      "name": "FC-CR27-4038",
+      "sales": 5600
+    },
+    {
+      "id": "01JDHTY8AG3JF1JK1YEEXR6F4T",
+      "name": "ZB-A53-4599",
+      "sales": 3900
+    },
+    {
+      "id": "01JDHWB7S0W9BPN2WVZTY3DHAA",
+      "name": "CA-S03-4024",
+      "sales": 0
+    },
+    {
+      "id": "01JDHX788GEJJ5TQFQX14M05SB",
+      "name": "TL-35-8974",
+      "sales": 1900
+    }
+  ],
+  "models": [
+    {
+      "model": "シェルシート ハイブリッド",
+      "sales": 12900
+    },
+    {
+      "model": "Legacy Chair",
+      "sales": 8700
+    },
+    {
+      "model": "エアシェル ライト",
+      "sales": 0
+    },
+    {
+      "model": "スピンフレーム 01",
+      "sales": 14500
+    },
+    {
+      "model": "クエストチェア Lite",
+      "sales": 5400
+    },
+    {
+      "model": "BalancePro",
+      "sales": 9800
+    },
+    {
+      "model": "SitEase",
+      "sales": 18400
+    },
+    {
+      "model": "ErgoFlex",
+      "sales": 8500
+    },
+    {
+      "model": "インペリアルクラフト LUXE",
+      "sales": 8000
+    },
+    {
+      "model": "ゼンバランス EX",
+      "sales": 2300
+    },
+    {
+      "model": "タイタンフレーム ULTRA",
+      "sales": 6400
+    },
+    {
+      "model": "エコシート リジェネレイト",
+      "sales": 27800
+    },
+    {
+      "model": "プレミアムエアチェア ZETA",
+      "sales": 7700
+    },
+    {
+      "model": "リラックス座",
+      "sales": 7700
+    },
+    {
+      "model": "ナイトシート ブラックエディション",
+      "sales": 6800
+    },
+    {
+      "model": "Infinity Seat",
+      "sales": 2300
+    },
+    {
+      "model": "ステルスシート ROGUE",
+      "sales": 22500
+    },
+    {
+      "model": "EasySit",
+      "sales": 35400
+    },
+    {
+      "model": "匠座（たくみざ）プレミアム",
+      "sales": 13600
+    },
+    {
+      "model": "ゼノバース ALPHA",
+      "sales": 20000
+    },
+    {
+      "model": "Aurora Glow",
+      "sales": 1700
+    },
+    {
+      "model": "LiteLine",
+      "sales": 13900
+    },
+    {
+      "model": "リラックスシート NEO",
+      "sales": 10700
+    },
+    {
+      "model": "ヴァーチェア SUPREME",
+      "sales": 16600
+    },
+    {
+      "model": "リカーブチェア スマート",
+      "sales": 9900
+    },
+    {
+      "model": "フューチャーチェア CORE",
+      "sales": 16000
+    },
+    {
+      "model": "アルティマシート X",
+      "sales": 1300
+    },
+    {
+      "model": "チェアエース S",
+      "sales": 20500
+    },
+    {
+      "model": "モーションチェア RISE",
+      "sales": 10400
+    },
+    {
+      "model": "ShadowEdition",
+      "sales": 2700
+    },
+    {
+      "model": "オブシディアン PRIME",
+      "sales": 0
+    },
+    {
+      "model": "フューチャーステップ VISION",
+      "sales": 3500
+    },
+    {
+      "model": "匠座 PRO LIMITED",
+      "sales": 19500
+    },
+    {
+      "model": "ComfortBasic",
+      "sales": 0
+    },
+    {
+      "model": "ゲーミングシート NEXUS",
+      "sales": 8900
+    },
+    {
+      "model": "雅楽座",
+      "sales": 6700
+    },
+    {
+      "model": "AeroSeat",
+      "sales": 18800
+    },
+    {
+      "model": "プロゲーマーエッジ X1",
+      "sales": 17100
+    },
+    {
+      "model": "風雅（ふうが）チェア",
+      "sales": 4100
+    },
+    {
+      "model": "ベーシックスツール プラス",
+      "sales": 18300
+    },
+    {
+      "model": "ZenComfort",
+      "sales": 2800
+    },
+    {
+      "model": "インフィニティ GEAR V",
+      "sales": 3500
+    },
+    {
+      "model": "Titanium Line",
+      "sales": 23100
+    },
+    {
+      "model": "ストリームギア S1",
+      "sales": 5600
+    }
+  ]
+}

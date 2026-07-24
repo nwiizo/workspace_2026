@@ -1,0 +1,36 @@
+version: "3"
+
+tasks:
+  init:
+    cmds:
+      - go install github.com/sqldef/sqldef/cmd/mysqldef@latest
+  up:
+    cmds:
+      - docker compose -f compose-local.yml up -d
+    dir: ./development
+  down:
+    cmds:
+      - docker compose -f compose-local.yml down -v --remove-orphans
+    dir: ./development
+  migrate:
+    deps:
+      - up
+    cmds:
+      - sed /^USE\ isuride\;/d < webapp/sql/1-schema.sql | mysqldef -p isucon isuride
+    sources:
+      - webapp/sql/1-schema.sql
+  go:build:
+    cmd: go build -o isuride{{exeExt}} .
+    dir: webapp/go
+    sources:
+      - ./*.go
+      - go.mod
+      - go.sum
+  go:run:
+    deps:
+      - go:build
+    cmd: ./isuride{{exeExt}}
+    dir: webapp/go
+  perl:run:
+    cmd: carton exec plackup -s Starlet -p 8080 -Ilib -r app.psgi
+    dir: webapp/perl

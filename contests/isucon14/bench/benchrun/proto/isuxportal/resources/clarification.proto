@@ -1,0 +1,21 @@
+syntax = "proto3";
+package isuxportal.proto.resources;
+
+
+import "isuxportal/resources/team.proto";
+import "google/protobuf/timestamp.proto";
+
+message Clarification {
+  int64 id = 1;
+  int64 team_id = 2;
+  bool answered = 3;
+  bool disclosed = 4;
+  string question = 5;
+  string answer = 6;
+  google.protobuf.Timestamp created_at = 7;
+  google.protobuf.Timestamp answered_at = 8;
+  string original_question = 9;
+  bool admin = 10;
+
+  Team team = 16;
+}

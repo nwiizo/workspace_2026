@@ -1,0 +1,23 @@
+{
+  "name": "docs",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "lint": "textlint *.md",
+    "lint:fix": "textlint --fix *.md"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "textlint": "^14.4.0",
+    "textlint-filter-rule-allowlist": "^4.0.0",
+    "textlint-rule-no-todo": "^2.0.1",
+    "textlint-rule-preset-ja-spacing": "^2.4.3",
+    "textlint-rule-preset-ja-technical-writing": "^10.0.1",
+    "textlint-rule-preset-jtf-style": "^3.0.0",
+    "textlint-rule-prh": "^6.0.0"
+  },
+  "packageManager": "pnpm@9.15.0"
+}

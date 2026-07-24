@@ -1,0 +1,18 @@
+syntax = "proto3";
+package isuxportal.proto;
+
+
+message Error {
+  int32 code = 1;
+  string name = 2;
+  string human_message = 3;
+  repeated string human_descriptions = 4;
+
+  message DebugInfo {
+    string exception = 1;
+    repeated string trace = 2;
+    repeated string application_trace = 3;
+    repeated string framework_trace = 4;
+  }
+  DebugInfo debug_info = 16;
+}

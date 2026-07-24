@@ -1,0 +1,12 @@
+syntax = "proto3";
+package isuxportal.proto.services.admin;
+
+
+message GetCloudFormationQuery {
+  int64 id = 1;
+  string type = 2; // query parameter. "test" | "contest"
+}
+
+message GetCloudFormationResponse {
+  string template = 1;
+}

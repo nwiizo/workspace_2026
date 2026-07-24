@@ -1,0 +1,13 @@
+syntax = "proto3";
+package isuxportal.proto.services.admin;
+
+
+import "isuxportal/resources/env_check.proto";
+
+message ListEnvChecksQuery {
+  int64 team_id = 1;
+}
+
+message ListEnvChecksResponse {
+  repeated isuxportal.proto.resources.EnvCheck env_checks = 1;
+}
