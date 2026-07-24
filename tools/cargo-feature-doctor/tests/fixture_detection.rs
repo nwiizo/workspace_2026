@@ -165,6 +165,32 @@ fn renamed_gate_fixture() -> TempDir {
     dir
 }
 
+fn logical_gate_fixture() -> TempDir {
+    let dir = renamed_gate_fixture();
+    let manifest = fs::read_to_string(dir.path().join("Cargo.toml")).expect("manifest");
+    write(
+        &dir.path().join("Cargo.toml"),
+        &manifest.replace(
+            "serde-support = [\"dep:serde\"]",
+            "serde-support = [\"dep:serde\"]\nother = []",
+        ),
+    );
+    write(
+        &dir.path().join("src/lib.rs"),
+        r#"
+        #[cfg(not(feature = "serde-support"))]
+        pub fn negated(value: serde::Serialize) {}
+
+        #[cfg(any(feature = "serde-support", feature = "other"))]
+        pub fn broad(value: serde::Serialize) {}
+
+        #[cfg(all(feature = "serde-support", not(feature = "other")))]
+        pub fn strict(value: serde::Serialize) {}
+        "#,
+    );
+    dir
+}
+
 fn precision_fixture() -> TempDir {
     let dir = TempDir::new().expect("tempdir");
     risky_dep(dir.path());
@@ -375,6 +401,33 @@ fn optional_dep_gate_accepts_feature_that_enables_dep() {
             .issues
             .iter()
             .all(|issue| issue.issue_type() != IssueType::OptionalDepExposure),
+        "{:#?}",
+        analysis.issues
+    );
+}
+
+#[test]
+fn optional_dep_gate_requires_logical_implication() {
+    let dir = logical_gate_fixture();
+    let analysis = analyze_path(dir.path(), &Config::default()).expect("analyze logical fixture");
+    let exposed = analysis
+        .issues
+        .iter()
+        .filter(|issue| issue.issue_type() == IssueType::OptionalDepExposure)
+        .map(|issue| issue.key.source.as_str())
+        .collect::<std::collections::BTreeSet<_>>();
+    assert!(
+        exposed.contains("src/lib.rs:negated"),
+        "{:#?}",
+        analysis.issues
+    );
+    assert!(
+        exposed.contains("src/lib.rs:broad"),
+        "{:#?}",
+        analysis.issues
+    );
+    assert!(
+        !exposed.contains("src/lib.rs:strict"),
         "{:#?}",
         analysis.issues
     );

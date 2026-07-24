@@ -784,13 +784,57 @@ fn signature_mentions_dep(item: &PublicItem, dep: &OptionalDep) -> bool {
 }
 
 fn item_has_feature_gate(item: &PublicItem, dep: &OptionalDep) -> bool {
-    item.cfg_exprs.iter().any(|expr| {
-        let mut features = BTreeSet::new();
-        expr.features(&mut features);
-        features
+    if dep.gating_features.is_empty() || item.cfg_exprs.is_empty() {
+        return false;
+    }
+
+    let mut variables = BTreeSet::new();
+    for expr in &item.cfg_exprs {
+        expr.features(&mut variables);
+    }
+    variables.retain(|feature| !dep.gating_features.contains(feature));
+    if variables.len() > 20 {
+        return false;
+    }
+    let variables = variables.into_iter().collect::<Vec<_>>();
+    let combinations = 1usize << variables.len();
+
+    for mask in 0..combinations {
+        let enabled = variables
             .iter()
-            .any(|feature| dep.gating_features.contains(feature))
-    })
+            .enumerate()
+            .filter(|(index, _)| mask & (1 << index) != 0)
+            .map(|(_, feature)| feature.clone())
+            .collect::<BTreeSet<_>>();
+        if item
+            .cfg_exprs
+            .iter()
+            .all(|expr| cfg_can_be_true(expr, &enabled))
+        {
+            return false;
+        }
+    }
+    true
+}
+
+fn cfg_can_be_true(expr: &CfgExpr, enabled: &BTreeSet<String>) -> bool {
+    match expr {
+        CfgExpr::Feature(feature) => enabled.contains(feature),
+        CfgExpr::All(items) => items.iter().all(|item| cfg_can_be_true(item, enabled)),
+        CfgExpr::Any(items) => items.iter().any(|item| cfg_can_be_true(item, enabled)),
+        CfgExpr::Not(item) => cfg_can_be_false(item, enabled),
+        CfgExpr::Other => true,
+    }
+}
+
+fn cfg_can_be_false(expr: &CfgExpr, enabled: &BTreeSet<String>) -> bool {
+    match expr {
+        CfgExpr::Feature(feature) => !enabled.contains(feature),
+        CfgExpr::All(items) => items.iter().any(|item| cfg_can_be_false(item, enabled)),
+        CfgExpr::Any(items) => items.iter().all(|item| cfg_can_be_false(item, enabled)),
+        CfgExpr::Not(item) => cfg_can_be_true(item, enabled),
+        CfgExpr::Other => true,
+    }
 }
 
 fn detect_non_additive_features(
