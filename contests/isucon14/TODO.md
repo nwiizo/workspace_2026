@@ -11,7 +11,8 @@
 - ベンチマーカーは30msを1tickとして進むため、全エンドポイントの理想値を30ms以内とする
 - スコアは「空車で乗車地点へ移動した距離×0.1 + 乗車中の移動距離 + 完了ライド数×5」で評価する
 - 空車移動より乗車中の移動の価値が10倍なので、単なる処理件数だけでなく乗車地点に近い椅子の割当を優先する
-- 通知は全状態遷移を順番どおり、at least onceで返す
+- 通知は全状態遷移を順番どおり返す。厳密なat-least-onceはresponse ACKがない現行APIでは
+  未達であり、`*_sent_at` commit後からclient受信前の切断を故障注入して残余riskを追う
 - 通知状態は変化から3秒以内に反映する
 - nearbyの座標とownerの累積距離は3秒以内のずれに収める
 - nearbyで3秒のずれが許されるのは座標だけで、椅子の割当可否は即時に反映する
@@ -168,6 +169,18 @@
   - 最終60秒3走95,596 / 101,037 / 115,968点、観測範囲95,596–115,968点
   - 推定代表値の中央値101,037点、全run`pass=true`・error map空
   - 詳細: [`tuning/25-payment-idempotency.md`](./tuning/25-payment-idempotency.md)
+- [x] 状態不変のapp / chair通知payloadをrevision付きprocess cacheから返す
+  - writer commit後にuser / chair revisionを進め、読み取り中のstale payload再挿入を防止
+  - app payloadが参照するchair statsにもrevisionを持ち、別userの評価によるcross-keyの
+    stale payloadをlookupとinsertの両方で拒否
+  - 未送信status中は30ms、全status送信後またはrideなしの定常cacheだけ100ms
+  - 30ms固定cacheは3走中央値88,757点へ悪化し、closed-loop request増加として不採用
+  - dependency追加前の3走114,996 / 103,957 / 112,156点は途中結果として保持
+  - cross-user chair stats修正後の最終60秒3走111,798 / 103,727 / 109,443点、
+    観測範囲103,727–111,798点
+  - 推定代表値の中央値109,443点、Benchmark 25比+8.3%、全run`pass=true`・error map空
+  - 診断runでapp / chair通知の平均を113 / 130msから37 / 51msへ短縮
+  - 詳細: [`tuning/26-notification-payload-cache.md`](./tuning/26-notification-payload-cache.md)
 - [x] nearbyの集合SQL、chair statsの集約SQL、batch matcherを実装
 - [x] 上記3変更を別々のBenchmarkとして正当性・性能検証する
 
@@ -177,7 +190,7 @@
 |---|---|---|---|
 | P0 | `internal_get_matching` | 64件batch + 近傍優先、外部pollは500ms | 空き定義の集約、500msの最小待ち |
 | P0 | `app_get_nearby_chairs` | 最新座標はcurrent-state表 + process cache、active / 割当可否はDB、評価はsnapshot + revision + delivery leaseで除外 | 最終run例8.079ms。ride antijoinとtracker確認の内訳を測る |
-| P0 | 通知2経路 | 30ms pollingごとに認証、最新ride、status、表示データを取得 | 60秒で通知GET 34,360回、同じレスポンスの再計算 |
+| P0 | 通知2経路 | recipient + chair stats dependency revision付きpayload cache。未送信statusは30ms、定常cacheは100ms。cursorはDBに維持 | 診断runのp95はapp 166ms / chair 181ms。response ACKなしの配送loss、cache missのphase分解、long pollingが未検証 |
 | P0 | `get_chair_stats` | 評価時差分更新 + 主キーreadへ変更 | SQL累積は約89%減、スコア中央値は約3.5%低下したため次の通知施策と合わせて再評価 |
 | P0 | `app_post_ride_evaluation` | ride IDの冪等keyで決済retry。完了時刻は決済後の最終SQL。ただしDB transaction中に外部HTTPと最大5回の100ms sleep | connection・snapshot・ride row lockを外部I/O中も保持。pending状態とcrash recoveryを設計してtransactionを分割する |
 | P0 | `chair_post_coordinate` | 履歴INSERT + current UPDATE、遷移候補だけride lock + 最新status再読 | current UPDATE平均0.744msとrow-lock待ち。write amplificationを減らす |
@@ -236,22 +249,29 @@
 - [x] `CODE=33` など通知内容の不整合が発生していないことを確認する
 - [x] nginx access logから30ms走行のエンドポイント別件数を採取する
   - app通知18,382、chair通知15,978、座標更新14,644
-- [ ] エンドポイント別のp50 / p95 / p99を一時的な計測で採取する
+- [x] エンドポイント別のp50 / p95 / p99を診断overlayで採取する
+  - 変更前app通知96 / 274 / 344ms、chair通知119 / 289 / 352ms
+  - Benchmark 26後app通知2 / 166 / 257ms、chair通知5 / 181 / 269ms
+  - 通常スコアrunとは分離し、詳細は [`tuning/26-notification-payload-cache.md`](./tuning/26-notification-payload-cache.md)
 - [ ] 各エンドポイントの30ms超過率と、1tick中に完了できなかった回数を記録する
 - [ ] sqlx poolの `size` / `idle` / `in_use` と取得待ち時間を1秒ごとに採取する
 - [x] MySQLのprepared statement統計をSQL本文別に回数、累積、平均、最大、走査行数で並べる
   - SQLxの個別queryはdigest表で `statement/com/Execute` へ集約されるため、`prepared_statements_instances` をSQL本文でgroup化
   - `coupons.used_by` 変更前: 60,993回、56.615秒、平均0.928ms、61,616,755行走査
-- [ ] 次回のprepared statement計測ではrun前後の `Connections` と
+- [x] prepared statement計測で終了時の `Connections` と
   `Performance_schema_prepared_statements_lost` も保存する
   - 終了前に閉じたconnectionのinstanceは集計から消えるため、現在値だけでは全期間を保証しない
+  - Benchmark 26診断run終了時: `Connections=88`、`Performance_schema_prepared_statements_lost=0`
 - [x] `docker stats` でwebapp、MySQL、nginx、ベンチマーカーのCPU・メモリ・I/Oを同時に採取する
   - 診断run中の2 snapshotでMySQL 188.32–239.10%、webapp 70.65–89.16%
-- [ ] 全エラー件数の合計と、200件のエラー予算に対する消費率を記録する
-- [ ] 座標・status系APIのp99を評価遅延予算と比較する
+- [x] 採用したBenchmark 26の全エラー件数と、200件のエラー予算に対する消費率を記録する
+  - 最終3走は各0件、消費率0%
+- [x] 座標・status系APIのp99を評価遅延予算と比較する
   - matching評価: 100tick = 3秒未満
   - pickupの余分な遅延: 15tick = 450ms未満
   - driveの余分な遅延: 5tick = 150ms未満
+  - Benchmark 26診断run: coordinate p99 234ms、chair status p99 266ms
+  - 150msを超えるため、通知cache後もcoordinate / statusをP0として継続
 - [x] 結果を [`tuning/02-notification-transactions.md`](./tuning/02-notification-transactions.md) と [`TUNING.md`](./TUNING.md) に反映する
 - [x] `tuning/02-notification-transactions.md` の説明を現在の実装へ修正する
   - 全面autocommit化ではなく、rideなしの分岐だけをtransaction外へ出している
@@ -263,19 +283,19 @@
 
 ### 運用ルール
 
-- [ ] profile採取run、ツールのoverhead測定run、最終スコアrunを分離する
+- [x] HTTP timingの診断runと、access logを追加しない最終スコアrunを分離する
 - [ ] 各ツールのversion、実行コマンド、sampling間隔、開始・終了時刻を記録する
 - [ ] macOSホスト、Colima Linux VM、Docker containerのどこで採取した値かを必ず明記する
-- [ ] 計測用package・capability・debug symbolは通常imageへ入れず、profile用DockerfileまたはCompose overrideへ分離する
+- [x] nginx timing logを `ISUCON_DIAGNOSTIC=1` のCompose overlayへ分離する
 - [ ] ツールあり／なしで同一revisionを各3回走らせ、スコア中央値とCPU使用率の差から計測overheadを確認する
-- [ ] 認証token、Cookie、決済情報をaccess log、packet capture、profile artifactへ残さない
+- [x] nginx診断logへ認証token、Cookie、request body、決済情報を残さない
 - [ ] artifactはrun IDでまとめ、HTTP、SQL、CPU、I/Oを同じ時刻範囲で照合できるようにする
 
 ### 現在の利用可否
 
 | 優先度 | ツール | 現在の状態 | 主な用途 |
 |---|---|---|---|
-| P0 | `alp 1.0.21` | macOSホストへ導入済み。現在のnginx logには時間項目なし | endpoint別件数、p50 / p95 / p99、総処理時間 |
+| P0 | `alp 1.0.21` | macOSホストへ導入済み。診断overlayのJSON timing logと集計scriptを追加 | endpoint別件数、p50 / p95 / p99、総処理時間 |
 | P0 | MySQL `performance_schema` / `sys` schema | `performance_schema=ON` | SQL fingerprint別の回数、累積時間、lock・I/O |
 | P0 | `docker stats` / `docker top` | 利用可能 | container別CPU、memory、block I/O、process |
 | P0 | `hyperfine 1.20.0` | macOSホストへ導入済み | build、initialize、起動、補助scriptの反復比較 |
@@ -439,19 +459,21 @@
 
 ### HTTP: `alp` とnginx access log
 
-- [ ] nginxへ診断用LTSVまたはJSON `log_format` を追加する
-  - method、正規化可能なURI、status、`request_time`
-  - `upstream_response_time`、`upstream_connect_time`
-  - request / response bytes、connection ID、`connection_requests`
-- [ ] path parameterのride IDなどを `alp --matching-groups` でまとめ、同一endpointを別行へ分散させない
-- [ ] `alp` でcount、sum、avg、p50、p95、p99、max、5xx / 499件数をendpoint別に出す
+- [x] nginx診断用JSON `log_format` を追加する
+  - method、URI、status、`request_time`、`upstream_response_time`
+  - `upstream_connect_time`、request / response bytes、connection ID、`connection_requests`
+- [x] path parameterのride IDを `alp --matching-groups` でまとめ、同一endpointを別行へ分散させない
+- [x] `alp` でcount、sum、avg、p50、p95、p99、max、5xx / 499件数をendpoint別に出す
+- [x] `DIAGNOSTIC_SINCE` でrun開始時刻を固定し、同じnginx containerの過去logを混ぜない
+- [x] `compose logs` 失敗と診断JSON 0件を集計成功として扱わない
 - [ ] `request_time - upstream_response_time` からnginx・socket・client側の待ちを推定する
 - [ ] `alp --dump` と `alp diff` で変更前後を機械比較できる形にする
 - [ ] access logをtmpfsまたは診断用volumeへ出す場合と無効化した場合を比較し、log I/Oのscore overheadを測る
 - [ ] localhostまたはDocker network内だけから参照できる`stub_status` endpointを診断構成へ追加する
 - [ ] `stub_status`のactive、reading、writing、waiting、accepts、handled、requestsを1秒間隔で採取する
 - [ ] `handled < accepts`、active connection上限、writingの継続増加をnginx側の飽和兆候として扱う
-- [ ] 採用条件: 30ms超過を作るendpointと回数を特定でき、ツール有効時のスコア低下が許容範囲または別runへ分離できる
+- [x] 採用条件: 30ms超過を作るendpointを特定し、診断runを最終スコアrunから分離する
+  - 変更後もapp / chair通知p95は166 / 181ms、coordinate p99は234ms
 
 ### SQL: `performance_schema`、`sys` schema、`pt-query-digest`
 
@@ -667,20 +689,27 @@
 - [ ] 同一recipientへの並行pollingが発生する構成になった場合だけ `FOR UPDATE SKIP LOCKED` を比較する
 - [ ] transactionは未送信statusのclaimからsent更新までの最短区間だけにする
 - [ ] app/chairそれぞれで、状態遷移の順序とat least onceを並行リクエストでも確認する
+- [ ] `*_sent_at` commit後・response受信前の接続切断を故障注入し、現状は未受信statusを
+  replayできないことを固定テストで示す
+- [ ] 厳密なat-least-onceが必要なら、client ACKまたは次回pollで前回statusをACKしてから
+  cursorを進めるprotocolを設計し、公式client互換性と追加DB負荷を比較する
 - [x] wall-clockが逆転した履歴でもapp/chairが状態遷移順に配信することをHTTPで確認する
   - `MATCHING -> ENROUTE -> PICKUP -> CARRYING` を両endpointで確認
   - 実行: `./scripts/test-status-notification-order.sh`
 - [x] `retry_after_ms` を30 / 50 / 100msで比較し、通知遅延とDB負荷の交点を測る
-  - 50 / 100msはCOMMIT回数を減らしたがスコアを改善せず、実装は30msへ戻した
+  - 全pollを50 / 100msにする案はCOMMIT回数を減らしたがスコアを改善せず不採用
+  - Benchmark 26では未送信statusを30msに残し、状態不変cacheだけ100msを採用
   - 詳細は [`tuning/10-notification-retry-interval.md`](./tuning/10-notification-retry-interval.md)
-- [ ] 同じ利用者・椅子への直前payloadと最新ride状態をcacheし、状態不変時のSQLとJSON再構築をなくす
-- [ ] cache keyをrecipient ID、valueを `last_status_id` / ride version / payloadとし、ride割当・status追加・評価確定で明示的にinvalidateする
-- [ ] TTLだけに依存せず、cache missとプロセス再起動時はDB履歴から復元する
+- [x] 同じ利用者・椅子への直前payloadをcacheし、状態不変時のSQLとJSON再構築をなくす
+- [x] cache keyをrecipient ID、valueをrevision / generation / JSON bytesとし、ride割当・status追加・評価確定で明示的にinvalidateする
+- [x] app payloadにchair stats dependency revisionを持たせ、別userの評価後に同じchairを
+  参照するcache hitとstale insertを拒否する
+- [x] TTLに依存せず、cache missとプロセス再起動時はDB履歴から復元する
 - [ ] JSON APIのまま最大60秒のlong pollingを実装し、状態変化時に `Notify` / channelで即時wakeする案をSSEより先に比較する
 - [ ] version確認 → waiter登録 → version再確認の順にして、確認と待機開始の間に発生した通知を取りこぼさない
 - [ ] long polling中はDB connectionとtransactionを保持せず、切断・timeout・再接続時もat least onceを維持する
-- [ ] cacheはpayload生成の高速化だけに使い、`app_sent_at` / `chair_sent_at` の配信cursorと混同しない
-- [ ] 未配信statusが複数ある再接続では、cacheの最新1件だけを返さず状態遷移順で全件を送る
+- [x] cacheはpayload生成の高速化だけに使い、`app_sent_at` / `chair_sent_at` の配信cursorと混同しない
+- [x] 未配信statusが複数ある場合はcacheせず、状態遷移順で1件ずつ送る
 - [ ] JSON polling、JSON long polling、SSEを同一条件で比較し、protocol変更だけではなくDB query数と通知遅延が減った案を採用する
 
 ### 決済と評価

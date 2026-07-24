@@ -1248,6 +1248,199 @@ interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
 task内のDB errorはprocessをpanicさせずwarnへ記録します。ただしwarnを握りつぶして
 正しいとは扱いません。3秒収束を超える連続失敗を検知するmetricsは今後必要です。
 
+## revision付き通知payload cacheをRustで実装する
+
+Benchmark 26では、状態不変のapp / chair通知をMySQLから毎回組み立てず、serialize済みの
+JSON bytesをprocess内で再利用しました。cross-user chair stats dependencyを含む最終版の
+3走中央値は101,037点から109,443点へ約8.3%上がりました。
+
+### `Arc<Mutex<State>>` の責務
+
+```rust
+#[derive(Clone, Default)]
+struct NotificationCache {
+    inner: Arc<StdMutex<NotificationCacheState>>,
+}
+```
+
+`Arc` は、Axum routerと各requestへcloneされる `AppState` が同じcacheを共有するために
+使います。`Mutex` はpayload mapとrevision mapを1つの更新単位として守ります。
+
+同期mutexを使ってよいのは、critical sectionが次の短い処理だけだからです。
+
+- `HashMap::get`
+- `HashMap::insert`
+- `HashMap::remove`
+- `u64` revisionの加算
+
+mutex guardを保持したままSQL、JSON serialization、response送信、`.await` は行いません。
+I/O待ちをlock内へ入れると、1 requestのDB遅延が全notification cache hitを止めます。
+
+### `Bytes` をvalueにする
+
+cache valueはresponse structではなく `axum::body::Bytes` です。
+
+```rust
+let payload = Bytes::from(serde_json::to_vec(&response)?);
+cache.insert_app_if_current(user_id, revision, chair_stats_revision, payload.clone());
+```
+
+`Bytes::clone` は通常、buffer全体をcopyせず参照countを増やす軽量操作です。cache hitごとに
+複数の `String` をcloneして `serde_json` で再serializeする仕事を避けられます。
+
+responseへはJSONのContent-Typeを明示します。
+
+```rust
+Response::builder()
+    .header(CONTENT_TYPE, "application/json")
+    .body(Body::from(payload))
+```
+
+`axum::Json<T>` から生bytes responseへ型を変えると、Content-Typeを自動設定してくれる
+wrapperを通らなくなります。bodyだけ同じでもheaderを落とさないことが必要です。
+
+### borrowしたIDと所有するIDを分ける
+
+lookupとinvalidationはIDを所有する必要がないため `&str` を受けます。
+
+```rust
+fn invalidate_app(&self, user_id: &str)
+```
+
+cacheへ新しいkeyを保存する場合だけ `String` を受け取り、`HashMap` がownershipを持ちます。
+
+```rust
+fn insert_app_if_current(&self, user_id: String, ...)
+```
+
+すべてのmethodで `String` を要求すると、30ms pollingのhot pathで不要なallocationが
+増えます。一方、mapへborrowed `&str` を保存する設計は元のモデルより長いlifetimeを
+保証しにくいため、保存時だけownedにします。
+
+### revisionでstale insertを拒否する
+
+notification handlerはcache miss時にrevision snapshotを取ります。DB query中にwriterが
+commitすると、writerはrevisionを進めてpayloadを削除します。
+
+```rust
+if state.generation == snapshot.generation
+    && current_revision == snapshot.revision
+{
+    state.app_payloads.insert(user_id, payload);
+}
+```
+
+handlerが古いDB snapshotを読み終えても、revisionが変わっていればinsertしません。
+「writerがcacheをremoveしたから安全」ではなく、removeより前に始まったreaderが後から
+書き戻す順序まで扱う必要があります。
+
+`u64::wrapping_add` はdebug/releaseでoverflow挙動を変えないために使っています。64 bitを
+使い切る現実的なrunはありませんが、overflow時にprocess panicしてcacheの補助処理が
+service停止へ広がることを避けます。厳密な永続versionではないため、process再起動時は
+DBへfallbackします。
+
+### recipientをまたぐ依存関係もrevisionにする
+
+app通知のkeyはuser IDですが、valueには割り当てられたchairの累積乗車回数と平均評価も
+含まれます。同じchairを後で利用した別userが評価すると、最初のuser自身にはwriteがなくても
+payloadは変わります。cache keyとwriterのIDが一致するとは限らない例です。
+
+```text
+past-user cache ──参照──> shared-chair stats revision 7
+new-user evaluation       shared-chair stats revision 8へ更新
+past-user lookup          7 != 8なのでcache miss
+```
+
+全past userを逆引きしてentryを削除する代わりに、app entryへ
+`ChairStatsCacheRevision { chair_id, revision }` を保存します。lookup時とinsert時の両方で
+現在revisionと比較するため、すでに保存済みのstale hitだけでなく、DB読取り中に評価が
+commitした後のstale再挿入も拒否できます。
+
+dependency snapshotは最新rideのchair IDを事前に読んだ後、通知transactionを開く前に取ります。
+実際のtransactionでchair IDが変わっていたらcacheしません。ride作成やmatcherのinvalidationと
+組み合わせ、別snapshotのchair statsを長期保存しないためです。このようにcacheを設計するときは、
+「keyのownerが書いたか」ではなく「JSONの各fieldがどのwriterで変わるか」を列挙します。
+
+### generationでinitialize前後を分ける
+
+recipient revisionだけをclearすると、initialize前のsnapshotがrevision 0、
+initialize後もrevision 0となり、古いinsertが通るABAに似た問題が起きます。
+
+```text
+old generation: user-1 revision 0
+initialize: map clear
+new generation: user-1 revision 0
+old reader: revision 0なので一致したように見える
+```
+
+global generationも比較すれば、同じID・同じrevision番号でもDB世代が違うことを判定できます。
+initializeはmaintenance write lockを持ち、cache clear、DB再作成、他cache refreshを行います。
+
+### writerのcommit後にinvalidateする
+
+transactionがrollbackされたのにcacheだけ消えても、次回DBから正しい値を作り直すため
+正当性は壊れません。ただし不要なmissになります。現在は成功したcommit後にinvalidateし、
+実際に公開状態が変わった場合だけcacheを捨てます。
+
+commitとinvalidateの間には短い区間があります。その間に開始したpollは旧payloadを返し得ますが、
+次のinvalidateでentryは消えます。writerがDB commit前にrevisionを進め、commit失敗時に
+元へ戻す方式は、rollbackと並行readerをさらに複雑にします。現在の3秒反映要件、単一process、
+直後の明示的invalidationを前提にcommit後を選びました。
+
+複数processでは別processのmemoryをinvalidateできません。DB version、共有message bus、
+または短いversion確認を追加するまで、process cacheを共有cacheのように扱いません。
+
+### `Option` の状態をcache条件に使う
+
+未送信status queryの結果は `Option<RideStatus>` です。`Some` のときはそのstatusを返して
+sent時刻を更新しますが、cacheしません。`None` のときだけ最新status fallbackを含む
+定常payloadをcacheします。
+
+```rust
+let cacheable = ride_status_id.is_none();
+```
+
+sent更新ではIDを後でも使えるよう、所有権を移さず参照でpattern matchします。
+
+```rust
+if let Some(ride_status_id) = &ride_status_id {
+    update_sent_at(ride_status_id).await?;
+}
+
+if ride_status_id.is_none() {
+    // still available here
+}
+```
+
+`if let Some(id) = ride_status_id` と書くと、`String` をOptionからmoveし、その後
+`ride_status_id.is_none()` を呼べません。参照patternにすることで、SQL bindとcache条件の
+両方へ同じOptionを使えます。
+
+### server内cursorとclientへの配送完了は別
+
+`app_sent_at` / `chair_sent_at` はtransaction内で更新され、その後にJSONを生成してHTTP bodyを
+返します。Rust handlerがcursorをcommitできたことは、clientがbodyを受け取ったことを
+意味しません。commit後にtaskがcancelされたり接続が切れたりすると、未受信statusを次回
+pollで選び直せません。
+
+cacheは未送信statusを保存しないため状態遷移を途中から最新payloadで上書きしませんが、
+既存cursorをat-least-onceへ変えるものでもありません。厳密な保証にはclient ACK、または
+次回requestで前回statusをACKしてからcursorを進めるprotocolが必要です。型安全なRust実装でも、
+process境界を越えた配送保証はownershipだけでは表現できない点に注意します。
+
+### cacheとpoll間隔を同時に見る
+
+最初の30ms固定cacheはDB queryを減らしましたが、3走中央値が88,757点へ悪化しました。
+responseが速くなるとclientが次requestを早く始めるclosed-loop loadだったためです。
+
+未送信status中は30ms、cacheableな定常responseだけ100msにしたdependency追加前版は
+中央値112,156点、cross-userのstale statsを修正した最終版は109,443点でした。
+Rust内部のallocationやlockだけでなく、responseがclientの次の行動をどう変えるかまで含めて
+API性能を考える必要があります。
+
+詳細なHTTP分布、失敗run、全invalidation点は
+[Benchmark 26](./26-notification-payload-cache.md)を参照してください。
+
 ## 頻繁に読む集計値は変更点で更新する
 
 Benchmark 20では、app通知のたびに履歴をJOINしていたchair statsを

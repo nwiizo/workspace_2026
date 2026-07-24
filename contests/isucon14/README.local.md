@@ -55,6 +55,7 @@ git -C "$source_dir/isucon14" archive HEAD | tar -x -C contests/isucon14
 | `scripts/test-chair-stats-transitions.sh` | 評価の所有者認可、完了条件、決済rollback、再送時の非加算をHTTP検証 |
 | `scripts/test-owner-sales-response-boundary.sh` | 遅い決済中の評価完了時刻とowner salesの`until`境界をHTTP・決済TCP accept・InnoDB行ロック・response JSON・SQLで確認 |
 | `scripts/benchmark.sh` | 決済モックを含む公式ベンチマーカーの実行 |
+| `scripts/report-endpoint-latency.sh` | 診断runのnginx timing logをendpoint別に集計 |
 | `.dockerignore` / `webapp/rust/.dockerignore` | Dockerへ不要なソース・`target/` を送らない |
 
 ## 初期構築方法
@@ -64,6 +65,7 @@ git -C "$source_dir/isucon14" archive HEAD | tar -x -C contests/isucon14
 - Docker Engine または Docker Desktop
 - Docker Compose v2（`docker compose` または `docker-compose`）
 - `curl`（疎通確認）、`jq`とTime::HiResを含むPerl（最新位置の故障注入テスト）
+- 任意: `alp 1.0.21`（endpoint latencyの診断runだけで使用）
 - 初回ビルド用のインターネット接続
 
 Rust、Go、Node.js、pnpm をホストへインストールする必要はありません。
@@ -222,8 +224,32 @@ cd contests/isucon14
 ./scripts/benchmark.sh 60
 ```
 
+endpoint別のp50 / p95 / p99を採るときだけ、診断overlayを有効にします。
+
+```sh
+diagnostic_since=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+ISUCON_DIAGNOSTIC=1 ./scripts/benchmark.sh 60
+DIAGNOSTIC_SINCE="$diagnostic_since" ./scripts/report-endpoint-latency.sh
+```
+
+`ISUCON_DIAGNOSTIC=1` は
+[`compose.diagnostics.yaml`](./compose.diagnostics.yaml) から
+[`docker/nginx.diagnostic.conf`](./docker/nginx.diagnostic.conf) をmountし、APIのmethod、
+URI、status、request time、upstream response time、request / response bytesを
+JSONでstdoutへ記録します。
+upstream connect time、connection ID、同じconnection上のrequest回数も含みます。
+Cookie、認証token、request body本文、決済情報は記録しません。通常のスコアrunは
+環境変数を付けずに実行し、access logの追加処理と分離してください。
+
+集計にはmacOSホストの `alp 1.0.21` を使います。ride IDを含むpathは
+`/api/app/rides/[^/]+/evaluation` と `/api/chair/rides/[^/]+/status` へ正規化されます。
+診断runは原因を調べる値で、通常runの3走中央値と混ぜません。
+`DIAGNOSTIC_SINCE` は同じnginx containerに残る前回runのlogを混ぜないため必須です。
+`compose logs` またはJSON抽出に失敗した場合も、空の集計を成功として扱わず停止します。
+通常表の4xx合計とは別に、clientがresponse完了前に切断したHTTP 499をendpoint別に出します。
+
 走行時間は引数または環境変数で指定します。省略時は公式と同じ 60 秒です。
-上記6つの `test-*.sh` はDBを公式初期データへ戻すため、保持したいローカルデータが
+上記の `test-*.sh` はDBを公式初期データへ戻すため、保持したいローカルデータが
 ある環境では実行しないでください。使い捨てのISUCON検証stackを対象にします。
 
 `test-auth-cache.sh` はinitialize失敗を再現する短い区間だけ、
@@ -294,6 +320,7 @@ RESET=1 ./scripts/down.sh
 | 評価response配送競合の修正 | nearby開始snapshot + completion revision + body drop起点1秒lease + initialize generation。3走96,542–105,002点、中央値103,046点、全run `pass=true`・error map空、`CODE=30` 0件 |
 | owner売上の完了時刻境界 | 決済成功後にevaluation / `COMPLETED` / chair statsを確定し、DBとresponseへ同じ完了時刻を使用。3走93,408–104,048点、推定代表値の中央値94,173点、全run `pass=true`・error map空、`CODE=24` 0件 |
 | 決済冪等化 + owner配送境界 | ride IDを全決済POSTの `Idempotency-Key` にして確認GETを削除。owner requestと重なる評価rideだけを除外。最終3走95,596–115,968点、中央値101,037点、全run `pass=true`・error map空 |
+| 通知payload cache | recipient revisionとchair stats dependency revisionでstale hit / 再挿入を防ぎ、未送信statusは30ms、状態不変cacheは100ms。最終3走103,727–111,798点、中央値109,443点（Benchmark 25比+8.3%）、全run `pass=true`・error map空 |
 
 初回の初期60秒走行ではMySQLのqueryが十数秒以上へ遅延し、ベンチマーカーの期限を
 超えました。同じ初期revisionを外部コンテナの大きな共有負荷がない条件で再計測
@@ -337,7 +364,26 @@ POSTで再試行します。回復しない4xxはDB transactionを保持した�
 Benchmark 24中央値比では約+7.3%ですが、Benchmark 23中央値には約-1.9%のため、
 最高点更新ではなく正当性改善とエラー時経路短縮として扱います。詳細は
 [`tuning/25-payment-idempotency.md`](./tuning/25-payment-idempotency.md)を参照してください。
-その後、診断runで `CARRYING` の後に古い `PICKUP` を返すCODE=11を再現したため、
+
+Benchmark 26では、変更前診断runでapp / chair通知の累積時間が
+10,726.603 / 9,357.486秒だったため、決済transaction分割より先に状態不変pollを
+対象にしました。全writerでrecipient revisionを進め、app payloadが含むchair statsには
+別のdependency revisionを持たせます。同じchairを別userが評価しても、過去userの
+stale stats payloadはlookupとinsertの両方で拒否します。未送信statusがない場合だけ
+JSON bytesをprocess cacheへ保存します。30ms固定cacheはHTTP pollを増やして
+3走中央値88,757点まで悪化したため不採用にし、定常cacheだけ100msへ変更しました。
+dependency revision追加前の3走は114,996 / 103,957 / 112,156点、中央値112,156点、
+全run error map空でした。レビュー修正版は別の3走111,798 / 103,727 / 109,443点で
+再計測し、中央値109,443点、範囲103,727–111,798点、全run `pass=true`・error map空でした。
+直前Benchmark 25の中央値101,037点より8.3%高く、dependency追加前より2.4%低い結果です。
+cross-userの正当性を満たす修正版だけを現在実装の代表値として扱います。
+変更後診断runではapp / chair通知の平均が113 / 130msから37 / 51ms、p50が96 / 119msから
+2 / 5ms、累積が3,941.695 / 3,887.219秒へ減りました。p95は166 / 181msで30msを
+超えているため、通知は引き続きP0です。詳細は
+[`tuning/26-notification-payload-cache.md`](./tuning/26-notification-payload-cache.md)を
+参照してください。
+過去のBenchmark 19では、診断runで `CARRYING` の後に古い `PICKUP` を返す
+CODE=11を再現したため、
 通知と最新statusの順序をwall-clockではなくENUMの状態遷移順へ変更しました。
 時刻逆転のHTTP回帰テストを追加し、通常条件の3走は89,539 / 98,338 / 99,895点、
 中央値98,338点、すべて `pass=true` でした。
@@ -448,6 +494,11 @@ Benchmark 24の最終確認では、トップの3リンクから `/simulator` �
 確認しました。利用者登録フォームを送信すると「決済トークン登録」へ遷移しました。
 この確認でも、登録前に開始したapp notificationとchair activityのHTTP 401だけが
 consoleへ残りました。
+
+Benchmark 26修正版の最終確認でも、トップの静的resource 17件はすべてHTTP 200でした。
+`/simulator` は利用者登録iframeとChair Simulatorを描画し、初回bootstrap時の
+app notification / chair activity 401をconsoleからclearした後、1秒間に新しいconsole
+errorは0件でした。chair notificationとcoordinateは継続してHTTP 200です。
 
 再確認するときは、サービスを起動した状態で次を実行します。
 

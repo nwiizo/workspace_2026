@@ -78,12 +78,17 @@
 | owner売上の評価境界 | 完了時刻を最終SQLで保存し、owner requestと重なる評価ride IDだけをrevision trackerで除外 | body drop後のclient計上差はprotocol ACKなしでは残る。複数process前に共有化 |
 | 最新位置をcurrent-state表で管理 | 履歴INSERTと同じtransactionで更新し、cacheを2秒ごとに再同期 | current UPDATEのrow-lock待ちとwrite amplificationを削減 |
 | pending rideと空き椅子のbatch matching | 最大64件、近傍優先まで実装済み | 地域間の距離上限、実行間隔、二部マッチングを比較 |
-| JSON通知のcache | 未実装 | 同じpayloadの再計算をなくし、long pollingをSSEより先に比較 |
+| JSON通知のcache | recipient revisionとchair stats dependency revision付きprocess cacheを実装。未送信status中は30ms、定常cacheは100ms | response ACKなしの配送lossを故障注入し、cache missのp95分解とDB connectionを保持しないlong pollingをSSEより先に比較 |
 | 座標更新の非同期・bulk INSERT | 通常経路を4 SQLから2 SQLへ削減。pickup / destination候補だけlockし、statusをcurrent readする | per-chair順序付きqueueと3秒以内のbulk反映を実験 |
 | 決済HTTP client | process内で1個を共有し、冪等なPOST / retryでconnection poolを再利用済み | TCP connect回数とstatus別retry数を診断runで採取 |
 | 決済の `Idempotency-Key` | ride IDを全POSTへ設定し、確認GETとuser全ride取得を削除済み | pending状態とcrash recoveryを設計し、外部HTTPをDB transaction外へ出す |
 
-SSEは形式だけ変更しても、DB query数とpayload生成量が同じなら効果が薄いと考えます。JSON payload cache、`retry_after_ms`、DB connectionを保持しないlong pollingを先に計測し、それでも通知経路が律速の場合にstatus変更時の即時pushと接続単位cacheを含めて実装します。
+SSEは形式だけ変更しても、DB query数とpayload生成量が同じなら効果が薄いと考えます。
+Benchmark 26ではJSON payload cacheと状態不変時だけ100msにするpollingを実装し、
+cross-user chair stats dependency修正後も3走中央値を101,037点から109,443点へ改善しました。
+次はDB connectionを保持しない
+long pollingを比較し、それでも通知経路が律速の場合にstatus変更時の即時pushと
+再接続replayを含めてSSEを検討します。
 
 ### キャッシュ・非同期化の正当性上の注意
 
@@ -104,7 +109,11 @@ SSEは形式だけ変更しても、DB query数とpayload生成量が同じな�
 
 matcherは単純なマンハッタン距離だけでなく、椅子モデルのspeedを含むpickup予測tickで比較します。batch内の目的関数は、まず割当可能件数を最大化し、次に期限へ近いrideを救い、その範囲でpickup時間を最小化します。これにより、近い新規rideだけを選び続けて古いrideが残る問題を避けます。
 
-通知cacheはDB上の配信cursorの代替にはしません。recipientごとに `last_status_id` とpayloadを保持し、ride割当・status追加・評価確定でinvalidateします。long pollingではversion確認後にwaiterを登録し、待機前にもう一度versionを確認して、確認と待機開始の間のイベントを取りこぼさないようにします。
+通知cacheはDB上の配信cursorの代替にはしません。recipientごとにpayloadとrevisionを保持し、
+app payloadが参照するchair statsにもdependency revisionを持たせます。ride割当・status追加・
+評価確定でinvalidateします。現行の `*_sent_at` はresponse ACK前に進むため厳密な
+at-least-onceではありません。long pollingではversion確認後にwaiterを登録し、待機前に
+もう一度versionを確認して、確認と待機開始の間のイベントを取りこぼさないようにします。
 
 座標batchでは、latest-coordinate cacheと永続化待ちの座標列を分けます。中間座標を捨てると累積距離が短くなり、pickupやdestinationとの一致も失うため、nearby用の最新値だけを上書きし、履歴・距離・status判定に必要な全座標は順番どおり処理します。
 
@@ -818,8 +827,10 @@ invalidationは、元データが変わったとき古いcacheを捨てる処理
 再接続にも強い一方、変化がなくても認証、SQL、JSON生成、HTTP responseが発生します。
 
 間隔を長くすると負荷は下がりますが、状態発見が遅れます。ISUCON14では通知が遅れると
-次の行動も遅れるため、DB query数の減少だけで採用できません。30 / 50 / 100ms比較では
-通知GETが減っても総スコアが上がらず、30msを維持しました。
+次の行動も遅れるため、DB query数の減少だけで採用できません。Benchmark 10で全pollを
+30 / 50 / 100msにした比較では30msを維持しました。一方Benchmark 26では、未送信statusを
+配送中のresponseは30msのまま、DBとJSON生成を省ける定常cacheだけ100msにしています。
+どの状態でも一律に同じ間隔へ変える施策とは分けて判断します。
 
 #### N+1
 
@@ -868,7 +879,7 @@ amountを記録するため、ride IDを同じkeyとして再利用すれば、�
 | [07-matcher-nearest.md](./tuning/07-matcher-nearest.md) | 乗車地点に近い空き椅子を優先 | `pass=true`、スコア16,909、エラー0 | 実測n=1・未推定 |
 | [08-coordinate-hot-path.md](./tuning/08-coordinate-hot-path.md) | 座標更新の通常経路を4 SQLから2 SQLへ削減 | `pass=true`、スコア11,599、`CODE=17` 2件 | 実測n=1・未推定 |
 | [09-coupon-code-index.md](./tuning/09-coupon-code-index.md) | 招待coupon検索の全走査とlock範囲を削減 | `pass=true`、スコア15,415、エラー0 | 実測n=1・未推定 |
-| [10-notification-retry-interval.md](./tuning/10-notification-retry-interval.md) | 通知pollingを30 / 50 / 100msで比較 | 30msを維持、50 / 100msは不採用 | 各条件実測n=1・未推定 |
+| [10-notification-retry-interval.md](./tuning/10-notification-retry-interval.md) | 全通知pollingを30 / 50 / 100msで比較 | 全状態を同じ間隔にする案では30msを維持、50 / 100msは不採用 | 各条件実測n=1・未推定。Benchmark 26の定常cacheだけ100msとは条件が異なる |
 | [11-matcher-interval.md](./tuning/11-matcher-interval.md) | matcherを500 / 100 / 30msで比較 | 500msを維持、30msは41,016点へ悪化 | 条件ごとのnは詳細に記載 |
 | [12-status-covering-index.md](./tuning/12-status-covering-index.md) | 最新status検索をcovering INDEX化 | 実行計画は改善、45,075点のため不採用 | 実測n=1・未推定 |
 | [13-mysql-commit-durability.md](./tuning/13-mysql-commit-durability.md) | redo / binary logのcommit同期を緩和 | 3走中央値53,198→60,102点、`COMMIT`平均中央値48.6%減 | 各条件実測n=3、中央値を推定代表値に使用 |
@@ -884,6 +895,7 @@ amountを記録するため、ride IDを同じkeyとして再利用すれば、�
 | [23-code30-response-delivery.md](./tuning/23-code30-response-delivery.md) | nearby開始snapshot・completion revision・body drop起点1秒leaseで評価responseの配送競合を抑制 | generation/pruneを含む3走96,542–105,002点、中央値103,046点、全run `pass=true`・error map空、`CODE=30` 0件 | 実測n=3。body drop→client受信差を約55–677msと相関し、1秒leaseを選択。候補runで観測した`CODE=17`は再発時に継続調査 |
 | [24-owner-sales-completion-boundary.md](./tuning/24-owner-sales-completion-boundary.md) | 評価の完了writeを決済成功後へ移し、長い決済待ちによるowner `until`の時刻逆転を除去 | 3走93,408–104,048点、推定代表値の中央値94,173点、全run `pass=true`・error map空、`CODE=24` 0件 | 実測n=3。修正前の時刻逆転と売上+700円を決定的に再現。直前中央値比-8.6%のため性能向上とは扱わず、追加SQLなし・冗長SELECT 1本削減の正当性修正として採用。commit→client計上境界はBenchmark 25で追加対策 |
 | [25-payment-idempotency.md](./tuning/25-payment-idempotency.md) | ride IDで決済POSTを冪等化して確認GETを削除し、owner requestと重なる評価rideだけを除外 | 最終3走95,596–115,968点、推定代表値の中央値101,037点、全run `pass=true`・error map空 | 実測n=3。Benchmark 24中央値比+7.3%、Benchmark 23中央値比-1.9%。決済retryの正当性と余計なエラー時処理の削減を理由に採用 |
+| [26-notification-payload-cache.md](./tuning/26-notification-payload-cache.md) | recipient + chair stats dependency revision付きpayload cache。未送信statusは30ms、状態不変cacheは100ms | 最終3走103,727–111,798点、推定代表値の中央値109,443点、全run `pass=true`・error map空 | 修正版実測n=3。Benchmark 25中央値比+8.3%。dependency追加前中央値112,156点は途中結果。30ms固定cache中央値88,757点はclosed-loop request増加で不採用。診断runで通知平均約61–67%、累積約59–63%減 |
 | [80-rust-implementation.md](./tuning/80-rust-implementation.md) | Rust / sqlxとrelease buildの知識 | 再build 30分52秒→11.02秒 | build時間の実測。スコア推定対象外 |
 | [81-evaluation-authorization.md](./tuning/81-evaluation-authorization.md) | 評価rideを認証ユーザー所有へ制限 | 公式prevalidation `pass=true`、別ユーザーHTTP回帰成功 | 正当性修正。60秒スコアはBenchmark 20から更新しない |
 | [90-local-environment.md](./tuning/90-local-environment.md) | build context、BuildKit、固定Colima資源 | context 467MB→32.5KB | sizeの実測。スコア推定対象外 |
