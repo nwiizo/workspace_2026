@@ -1,0 +1,31 @@
+[package]
+name = "cargo-api-drift"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+publish = false
+description = "Fast git-diff public API drift classifier for Rust crates"
+license = "MIT"
+
+[dependencies]
+cargo_metadata = "0.19"
+clap = { version = "4.5", features = ["derive"] }
+design-gate-core = { path = "../design-gate-core" }
+ra_ap_syntax = "0.0.331"
+rayon = "1.10"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+
+[dev-dependencies]
+assert_cmd = "2"
+predicates = "3"
+tempfile = "3"
+
+[lib]
+name = "cargo_api_drift"
+path = "src/lib.rs"
+
+[[bin]]
+name = "cargo-api-drift"
+path = "src/main.rs"
