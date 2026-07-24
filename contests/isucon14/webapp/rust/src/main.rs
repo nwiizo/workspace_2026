@@ -2,7 +2,9 @@ use anyhow::Context;
 use axum::extract::{Request, State};
 use axum::middleware::Next;
 use axum::response::Response;
-use isuride::{ActiveRideEvaluationTracker, AppState, Error, LatestChairLocationCache};
+use isuride::{
+    ensure_chair_stats, ActiveRideEvaluationTracker, AppState, Error, LatestChairLocationCache,
+};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::TcpListener;
@@ -43,6 +45,9 @@ async fn main() -> anyhow::Result<()> {
     let latest_chair_locations = LatestChairLocationCache::load(&pool)
         .await
         .context("failed to load latest chair locations")?;
+    ensure_chair_stats(&pool)
+        .await
+        .context("failed to load chair stats")?;
     let app_state = AppState {
         pool,
         payment_client: reqwest::Client::builder()

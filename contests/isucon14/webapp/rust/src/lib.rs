@@ -349,6 +349,64 @@ ON DUPLICATE KEY UPDATE
     Ok(())
 }
 
+pub async fn ensure_chair_stats(pool: &sqlx::MySqlPool) -> sqlx::Result<()> {
+    sqlx::query(
+        r#"
+CREATE TABLE IF NOT EXISTS chair_stats
+(
+  chair_id             VARCHAR(26) NOT NULL COMMENT '椅子ID',
+  total_rides_count    INTEGER     NOT NULL COMMENT '完了ライド数',
+  total_evaluation_sum BIGINT      NOT NULL COMMENT '完了ライドの評価合計',
+  PRIMARY KEY (chair_id)
+)
+COMMENT = '椅子ごとの完了ライド集計テーブル'
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    // Existing installations can start this binary before the next initialize.
+    // Replace the entire projection from the immutable ride/status history so a
+    // restart repairs missing, incorrect, and stale rows. InnoDB keeps the old
+    // committed projection visible to other connections until this transaction
+    // commits, rather than exposing the table between DELETE and INSERT.
+    let mut tx = pool.begin().await?;
+    sqlx::query("DELETE FROM chair_stats")
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query(
+        r#"
+INSERT INTO chair_stats (
+  chair_id,
+  total_rides_count,
+  total_evaluation_sum
+)
+SELECT chair_id,
+       COUNT(*)        AS total_rides_count,
+       SUM(evaluation) AS total_evaluation_sum
+FROM (
+  SELECT rides.id,
+         rides.chair_id,
+         rides.evaluation
+  FROM rides
+  INNER JOIN ride_statuses ON ride_statuses.ride_id = rides.id
+  WHERE rides.chair_id IS NOT NULL
+    AND rides.evaluation IS NOT NULL
+  GROUP BY rides.id, rides.chair_id, rides.evaluation
+  HAVING SUM(ride_statuses.status = 'ARRIVED') > 0
+     AND SUM(ride_statuses.status = 'CARRYING') > 0
+     AND SUM(ride_statuses.status = 'COMPLETED') > 0
+) AS completed_rides
+GROUP BY chair_id
+        "#,
+    )
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::{

@@ -113,6 +113,16 @@ CREATE TABLE rides
 )
   COMMENT = 'ライド情報テーブル';
 
+DROP TABLE IF EXISTS chair_stats;
+CREATE TABLE chair_stats
+(
+  chair_id              VARCHAR(26) NOT NULL COMMENT '椅子ID',
+  total_rides_count     INTEGER     NOT NULL COMMENT '完了ライド数',
+  total_evaluation_sum  BIGINT      NOT NULL COMMENT '完了ライドの評価合計',
+  PRIMARY KEY (chair_id)
+)
+  COMMENT = '椅子ごとの完了ライド集計テーブル';
+
 DROP TABLE IF EXISTS ride_statuses;
 CREATE TABLE ride_statuses
 (

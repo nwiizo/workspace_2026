@@ -493,6 +493,35 @@ async fn app_post_ride_evaluation(
         .execute(&mut *tx)
         .await?;
 
+    let chair_id = ride
+        .chair_id
+        .clone()
+        .ok_or(Error::BadRequest("chair not assigned"))?;
+    sqlx::query(
+        r#"
+INSERT INTO chair_stats (
+  chair_id,
+  total_rides_count,
+  total_evaluation_sum
+)
+SELECT ?, 1, ?
+WHERE EXISTS (
+  SELECT 1
+  FROM ride_statuses
+  WHERE ride_id = ?
+    AND status = 'CARRYING'
+)
+ON DUPLICATE KEY UPDATE
+  total_rides_count = total_rides_count + 1,
+  total_evaluation_sum = total_evaluation_sum + VALUES(total_evaluation_sum)
+        "#,
+    )
+    .bind(chair_id)
+    .bind(req.evaluation)
+    .bind(&ride_id)
+    .execute(&mut *tx)
+    .await?;
+
     let Some(ride): Option<Ride> = sqlx::query_as("SELECT * FROM rides WHERE id = ?")
         .bind(&ride_id)
         .fetch_optional(&mut *tx)
@@ -705,20 +734,13 @@ async fn get_chair_stats(
 
     let stats: ChairStats = sqlx::query_as(
         r#"
-SELECT COUNT(*) AS total_rides_count,
-       CAST(COALESCE(AVG(completed_rides.evaluation), 0) AS DOUBLE)
-           AS total_evaluation_avg
-FROM (
-    SELECT rides.id, rides.evaluation
-    FROM rides
-    INNER JOIN ride_statuses ON ride_statuses.ride_id = rides.id
-    WHERE rides.chair_id = ?
-      AND rides.evaluation IS NOT NULL
-    GROUP BY rides.id, rides.evaluation
-    HAVING SUM(ride_statuses.status = 'ARRIVED') > 0
-       AND SUM(ride_statuses.status = 'CARRYING') > 0
-       AND SUM(ride_statuses.status = 'COMPLETED') > 0
-) AS completed_rides
+SELECT COALESCE(total_rides_count, 0) AS total_rides_count,
+       CASE
+         WHEN total_rides_count IS NULL THEN 0.0
+         ELSE CAST(total_evaluation_sum AS DOUBLE) / total_rides_count
+       END AS total_evaluation_avg
+FROM (SELECT 1) AS seed
+LEFT JOIN chair_stats ON chair_stats.chair_id = ?
         "#,
     )
     .bind(chair_id)
