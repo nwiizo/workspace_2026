@@ -2,7 +2,7 @@
 
 set -eu
 
-script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 compose="$script_dir/compose.sh"
 base_url=${APP_BASE_URL:-http://localhost:8080}
 payment_server=${PAYMENT_SERVER_URL:-http://benchmark:12345}
@@ -66,6 +66,8 @@ LIMIT 1
 "
 )
 
+# The query returns four whitespace-separated scalar columns.
+# shellcheck disable=SC2086
 set -- $chair_row
 chair_id=$1
 initial_latitude=$2
@@ -194,6 +196,8 @@ SELECT
   (SELECT COUNT(*) FROM chair_current_locations)
 "
 )
+# The query returns two whitespace-separated scalar columns.
+# shellcheck disable=SC2086
 set -- $history_and_current_counts
 test "$1" = "$2"
 echo "OK: startup repaired missing and stale current-location rows"

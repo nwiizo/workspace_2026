@@ -2,7 +2,7 @@
 
 set -eu
 
-project_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+project_dir=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 
 if docker compose version >/dev/null 2>&1; then
   compose_command=docker-plugin
@@ -15,7 +15,7 @@ fi
 
 if [ -z "${DOCKER_HOST:-}" ]; then
   docker_endpoint=$(docker context inspect --format '{{.Endpoints.docker.Host}}')
-  export DOCKER_HOST=$docker_endpoint
+  export DOCKER_HOST="$docker_endpoint"
 fi
 
 # この環境が取得するイメージはすべて public。壊れたグローバル credential

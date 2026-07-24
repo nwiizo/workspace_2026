@@ -2,7 +2,7 @@
 
 set -eu
 
-script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 compose="$script_dir/compose.sh"
 duration=${BENCHMARK_DURATION:-${1:-60}}
 

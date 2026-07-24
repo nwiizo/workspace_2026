@@ -2,7 +2,7 @@
 
 set -eu
 
-script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 compose="$script_dir/compose.sh"
 
 "$compose" exec -T nginx curl --fail --silent --show-error http://127.0.0.1/ >/dev/null
