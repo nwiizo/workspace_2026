@@ -51,11 +51,7 @@ fn classify(baseline: &ApiSurface, current: &ApiSurface) -> Vec<Issue> {
     let mut issues = Vec::new();
     for (id, old) in &baseline.items {
         let Some(new) = current.items.get(id) else {
-            let classification = if old.kind == ItemKind::ReExport {
-                Classification::Risky
-            } else {
-                Classification::Breaking
-            };
+            let classification = Classification::Breaking;
             let change_kind = if old.kind == ItemKind::ReExport {
                 ChangeKind::ReExportRemoved
             } else {
@@ -657,7 +653,7 @@ mod tests {
     }
 
     #[test]
-    fn re_export_removal_is_risky() {
+    fn re_export_removal_is_breaking() {
         let mut old = ApiSurface::default();
         old.items.insert(
             "src/lib.rs:Thing".to_string(),
@@ -665,7 +661,7 @@ mod tests {
         );
         let new = ApiSurface::default();
         let issues = classify(&old, &new);
-        assert_eq!(issues[0].key.classification, Classification::Risky);
+        assert_eq!(issues[0].key.classification, Classification::Breaking);
         assert_eq!(issues[0].change_kind, ChangeKind::ReExportRemoved);
     }
 }

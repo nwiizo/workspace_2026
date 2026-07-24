@@ -97,6 +97,9 @@ pub fn parse_path(path: &Path) -> Result<ApiSurface> {
         let file = file?;
         surface.files_analyzed += 1;
         surface.parse_failures += file.parse_failures;
+        if !out_of_line_file_publicly_reachable(&surface.root, &file.path) {
+            continue;
+        }
         for item in file.items {
             surface.items.insert(item.id.clone(), item);
         }
@@ -106,6 +109,7 @@ pub fn parse_path(path: &Path) -> Result<ApiSurface> {
 
 #[derive(Debug, Clone)]
 struct ParsedFile {
+    path: PathBuf,
     parse_failures: usize,
     items: Vec<ApiItem>,
 }
@@ -175,9 +179,101 @@ fn parse_source(root: &Path, path: &Path, source: &str) -> ParsedFile {
     }
 
     ParsedFile {
+        path: path.to_path_buf(),
         parse_failures: parsed.errors().len(),
         items,
     }
+}
+
+fn out_of_line_file_publicly_reachable(root: &Path, path: &Path) -> bool {
+    let Ok(relative) = path.strip_prefix(root) else {
+        return true;
+    };
+    let components = relative.components().collect::<Vec<_>>();
+    let Some(src_index) = components
+        .iter()
+        .rposition(|component| component.as_os_str() == "src")
+    else {
+        return true;
+    };
+    let source_relative = components[src_index + 1..]
+        .iter()
+        .map(|component| component.as_os_str().to_owned())
+        .collect::<PathBuf>();
+    let Some(file_name) = source_relative.file_name().and_then(|name| name.to_str()) else {
+        return true;
+    };
+    if source_relative
+        .parent()
+        .is_none_or(|parent| parent.as_os_str().is_empty())
+        && matches!(file_name, "lib.rs" | "main.rs")
+    {
+        return true;
+    }
+    if source_relative
+        .components()
+        .next()
+        .is_some_and(|component| component.as_os_str() == "bin")
+    {
+        return true;
+    }
+
+    let src_root = root.join(components[..=src_index].iter().collect::<PathBuf>());
+    let mut module_parts = source_relative
+        .parent()
+        .into_iter()
+        .flat_map(Path::components)
+        .map(|component| component.as_os_str().to_owned())
+        .collect::<Vec<_>>();
+    if file_name != "mod.rs" {
+        let Some(stem) = source_relative.file_stem() else {
+            return true;
+        };
+        module_parts.push(stem.to_owned());
+    }
+    if module_parts.is_empty() {
+        return true;
+    }
+
+    for index in 0..module_parts.len() {
+        let module_name = module_parts[index].to_string_lossy();
+        let parent_file = if index == 0 {
+            [src_root.join("lib.rs"), src_root.join("main.rs")]
+                .into_iter()
+                .find(|candidate| candidate.is_file())
+        } else {
+            let parent_path = module_parts[..index].iter().collect::<PathBuf>();
+            [
+                src_root.join(&parent_path).with_extension("rs"),
+                src_root.join(&parent_path).join("mod.rs"),
+            ]
+            .into_iter()
+            .find(|candidate| candidate.is_file())
+        };
+        let Some(parent_file) = parent_file else {
+            return false;
+        };
+        if !declares_public_out_of_line_module(&parent_file, &module_name) {
+            return false;
+        }
+    }
+    true
+}
+
+fn declares_public_out_of_line_module(path: &Path, module_name: &str) -> bool {
+    let Ok(source) = fs::read_to_string(path) else {
+        return false;
+    };
+    SourceFile::parse(&source, Edition::Edition2024)
+        .tree()
+        .syntax()
+        .children()
+        .filter_map(ast::Module::cast)
+        .any(|module| {
+            module.name().is_some_and(|name| name.text() == module_name)
+                && module.item_list().is_none()
+                && naked_pub(&module)
+        })
 }
 
 fn fn_item(path: &Path, rel_path: &str, source: &str, func: &ast::Fn) -> ApiItem {
@@ -912,6 +1008,8 @@ fn line_for_range(source: &str, range: TextRange) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use tempfile::TempDir;
 
     #[test]
     fn naked_pub_excludes_pub_crate() {
@@ -940,5 +1038,33 @@ mod tests {
         );
         assert_eq!(parsed.items.len(), 1);
         assert!(!parsed.items[0].cfg_attrs.is_empty());
+    }
+
+    #[test]
+    fn out_of_line_private_modules_are_not_public_api() {
+        let root = TempDir::new().expect("tempdir");
+        let src = root.path().join("src");
+        fs::create_dir_all(&src).expect("src");
+        fs::write(
+            src.join("lib.rs"),
+            "mod private;\npub mod public;\npub fn root() {}\n",
+        )
+        .expect("lib");
+        fs::write(src.join("private.rs"), "pub fn hidden() {}\n").expect("private");
+        fs::write(src.join("public.rs"), "pub fn visible() {}\n").expect("public");
+
+        let surface = parse_path(root.path()).expect("surface");
+        assert!(
+            surface.items.values().any(|item| item.name == "root"),
+            "crate-root API must remain visible"
+        );
+        assert!(
+            surface.items.values().any(|item| item.name == "visible"),
+            "pub out-of-line module API must be visible"
+        );
+        assert!(
+            surface.items.values().all(|item| item.name != "hidden"),
+            "private out-of-line module API must be excluded"
+        );
     }
 }
