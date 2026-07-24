@@ -75,12 +75,13 @@
 | 高頻度検索へのINDEX | 主要INDEX、`coupons(code)`、`coupons(used_by)` を追加済み。`users(access_token)` と `users(invitation_code)` は既存の `UNIQUE` INDEXで充足 | prepared statement統計で次の全件走査を探し、未使用INDEXを増やさない |
 | nearbyの2N+1解消 | 最新座標はcurrent-state表 + process cache、active / 割当可否はDBで合成。評価は開始snapshot・completion revision・response body drop後1秒leaseで除外し、initialize世代をgenerationで分離 | ride antijoinとtracker確認の内訳を計測 |
 | owner椅子一覧をownerで先に絞る | 実装・単独ベンチ済み | 最新位置と累積距離のcurrent-state化 |
+| owner売上の評価境界 | 完了時刻を最終SQLで保存し、owner requestと重なる評価ride IDだけをrevision trackerで除外 | body drop後のclient計上差はprotocol ACKなしでは残る。複数process前に共有化 |
 | 最新位置をcurrent-state表で管理 | 履歴INSERTと同じtransactionで更新し、cacheを2秒ごとに再同期 | current UPDATEのrow-lock待ちとwrite amplificationを削減 |
 | pending rideと空き椅子のbatch matching | 最大64件、近傍優先まで実装済み | 地域間の距離上限、実行間隔、二部マッチングを比較 |
 | JSON通知のcache | 未実装 | 同じpayloadの再計算をなくし、long pollingをSSEより先に比較 |
 | 座標更新の非同期・bulk INSERT | 通常経路を4 SQLから2 SQLへ削減。pickup / destination候補だけlockし、statusをcurrent readする | per-chair順序付きqueueと3秒以内のbulk反映を実験 |
-| 決済HTTP client | process内で1個を共有し、POST / GET / retryでconnection poolを再利用済み | TCP connect回数を診断runで採取 |
-| 決済の `Idempotency-Key` | 未実装 | ride IDをkeyにして遅い確認GETを除去 |
+| 決済HTTP client | process内で1個を共有し、冪等なPOST / retryでconnection poolを再利用済み | TCP connect回数とstatus別retry数を診断runで採取 |
+| 決済の `Idempotency-Key` | ride IDを全POSTへ設定し、確認GETとuser全ride取得を削除済み | pending状態とcrash recoveryを設計し、外部HTTPをDB transaction外へ出す |
 
 SSEは形式だけ変更しても、DB query数とpayload生成量が同じなら効果が薄いと考えます。JSON payload cache、`retry_after_ms`、DB connectionを保持しないlong pollingを先に計測し、それでも通知経路が律速の場合にstatus変更時の即時pushと接続単位cacheを含めて実装します。
 
@@ -837,8 +838,9 @@ retryは一時的な通信失敗時に同じ処理を再試行すること、bac
 
 書き込みをretryするには冪等性が重要です。冪等とは、同じ操作を複数回送っても結果が
 1回分と同じになる性質です。決済POSTのresponseを受け取れなくても、決済自体は成功
-している場合があります。ride IDなどの一意な `Idempotency-Key` がservice側で保証
-されれば、同じkeyのretryを二重決済にせず扱えます。
+している場合があります。この課題の決済serviceは `Idempotency-Key` ごとにtokenと
+amountを記録するため、ride IDを同じkeyとして再利用すれば、同じrideのretryを
+二重決済にせず扱えます。keyをrequestごとに新しくすると、この保証は働きません。
 
 難しい用語が必要な箇所では、定義だけでなく、観測するlog、性能への影響、誤った
 判断になりやすい点まで対応付けます。
@@ -880,6 +882,8 @@ retryは一時的な通信失敗時に同じ処理を再試行すること、bac
 | [21-notification-status-query.md](./tuning/21-notification-status-query.md) | 未送信statusと最新status fallbackをCTEで1 SQL化 | `pass=true`、94,573点。対象SQL累積が変更前約32秒から53.756秒へ増え不採用 | 実測n=1・未推定。ソースは変更前へ復元 |
 | [22-authentication-cache.md](./tuning/22-authentication-cache.md) | user / owner / chair認証をprocess内cacheから解決 | 3走102,887–109,454点、中央値104,612点。認証SQL累積約99.3%減 | 実測n=3。全run `pass=true`、`CODE=30` 6–20件を次のP0へ継続 |
 | [23-code30-response-delivery.md](./tuning/23-code30-response-delivery.md) | nearby開始snapshot・completion revision・body drop起点1秒leaseで評価responseの配送競合を抑制 | generation/pruneを含む3走96,542–105,002点、中央値103,046点、全run `pass=true`・error map空、`CODE=30` 0件 | 実測n=3。body drop→client受信差を約55–677msと相関し、1秒leaseを選択。候補runで観測した`CODE=17`は再発時に継続調査 |
+| [24-owner-sales-completion-boundary.md](./tuning/24-owner-sales-completion-boundary.md) | 評価の完了writeを決済成功後へ移し、長い決済待ちによるowner `until`の時刻逆転を除去 | 3走93,408–104,048点、推定代表値の中央値94,173点、全run `pass=true`・error map空、`CODE=24` 0件 | 実測n=3。修正前の時刻逆転と売上+700円を決定的に再現。直前中央値比-8.6%のため性能向上とは扱わず、追加SQLなし・冗長SELECT 1本削減の正当性修正として採用。commit→client計上境界はBenchmark 25で追加対策 |
+| [25-payment-idempotency.md](./tuning/25-payment-idempotency.md) | ride IDで決済POSTを冪等化して確認GETを削除し、owner requestと重なる評価rideだけを除外 | 最終3走95,596–115,968点、推定代表値の中央値101,037点、全run `pass=true`・error map空 | 実測n=3。Benchmark 24中央値比+7.3%、Benchmark 23中央値比-1.9%。決済retryの正当性と余計なエラー時処理の削減を理由に採用 |
 | [80-rust-implementation.md](./tuning/80-rust-implementation.md) | Rust / sqlxとrelease buildの知識 | 再build 30分52秒→11.02秒 | build時間の実測。スコア推定対象外 |
 | [81-evaluation-authorization.md](./tuning/81-evaluation-authorization.md) | 評価rideを認証ユーザー所有へ制限 | 公式prevalidation `pass=true`、別ユーザーHTTP回帰成功 | 正当性修正。60秒スコアはBenchmark 20から更新しない |
 | [90-local-environment.md](./tuning/90-local-environment.md) | build context、BuildKit、固定Colima資源 | context 467MB→32.5KB | sizeの実測。スコア推定対象外 |

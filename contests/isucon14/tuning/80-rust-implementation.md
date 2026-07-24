@@ -205,15 +205,19 @@ rides.evaluation IS NULL
 
 ```text
 SELECT ride ... FOR UPDATE
-UPDATE rides SET evaluation = ...
-INSERT ride_statuses (..., 'COMPLETED')
 決済処理
+UPDATE rides SET evaluation = ..., updated_at = completed_at
+INSERT ride_statuses (..., 'COMPLETED')
+UPSERT chair_stats
 COMMIT
 ```
 
 SQLxの `Transaction` は明示的な `commit` または `rollback` で終了します。どちらも
-呼ばれずにスコープを抜けた場合はrollbackされます。そのため、決済や後続処理で
-`?` が早期returnさせても、評価だけがcommitされることはありません。
+呼ばれずにスコープを抜けた場合はrollbackされます。そのため、決済失敗や後続処理で
+`?` が早期returnさせても、evaluationだけがcommitされることはありません。
+ただし、外部決済はMySQL transactionのrollback対象ではありません。決済成功後のSQLや
+commitが失敗した場合まで原子的に戻せるわけではないため、idempotency keyと
+payment intentは別途必要です。
 
 ただし、同じtransactionに入れただけでは次の同値性は保証できません。
 
@@ -948,7 +952,7 @@ moveします。
 let active_evaluation = ride
     .chair_id
     .clone()
-    .map(|chair_id| tracker.begin(chair_id));
+    .map(|chair_id| tracker.begin(chair_id, ride.id.clone()));
 
 let response = Json(result).into_response();
 hold_active_evaluation_until_response_drop(response, active_evaluation)
@@ -976,7 +980,9 @@ benchmarkerは評価HTTPレスポンスをまだ待っていました。body dro
 ```rust
 struct ActiveRideEvaluationState {
     active_counts: HashMap<String, usize>,
+    active_ride_counts: HashMap<String, usize>,
     completed_evaluations: HashMap<String, CompletedRideEvaluation>,
+    completed_ride_evaluations: HashMap<String, CompletedRideEvaluation>,
     live_snapshot_revisions: BTreeMap<u64, usize>,
     revision: u64,
     generation: u64,
@@ -989,7 +995,7 @@ struct CompletedRideEvaluation {
 ```
 
 `revision` は最後のactive guardがdropするたびに増えます。nearbyはSQLの前に
-`ActiveRideEvaluationSnapshot { revision, chair_ids }` を取り、SQL後に現在のstateと
+`ActiveRideEvaluationSnapshot { revision, chair_ids, ride_ids }` を取り、SQL後に現在のstateと
 合成します。
 
 ```text
@@ -1011,9 +1017,11 @@ UTC日時をlogへ出す用途には向きませんが、「今から1秒」のl
 1秒は診断最大約677msへ約323msの余裕を加えた実測値であり、protocol上の保証では
 ありません。
 
-この1秒は以前不採用にした `rides.updated_at` 起点のcooldownとは異なります。
-`updated_at` は外部決済より前に決まるため、決済中に期限を消費します。新しいleaseは
-body drop時に始まり、評価処理時間ではなくserver→clientの配送差だけを対象にします。
+この1秒はBenchmark 23で不採用にした `rides.updated_at` 起点のcooldownとは異なります。
+当時の `updated_at` は外部決済より前に決まり、決済中に期限を消費していました。
+Benchmark 24で完了writeを決済後へ移した後も、固定cooldownではprotocol上のclient ACKを
+保証できません。delivery leaseはbody drop時に始まり、評価処理時間ではなく
+server→clientの配送差を対象にします。
 
 `completed_evaluations` は評価イベントごとに増やさず、chair IDごとに最新記録を上書き
 します。さらにliveなnearby snapshotの最小revisionを参照数付き `BTreeMap` で追跡し、
@@ -1040,6 +1048,160 @@ generationとpruneを含む公式60秒ベンチ3走は105,002 / 103,046 / 96,542
 中央値103,046点で、全run error map空、`CODE=30`は3走すべて0件でした。
 詳細な時系列と代替案は
 [Benchmark 23](./23-code30-response-delivery.md)を参照してください。
+
+### 1つの完了時刻をDBとresponseで共有する
+
+Benchmark 24では、owner salesの `until` と評価APIの `completed_at` を同じ時点へ
+そろえました。
+
+```rust
+let completed_at = chrono::Utc::now();
+sqlx::query("UPDATE rides SET evaluation = ?, updated_at = ? WHERE id = ?")
+    .bind(req.evaluation)
+    .bind(completed_at)
+    .bind(&ride_id)
+    .execute(&mut *tx)
+    .await?;
+
+let response = AppPostRideEvaluationResponse {
+    fare,
+    completed_at: completed_at.timestamp_millis(),
+};
+```
+
+DBへ `CURRENT_TIMESTAMP(6)` を書いてから再SELECTする方法もありますが、SQL往復が
+1本増えます。Rustで `DateTime<Utc>` を1回作ってbindすれば、DBとresponseを同じ値から
+導出できます。MySQLの `DATETIME(6)` はマイクロ秒、APIはミリ秒なので精度は異なりますが、
+別々の時計読み取りによる順序ずれは入りません。
+
+ここで重要なのは、時刻だけを後から更新するのではなく、既存のevaluation UPDATE自体を
+決済成功後へ移したことです。
+
+```text
+試作:
+  UPDATE evaluation
+  payment await
+  UPDATE updated_at       ← SQLが1本増える
+
+最終版:
+  payment await
+  UPDATE evaluation + updated_at
+```
+
+さらに、最初の `SELECT ... FOR UPDATE` で得た `Ride` は所有値として変数に残ります。
+同じtransaction内でuser IDや座標を使うために `SELECT * FROM rides` を再実行する必要は
+ありません。Rustの借用期間とDBのデータ鮮度は同じ概念ではありませんが、ride row lockを
+保持し、自分自身もまだrideを変更していない区間なら、この所有値を再利用できます。
+
+一方、`.await` をまたいで `Transaction` を保持しているため、外部決済中もDB接続と
+ride row lockは占有したままです。完了時刻の順序は直せても、この資源占有は直りません。
+外部HTTPをtransaction外へ出すには、二重決済とprocess crashを回復できる状態機械を
+先に設計します。
+
+決定的な回帰テストでは、修正前にpending rideの時刻が既知完了rideより約151ms古く、
+owner salesが436,200円から436,900円へ増える状態を再現しました。修正後はpendingの
+時刻がknownより後になり、同じ `until` の売上は436,200円のままです。
+公式60秒3走は94,173 / 104,048 / 93,408点、推定代表値の中央値94,173点で、
+すべて `pass=true`、error map空、`CODE=24` 0件でした。直前中央値より約8.6%低いため
+性能改善とは扱わず、追加SQLなし・冗長SELECT 1本削減の正当性修正として採用しました。
+詳細は[Benchmark 24](./24-owner-sales-completion-boundary.md)を参照してください。
+
+### ride IDで決済retryを冪等にする
+
+Benchmark 25では、決済関数の引数へ `idempotency_key: &str` を追加し、呼出し側から
+ride IDを渡します。
+
+```rust
+pub async fn request_payment_gateway_post_payment(
+    client: &reqwest::Client,
+    payment_gateway_url: &str,
+    token: &str,
+    idempotency_key: &str,
+    param: &PaymentGatewayPostPaymentRequest,
+) -> Result<(), Error>
+```
+
+所有する `String` を関数へ移動せず `&ride_id` として借用するため、決済完了後も
+同じhandlerでDB bindやresponse trackerへride IDを使えます。reqwestは `.header()` で
+値をrequestへコピーしてからfutureを実行するため、呼出し側の `String` を永続化用に
+複製する必要はありません。
+
+retry loop内で新しいULIDを作らず、関数引数の同じ `&str` を毎回使うことが重要です。
+「request ID」と「論理的な決済ID」は別物です。通信requestごとのIDはretryごとに
+変わってよい一方、決済のidempotency keyは同じrideの全retryで変えてはいけません。
+
+statusはretry可能性も分類します。network error、同じkeyを別requestが処理中の409、
+5xxはretryし、認証・payload不正の400や同じkeyでpayloadが異なる422は即時に返します。
+同じ入力を再送しても変わらない4xxを5回待つと、DB connectionとride row lockの保持時間
+だけが増えるためです。
+
+変更前の決済関数は、非204時にDB callbackを呼ぶため、higher-ranked trait boundを
+使っていました。
+
+```rust
+F: for<'a> PostPaymentCallback<'a>
+```
+
+これは、どのtransaction borrow lifetimeでもcallbackを呼べることを表します。
+冪等POSTへ変更した後はDB callback自体が不要になり、trait、関連する `Future`、
+`Ride` import、user ID、transaction引数を削除できました。抽象化を残すこと自体を
+目的にせず、責務が消えた型境界も一緒に消すと、関数の正しさを局所的に確認できます。
+
+unit testは追加crateを使わず、`std::net::TcpListener` で2 requestだけ受けます。
+1回目は500、2回目は204を返し、両方が同じheaderを持つPOSTであることを確認します。
+別testでは422を1回返し、永久エラーをretryしないことを確認します。
+Tokioの非同期test内でblocking listenerを直接動かすとruntime workerを止めるため、
+listener側は `std::thread::spawn` へ分け、reqwest側だけをasync taskで実行します。
+
+idempotency keyは決済とDBを1つのtransactionにする機能ではありません。決済成功後、
+MySQL確定前にprocessが落ちても再送時の二重課金を防ぎますが、未完了rideを探して再送する
+回収処理は別に必要です。
+
+### 同じtrackerでchair IDとride IDを別の規則で扱う
+
+`ActiveRideEvaluationTracker` は、nearby向けのchair IDとowner売上向けのride IDを
+同じevaluation guardで登録します。ただし完了後の扱いは同じではありません。
+
+```text
+chair ID:
+  active + body drop後1秒lease
+  nearbyへ割当可能な椅子を早く再掲載しないため
+
+ride ID:
+  active + owner snapshot開始後のcompletion revision
+  owner requestと実際に重なったrideだけを売上から除外するため
+```
+
+ownerにも1秒leaseを流用すると、benchmark clientが既に計上したrideを売上から隠し、
+下限より小さい値を返す可能性があります。型が同じtracker内にあるからといって、
+同じ時間規則が正しいとは限りません。
+
+snapshotは開始時のactive ride IDを所有し、開始revisionを記録します。SQL中にguardが
+dropするとactive mapからrideが消えますが、drop時のcompletion revisionがsnapshotより
+新しければoverlap集合へ加えます。
+
+```rust
+completed.revision > snapshot.revision
+```
+
+この比較により、次の3種類を区別できます。
+
+- owner開始前に完了: 除外しない
+- owner開始時にactive: snapshotが保持して除外
+- owner SQL中に完了: completion revisionから除外
+
+`completed_ride_evaluations` はwall-clock leaseを持たず、古いlive snapshotが必要な間だけ
+保持します。最後のsnapshotがdropしたあと、次のsnapshot開始時のpruneで回収されます。
+これにより、固定時間の推測ではなくrequestの重なりという条件で寿命を決めます。
+
+完了時刻のUPDATEも、`COMPLETED` INSERTとchair stats UPSERTの後ろへ移し、
+transactionの最終SQLにしました。transaction内の変更はcommitまで公開されないため、
+論理的な更新順を壊さず、時刻取得からcommitまでの区間だけを短くできます。
+
+最終レビュー反映後の公式60秒3走は95,596 / 101,037 / 115,968点、
+推定代表値の中央値101,037点で、
+すべて `pass=true`、error map空でした。詳細は
+[Benchmark 25](./25-payment-idempotency.md)を参照してください。
 
 ### maintenance gateでinitializeと通常APIを分ける
 

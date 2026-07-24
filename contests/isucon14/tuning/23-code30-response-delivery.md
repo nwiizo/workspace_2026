@@ -2,6 +2,12 @@
 
 [チューニング目次へ戻る](../TUNING.md)
 
+> 後続の[Benchmark 24](./24-owner-sales-completion-boundary.md)で、evaluationと
+> `rides.updated_at` のwriteを外部決済成功後へ移しました。本書の「外部決済より前に
+> updated_atが決まる」という説明はBenchmark 23計測時点の実装を示します。
+> nearbyのresponse配送境界と1秒leaseは、完了writeの順序変更後も別の境界対策として
+> 維持しています。
+
 ## 結論
 
 認証SQLをcache化して処理量が増えた後、nearbyが「DBでは空きだが、ベンチマーカーでは

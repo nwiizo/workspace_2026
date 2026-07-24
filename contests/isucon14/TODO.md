@@ -70,12 +70,13 @@
   - Cargo: 7.03秒
   - Docker build壁時計: 11.02秒
   - ホストおよびColima: 4 CPU / 4 GiBのまま
-- [x] `reqwest::Client` を `AppState` で共有し、決済POST・確認GET・retryで再利用
+- [x] `reqwest::Client` を `AppState` で共有し、当時の決済POST・確認GET・retryで再利用
   - 60秒3走: 76,761 / 88,638 / 80,354点
   - 観測範囲76,761–88,638点、推定代表値の中央値80,354点
   - 直前中央値60,102点から+20,252点、約+33.7%
   - 全run `pass=true`、error map空
   - 詳細: [`tuning/14-payment-client-reuse.md`](./tuning/14-payment-client-reuse.md)
+  - 後続Benchmark 25で確認GETを削除し、共有clientは冪等POSTとretryで継続利用
 - [x] `coupons(used_by)` を追加し、rideに適用済みのcoupon検索をB-tree lookup化
   - 60秒3走: 88,805 / 93,606 / 100,606点
   - 観測範囲88,805–100,606点、推定代表値の中央値93,606点
@@ -153,6 +154,20 @@
   - 推定代表値の中央値103,046点、全run`pass=true`・error map空、`CODE=30`は3走合計0件
   - generation/prune前の候補runで出た`CODE=17` 1件は別経路として再現情報の採取を継続
   - 詳細: [`tuning/23-code30-response-delivery.md`](./tuning/23-code30-response-delivery.md)
+- [x] owner salesの`CODE=24`候補を評価完了時刻の逆転として再現し、決済後に完了を確定する
+  - 修正前はpending rideの時刻が既知完了rideより約151ms古く、同じ`until`で売上が436,200円から436,900円へ過大化
+  - 決済成功後に既存のevaluation / `COMPLETED` / chair stats writeを実行し、DBとresponseへ同じ`completed_at`を使用
+  - 決済前の冗長なride再SELECTを削除し、完了時刻だけの追加UPDATEは不採用
+  - 最終60秒3走94,173 / 104,048 / 93,408点、観測範囲93,408–104,048点
+  - 推定代表値の中央値94,173点、全run`pass=true`・error map空、`CODE=24`は3走合計0件
+  - 詳細: [`tuning/24-owner-sales-completion-boundary.md`](./tuning/24-owner-sales-completion-boundary.md)
+- [x] 決済POSTをride IDで冪等化し、owner売上の評価response重複境界をride単位で狭める
+  - すべてのretryで同じ `Idempotency-Key`、token、amountを送る
+  - エラー時の`GET /payments`とuserのride全件SELECTを削除
+  - owner requestと重なった評価rideだけをrevision付きtrackerで除外し、既知の完了rideは除外しない
+  - 最終60秒3走95,596 / 101,037 / 115,968点、観測範囲95,596–115,968点
+  - 推定代表値の中央値101,037点、全run`pass=true`・error map空
+  - 詳細: [`tuning/25-payment-idempotency.md`](./tuning/25-payment-idempotency.md)
 - [x] nearbyの集合SQL、chair statsの集約SQL、batch matcherを実装
 - [x] 上記3変更を別々のBenchmarkとして正当性・性能検証する
 
@@ -164,14 +179,14 @@
 | P0 | `app_get_nearby_chairs` | 最新座標はcurrent-state表 + process cache、active / 割当可否はDB、評価はsnapshot + revision + delivery leaseで除外 | 最終run例8.079ms。ride antijoinとtracker確認の内訳を測る |
 | P0 | 通知2経路 | 30ms pollingごとに認証、最新ride、status、表示データを取得 | 60秒で通知GET 34,360回、同じレスポンスの再計算 |
 | P0 | `get_chair_stats` | 評価時差分更新 + 主キーreadへ変更 | SQL累積は約89%減、スコア中央値は約3.5%低下したため次の通知施策と合わせて再評価 |
-| P0 | `app_post_ride_evaluation` | DB transaction中に外部決済HTTPと最大5回の100ms sleep | connection・snapshot・lockを外部I/O中も保持 |
+| P0 | `app_post_ride_evaluation` | ride IDの冪等keyで決済retry。完了時刻は決済後の最終SQL。ただしDB transaction中に外部HTTPと最大5回の100ms sleep | connection・snapshot・ride row lockを外部I/O中も保持。pending状態とcrash recoveryを設計してtransactionを分割する |
 | P0 | `chair_post_coordinate` | 履歴INSERT + current UPDATE、遷移候補だけride lock + 最新status再読 | current UPDATE平均0.744msとrow-lock待ち。write amplificationを減らす |
 | P1 | `app_get_rides` | rideごとにstatus、coupon、chair、ownerを取得 | 履歴増加に比例するN+1 |
-| P1 | `owner_get_sales` | ownerのchairごとに完了rideを取得 | N+1、read transactionが暗黙ROLLBACK |
+| P1 | `owner_get_sales` | ownerのchairごとに完了rideを取得し、評価responseと重なったride IDを除外 | N+1、read transactionが暗黙ROLLBACK。複数processではtracker共有が必要 |
 | P1 | `app_post_rides` | userの全rideとride別最新statusを取得 | ライド作成ごとに履歴全体を再走査 |
 | P1 | `app_post_users` | `coupons(code)` INDEXは追加済みだが、招待回数確認で該当行全体を取得 | `COUNT` / counter化とlock範囲の縮小が未実施 |
 | P1 | 認証middleware | 初期tokenはprocess cache、動的主体は最初のmissだけDB検索 | DB外のtoken失効と複数processのcache invalidationは未対応 |
-| P1 | `payment_gateway` | process共有の `reqwest::Client` へ変更済み | TCP connect回数と再利用率の直接計測は未実施 |
+| P1 | `payment_gateway` | process共有client + ride IDの冪等POST。エラー時の履歴GETは削除済み | TCP connect回数、retry status別回数、connection再利用率の直接計測は未実施 |
 | P2 | nginx / Rustログ | stock設定のまま全リクエストを処理 | 高頻度経路のログI/Oとproxy overheadが未計測 |
 | P2 | MySQL / sqlx pool | stock MySQL、pool上限50固定 | 実負荷に対するbuffer・接続数が未調整 |
 
@@ -617,7 +632,11 @@
 - [x] 最終60秒3走で`CODE=30`がすべて0件であることを確認する
   - generation/pruneを含む105,002 / 103,046 / 96,542点、中央値103,046点、全run error map空
   - 詳細: [`tuning/23-code30-response-delivery.md`](./tuning/23-code30-response-delivery.md)
-- [ ] `CODE=24` owner sales過大値が、評価commit後・benchmarker受信前の同種の境界かを対象ride IDと時刻で相関する
+- [x] `CODE=24` owner sales過大値候補を、評価commitとbenchmarker計上の境界として決定的に再現する
+  - pending / knownの時刻逆転と、owner salesの+700円を同じfixtureで確認
+  - 決済後にevaluationと完了時刻を同じUPDATEで保存し、同じ時刻をresponseへ返す
+  - `./scripts/test-owner-sales-response-boundary.sh` でInnoDB行ロックを条件pollして赤/緑を確認
+  - 詳細: [`tuning/24-owner-sales-completion-boundary.md`](./tuning/24-owner-sales-completion-boundary.md)
 - [ ] `CODE=17` が再発したrunで、登録request ID、MySQL error、`SHOW ENGINE INNODB STATUS`を同時採取する
 - [x] initializeのtable再作成中は、全API requestと定期再同期をmaintenance gateで待たせる
 - [ ] latest-coordinate cacheの `RwLock` read / write待機時間と保持時間を計測する
@@ -666,9 +685,12 @@
 
 ### 決済と評価
 
-- [ ] すべての決済POSTへride IDを `Idempotency-Key` として付与する
-- [ ] 同じkey・token・amountでretryし、エラー応答後も二重決済しない
-- [ ] 現行の `GET /payments` による照合を除去し、固定300ms待ちとuserのride全件取得をなくす
+- [x] すべての決済POSTへride IDを `Idempotency-Key` として付与する
+- [x] 同じkey・token・amountでretryし、エラー応答後も二重決済しない
+  - RustのTCP unit testで500→204の2 requestが同じkeyのPOSTであることを確認
+  - 400 / 422など回復しない4xxはretryせず、409 / 5xx / network errorだけをretry
+  - 公式決済handlerとtestで、同じkey・同じpayloadが処理済み決済を再利用することを確認
+- [x] 現行の `GET /payments` による照合を除去し、retry時のuserのride全件取得をなくす
 - [x] `reqwest::Client` を `AppState` に1個保持し、POST/GETとretryでconnectionを再利用する
   - 3走中央値80,354点、直前中央値比約+33.7%、全runエラー0
 - [ ] 診断runで決済先のTCP connect回数、connection再利用率、TIME_WAITを採取する
@@ -677,10 +699,11 @@
 - [ ] ride、payment token、fareの読取りを短い区間へまとめる
 - [ ] 外部決済HTTPとretry sleep中はDB transactionを保持しない
 - [ ] 評価と `COMPLETED` 追加を短いwrite transactionへ分離する
-- [ ] 決済成功後にだけ評価、chair stats、`COMPLETED` を同じwrite transactionで確定する
-- [ ] write transaction成功後にだけ評価APIの200を返す
+- [x] 決済成功後にだけ評価、chair stats、`COMPLETED` を同じwrite transactionで確定する
+- [x] write transaction成功後にだけ評価APIの200を返す
 - [ ] 同じrideへの並行評価を防ぐ状態またはride単位mutexを設ける
-- [ ] 「決済成功後にDB更新失敗」と「HTTPエラーだが決済成功」の両方で二重決済しない設計にする
+- [x] 「決済成功後にDB更新失敗」と「HTTPエラーだが決済成功」の両方で、同じrideのretryを同じ決済keyへ収束させる
+  - process crash後に未完了rideを自動再開する回収処理は未実装
 - [ ] 正常系、決済retry、重複評価、タイムアウトのテストを追加する
 - [ ] `CODE=6`、`CODE=34`、`CODE=35` と評価APIのp99を比較する
 
@@ -745,6 +768,7 @@
 
 ### オーナー売上
 
+- [x] 評価responseがbenchmarkerの既知集合へ入る前に、古い`updated_at`のrideを`until`へ含める競合を除去する
 - [ ] chairごとのride取得をowner単位の集約SQL1回へ置き換える
 - [ ] `COMPLETED` 判定はstatus履歴JOINではなく、`evaluation IS NOT NULL` またはcurrent statusを使えるか検証する
 - [ ] `(chair_id, updated_at)` を利用して `since` / `until` を先に絞る
@@ -974,23 +998,21 @@
 
 ## 推奨する直近の実行順
 
-1. `CODE=24` owner sales過大値を、評価responseとbenchmarker側snapshotの時刻を加えた
-   診断runで再現し、`CODE=30`と同じclient観測境界か切り分ける
-2. `CODE=17` が再発したrunでは、登録request IDとMySQL error / deadlock履歴を同時採取する
-3. current UPDATEのrow-lock待機とcoordinate transaction p50 / p95 / p99を診断runで採取する
-4. current rowをper-chair順序付きqueueでcoalesceし、3秒収束・全履歴・crash整合性を維持したまま
+1. `CODE=17` が再発したrunでは、登録request IDとMySQL error / deadlock履歴を同時採取する
+2. current UPDATEのrow-lock待機とcoordinate transaction p50 / p95 / p99を診断runで採取する
+3. current rowをper-chair順序付きqueueでcoalesceし、3秒収束・全履歴・crash整合性を維持したまま
    39,013回、累積29.033秒のwrite amplificationを減らせるか単独比較する
-5. latest-coordinate cacheの `RwLock` とmaintenance gateの待機・保持時間を計測し、
+4. latest-coordinate cacheの `RwLock` とmaintenance gateの待機・保持時間を計測し、
    2秒再同期時のglobal stallを定量化する
-6. 最新statusをcurrent-state化し、未送信statusがない通知pollの履歴lookupとpayload再構築をなくす
-7. matcherへ地域間の距離上限を追加し、500 / 100 / 30msの実行間隔と組み合わせて比較する
-8. 決済へ `Idempotency-Key` を導入してGET照合をなくす
-9. 外部決済HTTPをDB transactionの外へ出し、障害時の二重決済・欠落を回復できるようにする
-10. app history、owner sales、ride作成のN+1を順に除去する
-11. current-state別表で最新statusをO(1)化する
-12. JSON long pollingで不足する場合だけSSEへ移し、状態変更時の即時pushまで実装する
-13. 貪欲matcherと最小費用二部マッチングを比較する
-14. 最後にpool、MySQL、nginx、compiler設定をprofileに基づいて調整する
+5. 最新statusをcurrent-state化し、未送信statusがない通知pollの履歴lookupとpayload再構築をなくす
+6. matcherへ地域間の距離上限を追加し、500 / 100 / 30msの実行間隔と組み合わせて比較する
+7. 決済をDB transaction外へ出すため、pending状態・条件付きclaim・crash recoveryを設計する
+8. 外部決済HTTPをDB transactionの外へ出し、障害時の二重決済・欠落を回復できるようにする
+9. app history、owner sales、ride作成のN+1を順に除去する
+10. current-state別表で最新statusをO(1)化する
+11. JSON long pollingで不足する場合だけSSEへ移し、状態変更時の即時pushまで実装する
+12. 貪欲matcherと最小費用二部マッチングを比較する
+13. 最後にpool、MySQL、nginx、compiler設定をprofileに基づいて調整する
 
 ## 記録ルール
 

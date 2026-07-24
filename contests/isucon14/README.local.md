@@ -53,6 +53,7 @@ git -C "$source_dir/isucon14" archive HEAD | tar -x -C contests/isucon14
 | `scripts/test-status-notification-order.sh` | 時刻逆転時もapp / chair通知が状態遷移順になることをHTTPで確認 |
 | `scripts/test-chair-stats-consistency.sh` | 全初期chairを照合し、欠損・誤値・余分なrowを再起動で修復 |
 | `scripts/test-chair-stats-transitions.sh` | 評価の所有者認可、完了条件、決済rollback、再送時の非加算をHTTP検証 |
+| `scripts/test-owner-sales-response-boundary.sh` | 遅い決済中の評価完了時刻とowner salesの`until`境界をHTTP・決済TCP accept・InnoDB行ロック・response JSON・SQLで確認 |
 | `scripts/benchmark.sh` | 決済モックを含む公式ベンチマーカーの実行 |
 | `.dockerignore` / `webapp/rust/.dockerignore` | Dockerへ不要なソース・`target/` を送らない |
 
@@ -210,6 +211,10 @@ cd contests/isucon14
 # 注意: 一時決済mock containerを起動し、終了時にローカルデータを初期化する
 ./scripts/test-chair-stats-transitions.sh
 
+# 決済待ち中の評価をowner salesの既知watermarkへ早く含めないことを確認
+# 注意: 8秒遅延する一時決済mock containerを起動し、終了時にローカルデータを初期化する
+./scripts/test-owner-sales-response-boundary.sh
+
 # 公式ベンチマーカーによる短い動作確認
 ./scripts/benchmark.sh 10
 
@@ -218,7 +223,7 @@ cd contests/isucon14
 ```
 
 走行時間は引数または環境変数で指定します。省略時は公式と同じ 60 秒です。
-上記5つの `test-*.sh` はDBを公式初期データへ戻すため、保持したいローカルデータが
+上記6つの `test-*.sh` はDBを公式初期データへ戻すため、保持したいローカルデータが
 ある環境では実行しないでください。使い捨てのISUCON検証stackを対象にします。
 
 `test-auth-cache.sh` はinitialize失敗を再現する短い区間だけ、
@@ -287,6 +292,8 @@ RESET=1 ./scripts/down.sh
 | statusの状態遷移順 | 時刻逆転のapp / chair HTTP回帰テスト成功。3走89,539–99,895点、中央値98,338点、全run `pass=true`、CODE=11は0件 |
 | 認証cache | 3走102,887–109,454点、中央値104,612点。認証SQL累積約99.3%減、`CODE=30`が6–20件再発 |
 | 評価response配送競合の修正 | nearby開始snapshot + completion revision + body drop起点1秒lease + initialize generation。3走96,542–105,002点、中央値103,046点、全run `pass=true`・error map空、`CODE=30` 0件 |
+| owner売上の完了時刻境界 | 決済成功後にevaluation / `COMPLETED` / chair statsを確定し、DBとresponseへ同じ完了時刻を使用。3走93,408–104,048点、推定代表値の中央値94,173点、全run `pass=true`・error map空、`CODE=24` 0件 |
+| 決済冪等化 + owner配送境界 | ride IDを全決済POSTの `Idempotency-Key` にして確認GETを削除。owner requestと重なる評価rideだけを除外。最終3走95,596–115,968点、中央値101,037点、全run `pass=true`・error map空 |
 
 初回の初期60秒走行ではMySQLのqueryが十数秒以上へ遅延し、ベンチマーカーの期限を
 超えました。同じ初期revisionを外部コンテナの大きな共有負荷がない条件で再計測
@@ -306,10 +313,30 @@ nearbyから除外します。RAII guardはhandlerのローカル変数ではな
 benchmarkerのresponse受信まで約55–677msの差があり、body lifecycleだけでは
 `CODE=30`を閉じないことが分かりました。現在はnearby開始snapshot、単調なcompletion
 revision、body drop起点の1秒delivery leaseを組み合わせています。
-`rides.updated_at` 起点の固定cooldownは外部決済時間を途中で消費するため不採用のままです。
-generationと期限切れ記録の安全なpruneを含む最終3走は
+Benchmark 23時点では `rides.updated_at` 起点の固定cooldownが外部決済時間を途中で
+消費するため不採用でした。generationと期限切れ記録の安全なpruneを含む最終3走は
 105,002 / 103,046 / 96,542点、中央値103,046点、全run error map空、
 `CODE=30` 0件でした。
+
+Benchmark 24では、長い決済待ちによるowner salesのwatermarkと処理順の逆転を
+なくすため、評価の完了writeを決済成功後へ移しました。修正前の決定的な再現では、
+pending rideが既知完了rideより約151ms古く、同じ`until`でowner salesが700円過大に
+なりました。最終実装は完了時刻だけの追加UPDATEを使わず、決済前の冗長なride再SELECTも
+削除しています。最終3走は94,173 / 104,048 / 93,408点、中央値94,173点で、
+全run error map空、`CODE=24` 0件でした。直前中央値より低いため性能改善とは扱わず、
+決定的な赤/緑テストを根拠にした正当性修正として記録します。
+
+Benchmark 25では、公式決済serviceの冪等key実装を確認し、ride IDをすべての
+決済POSTとretryへ付与しました。204以外の応答時に行っていた `GET /payments` と
+userのride全件取得は削除し、network error、409、5xxだけを同じkey・token・amountの
+POSTで再試行します。回復しない4xxはDB transactionを保持したまま再送せず即時に返します。
+また、owner sales開始時のsnapshotとcompletion revisionを使い、owner requestと
+評価response bodyの配送が実際に重なったride IDだけを売上から除外します。固定1秒の
+除外は、既知の正しい売上を小さくするためowner経路には使いません。最終3走は
+95,596 / 101,037 / 115,968点、中央値101,037点、すべて `pass=true`・error map空でした。
+Benchmark 24中央値比では約+7.3%ですが、Benchmark 23中央値には約-1.9%のため、
+最高点更新ではなく正当性改善とエラー時経路短縮として扱います。詳細は
+[`tuning/25-payment-idempotency.md`](./tuning/25-payment-idempotency.md)を参照してください。
 その後、診断runで `CARRYING` の後に古い `PICKUP` を返すCODE=11を再現したため、
 通知と最新statusの順序をwall-clockではなくENUMの状態遷移順へ変更しました。
 時刻逆転のHTTP回帰テストを追加し、通常条件の3走は89,539 / 98,338 / 99,895点、
@@ -415,6 +442,12 @@ curl -sS \
 未認証の利用者iframeと椅子シミュレーターから呼ばれた
 `/api/app/notification` と `/api/chair/activity` の401だけがconsoleへ記録されました。
 登録・ログイン前の想定どおりの認証拒否で、トップ画面ではconsole error 0件です。
+
+Benchmark 24の最終確認では、トップの3リンクから `/simulator` を開き、
+利用者登録フォームとChair Simulatorの描画、chair notification / coordinateのHTTP 200を
+確認しました。利用者登録フォームを送信すると「決済トークン登録」へ遷移しました。
+この確認でも、登録前に開始したapp notificationとchair activityのHTTP 401だけが
+consoleへ残りました。
 
 再確認するときは、サービスを起動した状態で次を実行します。
 
