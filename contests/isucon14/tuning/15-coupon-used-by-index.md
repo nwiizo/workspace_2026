@@ -17,6 +17,10 @@
 B-treeから取得しています。正当性を変えず、DB CPUを消費していた高頻度の
 全件走査を除去できたため採用します。
 
+![高頻度のcoupon検索を全件走査からused_by INDEX lookupへ変えたときの因果関係](./images/15-coupon-used-by-index.svg)
+
+_変更前は通知のたびに約1,000行を確認し、DB CPUとconnection待ちが積み上がっていました。`used_by` INDEXを追加すると一致する0〜1行へ直接移動でき、同じ検索を平均0.060msで終えてconnectionを早く返せます。_
+
 ## なぜこのTODOを選んだか
 
 決済HTTP client再利用後の構成を、変更せずに60秒走らせました。
@@ -144,6 +148,10 @@ INDEX idx_coupons_code (code)
 
 INDEXは「tableに何かINDEXがあればすべての検索が速くなる」仕組みではありません。
 検索条件、並び順、返す列に対応したキーが必要です。
+
+![同じrideに使われたcouponを全drawerから探す方法と、索引から対象drawerへ直接進む方法の比較](./images/15-coupon-used-by-index-generated.webp)
+
+_左は一致するcouponが見つかるまで多数のdrawerを確認します。右はride IDに対応する索引をたどり、対象範囲だけを読みます。既存の `code` INDEXでは、別の列である `used_by` の目的位置を示せません。_
 
 ## 変更
 
