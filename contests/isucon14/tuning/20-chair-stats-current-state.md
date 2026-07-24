@@ -102,6 +102,16 @@ volumeにtableがない場合だけでなく、欠損、誤値、履歴に存在
 InnoDBではcommitまで他connectionから旧commit済み状態が見えるため、`DELETE` と
 `INSERT` の途中に空の集計を公開しません。
 
+ここで検証した構成は、Composeのwebappが1 processで、restart時に旧processを停止して
+から新processを起動するstop-then-startです。旧processが評価transactionを実行したまま
+新processもbackfillするrolling restartや、複数instanceの並行起動は検証対象外です。
+
+並行起動では、backfillの `chair_stats -> rides` と評価の `rides -> chair_stats` で
+lock取得順が逆になり、deadlockになり得ます。複数instanceへ広げる場合は、DB advisory
+lockなどで起動repairと評価を直列化するか、deadlockに限定した再試行を実装してから
+故障注入します。単一processで通った再起動試験を、そのままrolling restartの保証とは
+扱いません。
+
 ## 変更前の処理
 
 旧実装はapp通知のたびに次の形のSQLを実行していました。

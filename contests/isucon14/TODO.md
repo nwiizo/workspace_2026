@@ -126,6 +126,9 @@
   - 欠損・誤値・余分なrowの再起動repairと、決済失敗rollback・再送非加算を回帰確認
   - 最終3走98,386 / 98,452 / 99,944点、中央値98,452点、全run `pass=true`・エラー0
   - 直前通常3走中央値101,984点から-3,532点のため、スコア寄与は未確定
+  - 検証済みの再起動は単一webappのstop-then-start
+  - [ ] 複数instanceやrolling restartを使う前に、起動repairと評価のlock順を
+    DB advisory lockまたはdeadlock限定retryで安全にする
   - 詳細: [`tuning/20-chair-stats-current-state.md`](./tuning/20-chair-stats-current-state.md)
 - [x] nearbyの集合SQL、chair statsの集約SQL、batch matcherを実装
 - [x] 上記3変更を別々のBenchmarkとして正当性・性能検証する

@@ -219,7 +219,8 @@ cd contests/isucon14
 chair stats照合は初期500 chairで差分0、公式prevalidationと60秒終了時の動的chairでも
 差分0でした。実装と計測は
 [`tuning/20-chair-stats-current-state.md`](./tuning/20-chair-stats-current-state.md) に
-記録しています。
+記録しています。再起動repairの検証対象は、Composeの単一webappを停止後に起動する
+stop-then-startです。複数instanceのrolling restartはこの結果へ含めません。
 
 ```sh
 ./scripts/benchmark.sh 10
