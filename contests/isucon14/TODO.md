@@ -70,6 +70,12 @@
   - Cargo: 7.03秒
   - Docker build壁時計: 11.02秒
   - ホストおよびColima: 4 CPU / 4 GiBのまま
+- [x] `reqwest::Client` を `AppState` で共有し、決済POST・確認GET・retryで再利用
+  - 60秒3走: 76,761 / 88,638 / 80,354点
+  - 観測範囲76,761–88,638点、推定代表値の中央値80,354点
+  - 直前中央値60,102点から+20,252点、約+33.7%
+  - 全run `pass=true`、error map空
+  - 詳細: [`tuning/14-payment-client-reuse.md`](./tuning/14-payment-client-reuse.md)
 - [x] nearbyの集合SQL、chair statsの集約SQL、batch matcherを実装
 - [x] 上記3変更を別々のBenchmarkとして正当性・性能検証する
 
@@ -88,7 +94,7 @@
 | P1 | `app_post_rides` | userの全rideとride別最新statusを取得 | ライド作成ごとに履歴全体を再走査 |
 | P1 | `app_post_users` | `coupons(code)` INDEXは追加済みだが、招待回数確認で該当行全体を取得 | `COUNT` / counter化とlock範囲の縮小が未実施 |
 | P1 | 認証middleware | 全APIリクエストでtokenからDB検索 | pollingと座標送信のたびに追加SQL |
-| P1 | `payment_gateway` | retryごとに `reqwest::Client::new()` | HTTP connection poolを再利用できない |
+| P1 | `payment_gateway` | process共有の `reqwest::Client` へ変更済み | TCP connect回数と再利用率の直接計測は未実施 |
 | P2 | nginx / Rustログ | stock設定のまま全リクエストを処理 | 高頻度経路のログI/Oとproxy overheadが未計測 |
 | P2 | MySQL / sqlx pool | stock MySQL、pool上限50固定 | 実負荷に対するbuffer・接続数が未調整 |
 
@@ -530,7 +536,10 @@
 - [ ] すべての決済POSTへride IDを `Idempotency-Key` として付与する
 - [ ] 同じkey・token・amountでretryし、エラー応答後も二重決済しない
 - [ ] 現行の `GET /payments` による照合を除去し、固定300ms待ちとuserのride全件取得をなくす
-- [ ] `reqwest::Client` を `AppState` に1個保持し、POST/GETとretryでconnectionを再利用する
+- [x] `reqwest::Client` を `AppState` に1個保持し、POST/GETとretryでconnectionを再利用する
+  - 3走中央値80,354点、直前中央値比約+33.7%、全runエラー0
+- [ ] 診断runで決済先のTCP connect回数、connection再利用率、TIME_WAITを採取する
+- [ ] 評価handlerをpool取得、SQL、外部HTTP、retry sleepへ分け、p95 / p99を採取する
 - [ ] 決済URLをinitialize時にメモリへ読み込み、評価ごとのsettings検索をなくす
 - [ ] ride、payment token、fareの読取りを短い区間へまとめる
 - [ ] 外部決済HTTPとretry sleep中はDB transactionを保持しない
@@ -686,7 +695,7 @@
 - [x] `is_active = TRUE` をDB matcherの不変条件にする
 - [x] matcher間隔を500 / 100 / 30msで比較し、matching latencyとDB負荷を測る
   - 500ms対照: 53,198点、matching不満足度9.5%
-  - 100ms: 54,172 / 53,715点、中央値53,943.5点
+  - 100ms: 54,172 / 53,715点、実測n=2の記述上の中央値53,943.5点（推定代表値には不使用）
   - 30ms: 41,016点、matching不満足度0.2%だが最終評価数560へ低下
   - 局所的な割当待ちは短縮しても総得点が下がるため、500msを維持
 - [ ] CODE=32または未マッチ滞留が悪化したら、他のP1施策よりmatcherを繰り上げる
@@ -817,7 +826,7 @@
 3. JSON通知のpayload cacheとlong pollingを実装し、30ms pollingよりDB負荷と通知遅延が減るか確認する
 4. 座標更新の非同期queueとbulk INSERTを単独実験し、3秒制約とstatus遷移を検証する
 5. 決済へ `Idempotency-Key` を導入してGET照合をなくす
-6. 外部決済HTTPをDB transactionの外へ出し、Clientを共有する
+6. 外部決済HTTPをDB transactionの外へ出し、障害時の二重決済・欠落を回復できるようにする
 7. nearbyの未完了判定を `evaluation IS NULL` へ単純化し、座標だけの短時間cacheを比較する
 8. app history、owner sales、ride作成のN+1を順に除去する
 9. current-state別表で最新位置・status・statsをO(1)化する

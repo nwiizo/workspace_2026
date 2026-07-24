@@ -260,11 +260,12 @@ Cargoはtargetのないmanifestをpackageとして解決できません。依存
 
 生成したbinaryは次を通しました。
 
-- `cargo test`: 成功
+- `cargo test`: 成功（test caseは0件のため、ここではtest profileのcompile確認）
 - Docker smoke test: `GET /` 200、`POST /api/initialize` 正常
 - owner SQL時点の60秒公式ベンチ: `pass=true`、スコア5,601、エラー0
 - 近傍優先matcherまで含む60秒公式ベンチ: `pass=true`、スコア16,909、エラー0
 - 座標更新とcoupon code INDEXまで含む60秒公式ベンチ: `pass=true`、スコア15,415、エラー0
+- 決済HTTP client再利用まで含む60秒公式ベンチ: 3走中央値80,354点、全run `pass=true`・エラー0
 
 ### 注意点と他の選択肢
 
@@ -372,6 +373,46 @@ let in_use = size.saturating_sub(idle);
 - `max_connections`: このprocessが保持する上限
 
 `acquire_timeout` は遅い処理を速くする設定ではなく、長時間待つ代わりに失敗を早く返す設定です。ベンチの正当性エラーを増やす可能性があります。`min_connections` も開始直後の接続確立を減らすだけで、定常状態のSQL量は減らしません。
+
+## `reqwest::Client` はrequestではなくprocessで再利用する
+
+`reqwest::Client` は単なる1 request分の値ではなく、送信先ごとのHTTP connection
+poolを管理するhandleです。変更前の決済処理はPOSTと確認GETのたびに
+`Client::new()` を呼び、request終了後にclientを破棄していました。
+
+```rust
+// 変更前: 呼出しごとに別poolになる
+reqwest::Client::new().post(url).send().await?;
+
+// 変更後: AppState内の同じpoolを使う
+payment_client.post(url).send().await?;
+```
+
+`AppState` にclientを保持してAxumのhandlerへ渡すと、同じhostへの次のrequestで
+idle connectionを再利用できる可能性があります。TCPやTLSの確立を毎回省けるだけで
+なく、socketの作成・破棄も減らせます。
+
+```rust
+#[derive(Debug, Clone)]
+pub struct AppState {
+    pub pool: sqlx::MySqlPool,
+    pub payment_client: reqwest::Client,
+}
+```
+
+`reqwest::Client::clone()` は内部状態を共有する軽量なhandleです。Bearer token、
+header、JSON bodyは各request builderに属するため、clientを共有しても別利用者の
+認証情報が自動的に混ざるわけではありません。
+
+この変更後の60秒ベンチは76,761 / 88,638 / 80,354点、中央値80,354点で、
+直前の3走中央値60,102点から約33.7%増えました。全runは `pass=true`・エラー0です。
+これは3走から推定した代表値であり、将来の保証値ではありません。
+
+一方、connection再利用は相手のkeep-aliveやidle timeoutにも依存します。同じclientを
+使えば必ず同じTCP connectionになるとは限りません。`strace -e connect`、`ss`、
+packet captureなどの診断runで新規接続数を確認し、最終スコアrunとは分けます。
+実装、仮説、ログの詳細は
+[Benchmark 14](./14-payment-client-reuse.md) に記録しています。
 
 ## ログは消す前に量と出力先を測る
 
