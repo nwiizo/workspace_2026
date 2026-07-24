@@ -22,8 +22,10 @@ pub struct PaymentGatewayPostPaymentRequest {
 
 #[derive(Debug, serde::Deserialize)]
 struct PaymentGatewayGetPaymentsResponseOne {
-    amount: i32,
-    status: String,
+    #[serde(rename = "amount")]
+    _amount: i32,
+    #[serde(rename = "status")]
+    _status: String,
 }
 
 pub trait PostPaymentCallback<'a> {
