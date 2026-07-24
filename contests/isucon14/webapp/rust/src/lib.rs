@@ -594,7 +594,7 @@ where
     E: 'e + sqlx::Executor<'e, Database = sqlx::MySql>,
 {
     sqlx::query_scalar(
-        "SELECT status FROM ride_statuses WHERE ride_id = ? ORDER BY created_at DESC LIMIT 1",
+        "SELECT status FROM ride_statuses WHERE ride_id = ? ORDER BY status DESC LIMIT 1",
     )
     .bind(ride_id)
     .fetch_one(executor)

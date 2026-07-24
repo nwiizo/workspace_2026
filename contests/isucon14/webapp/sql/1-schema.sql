@@ -123,9 +123,9 @@ CREATE TABLE ride_statuses
   app_sent_at     DATETIME(6)                                                                NULL COMMENT 'ユーザーへの状態通知日時',
   chair_sent_at   DATETIME(6)                                                                NULL COMMENT '椅子への状態通知日時',
   PRIMARY KEY (id),
-  INDEX idx_ride_statuses_ride_created_at (ride_id, created_at),
-  INDEX idx_ride_statuses_ride_app_sent_at (ride_id, app_sent_at, created_at),
-  INDEX idx_ride_statuses_ride_chair_sent_at (ride_id, chair_sent_at, created_at)
+  INDEX idx_ride_statuses_ride_status (ride_id, status),
+  INDEX idx_ride_statuses_ride_app_sent_at (ride_id, app_sent_at, status),
+  INDEX idx_ride_statuses_ride_chair_sent_at (ride_id, chair_sent_at, status)
 )
   COMMENT = 'ライドステータスの変更履歴テーブル';
 

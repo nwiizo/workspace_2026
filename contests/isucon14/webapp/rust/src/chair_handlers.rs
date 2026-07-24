@@ -287,7 +287,7 @@ LIMIT 1
             // Use a locking read here so the transition decision sees the status
             // committed by the previous ride-lock holder instead of that old snapshot.
             let latest_status: String = sqlx::query_scalar(
-                "SELECT status FROM ride_statuses WHERE ride_id = ? ORDER BY created_at DESC LIMIT 1 FOR UPDATE",
+                "SELECT status FROM ride_statuses WHERE ride_id = ? ORDER BY status DESC LIMIT 1 FOR UPDATE",
             )
             .bind(&ride.id)
             .fetch_one(&mut *tx)
@@ -373,7 +373,7 @@ async fn chair_get_notification(
             .await?;
 
     let yet_sent_ride_status: Option<RideStatus> =
-        sqlx::query_as("SELECT * FROM ride_statuses WHERE ride_id = ? AND chair_sent_at IS NULL ORDER BY created_at ASC LIMIT 1")
+        sqlx::query_as("SELECT * FROM ride_statuses WHERE ride_id = ? AND chair_sent_at IS NULL ORDER BY status ASC LIMIT 1")
         .bind(&ride.id)
         .fetch_optional(&mut *tx)
         .await?;

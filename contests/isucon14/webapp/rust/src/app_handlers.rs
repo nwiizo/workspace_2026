@@ -621,7 +621,7 @@ async fn app_get_notification(
             .fetch_one(&mut *tx)
             .await?;
 
-    let yet_sent_ride_status: Option<RideStatus> = sqlx::query_as("SELECT * FROM ride_statuses WHERE ride_id = ? AND app_sent_at IS NULL ORDER BY created_at ASC LIMIT 1")
+    let yet_sent_ride_status: Option<RideStatus> = sqlx::query_as("SELECT * FROM ride_statuses WHERE ride_id = ? AND app_sent_at IS NULL ORDER BY status ASC LIMIT 1")
         .bind(&ride.id)
         .fetch_optional(&mut *tx)
         .await?;
