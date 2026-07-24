@@ -388,6 +388,25 @@ INDEXの並びが `ORDER BY` と合えば、MySQLは別のsortを作らず順番
 調べます。降順INDEXは、複合列にASC / DESCが混在し既存INDEXの逆向き走査では
 順序を作れない場合などに比較対象になります。
 
+#### wall-clock・状態version・ENUM順
+
+`created_at` は「いつ観測したか」を表すwall-clockで、状態の前後関係を保証するversion
+とは限りません。並行transactionとlock待ちがあると、処理開始、時刻の評価、lock取得、
+commitの順番は一致しない場合があります。同率時刻へIDを足せば全順序は作れますが、
+異なる時刻自体が状態順と逆なら解決しません。
+
+ISURIDEの `ride_statuses.status` は
+`MATCHING -> ENROUTE -> PICKUP -> CARRYING -> ARRIVED -> COMPLETED` の順に宣言した
+MySQL ENUMです。MySQLはENUMを通常、文字列の辞書順ではなく宣言時の内部index順で
+並べます。このため現在の直線的な状態機械では `ORDER BY status` を状態versionとして
+使えます。分岐、取消、再開を追加して単純な大小関係で表せなくなった場合は、明示的な
+sequenceまたはcurrent-state表へ移行します。
+
+複合INDEX `(ride_id, app_sent_at, status)` では、先頭2列を等価条件で固定すると、その
+範囲の末尾列はstatus順に並んでいます。未送信通知を状態順で1件取るときもfilesortを
+避けられます。詳細と実際に再現した時刻逆転は
+[Benchmark 19](./tuning/19-status-semantic-order.md) に記録しています。
+
 #### 全件走査
 
 条件に合う行を探すため、tableまたはINDEXの広い範囲を先頭から確認する処理です。
@@ -797,6 +816,7 @@ retryは一時的な通信失敗時に同じ処理を再試行すること、bac
 - [MySQL 8.4: EXPLAIN Statement](https://dev.mysql.com/doc/refman/8.4/en/explain.html)
 - [MySQL 8.4: Performance Schema Event Timing](https://dev.mysql.com/doc/refman/8.4/en/performance-schema-timing.html)
 - [MySQL 8.4: prepared_statements_instances](https://dev.mysql.com/doc/refman/8.4/en/performance-schema-prepared-statements-instances-table.html)
+- [MySQL 8.0: The ENUM Type](https://dev.mysql.com/doc/refman/8.0/en/enum.html)
 
 ## ベンチマーク記録
 
@@ -821,6 +841,7 @@ retryは一時的な通信失敗時に同じ処理を再試行すること、bac
 | [16-nearby-evaluation-filter.md](./tuning/16-nearby-evaluation-filter.md) | nearbyのstatus相関subqueryを除去し、全status writerをride row lockで直列化 | エラー0の3走98,311–98,628点、中央値98,580点 | 実測n=3、中央値を推定代表値に使用。queryだけの100,310点は競合反例により不採用 |
 | [17-coordinate-transition-query.md](./tuning/17-coordinate-transition-query.md) | 通常座標のstatus取得を除き、遷移候補だけlock後にcurrent read | 3走98,311–98,628点、中央値98,580点。直前版比+6.6% | 実測n=3、中央値を推定代表値に使用 |
 | [18-latest-location-cache.md](./tuning/18-latest-location-cache.md) | 最新座標をcurrent-state表 + process cacheへ分離し、2秒再同期・評価response body tracker・initialize gateを追加 | 最終3走96,888–98,483点、中央値96,926点。nearby SQLは最終run例8.079ms | エラー0の実測n=3。時間依存cooldown、handler-scope guard、暫定cache中央値103,683点は正当性反例により不採用 |
+| [19-status-semantic-order.md](./tuning/19-status-semantic-order.md) | 通知と最新statusをwall-clock順からENUMの状態遷移順へ変更 | 3走89,539–99,895点、中央値98,338点。CODE=11は0件 | 実測n=3。診断runのCODE=11を回帰テストで再現し、app / chair両経路を検証 |
 | [80-rust-implementation.md](./tuning/80-rust-implementation.md) | Rust / sqlxとrelease buildの知識 | 再build 30分52秒→11.02秒 | build時間の実測。スコア推定対象外 |
 | [90-local-environment.md](./tuning/90-local-environment.md) | build context、BuildKit、固定Colima資源 | context 467MB→32.5KB | sizeの実測。スコア推定対象外 |
 

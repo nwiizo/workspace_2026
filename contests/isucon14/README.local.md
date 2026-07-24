@@ -49,6 +49,7 @@ git -C "$source_dir/isucon14" archive HEAD | tar -x -C contests/isucon14
 | `scripts/up.sh` / `down.sh` | 起動、停止、DBを含む完全初期化 |
 | `scripts/smoke-test.sh` | トップ画面と初期化 API の疎通確認 |
 | `scripts/test-latest-location-reconciliation.sh` | commit後のcache更新欠落と同時刻tie-breakの故障注入 |
+| `scripts/test-status-notification-order.sh` | 時刻逆転時もapp / chair通知が状態遷移順になることをHTTPで確認 |
 | `scripts/benchmark.sh` | 決済モックを含む公式ベンチマーカーの実行 |
 | `.dockerignore` / `webapp/rust/.dockerignore` | Dockerへ不要なソース・`target/` を送らない |
 
@@ -190,6 +191,10 @@ cd contests/isucon14
 # 注意: 開始時と終了時にPOST /api/initializeを呼び、ローカルデータを初期化する
 ./scripts/test-latest-location-reconciliation.sh
 
+# created_atが逆転しても通知と最新statusが状態遷移順になることを確認
+# 注意: POST /api/initializeを呼び、ローカルデータを初期化する
+./scripts/test-status-notification-order.sh
+
 # 公式ベンチマーカーによる短い動作確認
 ./scripts/benchmark.sh 10
 
@@ -198,9 +203,9 @@ cd contests/isucon14
 ```
 
 走行時間は引数または環境変数で指定します。省略時は公式と同じ 60 秒です。
-`test-latest-location-reconciliation.sh` は故障注入前後にDBを公式初期データへ戻すため、
-保持したいローカルデータがある環境では実行しないでください。使い捨てのISUCON
-検証stackを対象にします。
+`test-latest-location-reconciliation.sh` と `test-status-notification-order.sh` は
+DBを公式初期データへ戻すため、保持したいローカルデータがある環境では実行しないで
+ください。使い捨てのISUCON検証stackを対象にします。
 
 ```sh
 ./scripts/benchmark.sh 10
@@ -253,6 +258,7 @@ RESET=1 ./scripts/down.sh
 | nearbyの未完了ride判定 + 競合安全化 | エラー0の3走98,311–98,628点、中央値98,580点（直前採用版比+5.3%） |
 | 座標遷移queryの絞り込み | 通常座標のstatus取得を除去し、候補だけlocking read。直前版中央値92,484→98,580点（+6.6%） |
 | nearby最新座標cache + current-state表 | 評価response bodyまで保持するtrackerを含む最終3走96,888–98,483点、中央値96,926点、全runエラー0。nearby SQL平均44.859→最終run例8.079ms |
+| statusの状態遷移順 | 時刻逆転のapp / chair HTTP回帰テスト成功。3走89,539–99,895点、中央値98,338点、全run `pass=true`、CODE=11は0件 |
 
 初回の初期60秒走行ではMySQLのqueryが十数秒以上へ遅延し、ベンチマーカーの期限を
 超えました。同じ初期revisionを外部コンテナの大きな共有負荷がない条件で再計測
@@ -271,6 +277,10 @@ nearbyから除外します。RAII guardはhandlerのローカル変数ではな
 移し、Axumがbodyを消費し終えるか、切断でbodyをdropした時点で解除します。固定時間の
 cooldownは処理時間によって早過ぎたり遅過ぎたりするため不採用に戻しました。
 エラー0の最終3走は96,888 / 96,926 / 98,483点、中央値96,926点でした。
+その後、診断runで `CARRYING` の後に古い `PICKUP` を返すCODE=11を再現したため、
+通知と最新statusの順序をwall-clockではなくENUMの状態遷移順へ変更しました。
+時刻逆転のHTTP回帰テストを追加し、通常条件の3走は89,539 / 98,338 / 99,895点、
+中央値98,338点、すべて `pass=true` でした。
 queryだけを変えた暫定版の中央値100,310点は競合反例があるため、採用スコアには
 含めていません。
 process cacheだけの暫定版中央値103,683点も、`CODE=30` とcommit後cache更新欠落の

@@ -112,6 +112,12 @@
   - 500ms / 1秒cooldownは評価処理時間に正しさが依存するため不採用
   - initializeは全APIと再同期を共通maintenance gateで排他
   - 詳細: [`tuning/18-latest-location-cache.md`](./tuning/18-latest-location-cache.md)
+- [x] status通知と最新状態の順序を `created_at` ではなくENUMの状態遷移順へ統一する
+  - 診断runで `CARRYING` 配信後に古い `PICKUP` を返すCODE=11を1件再現
+  - app / chair両通知へ時刻逆転データを投入するHTTP回帰テストを追加
+  - 未送信通知INDEXを `(ride_id, *_sent_at, status)` へ変更し、`Using filesort` を除去
+  - 60秒3走89,539 / 98,338 / 99,895点、中央値98,338点、全run `pass=true`、CODE=11は0件
+  - 詳細: [`tuning/19-status-semantic-order.md`](./tuning/19-status-semantic-order.md)
 - [x] nearbyの集合SQL、chair statsの集約SQL、batch matcherを実装
 - [x] 上記3変更を別々のBenchmarkとして正当性・性能検証する
 
@@ -580,6 +586,9 @@
 - [ ] 同一recipientへの並行pollingが発生する構成になった場合だけ `FOR UPDATE SKIP LOCKED` を比較する
 - [ ] transactionは未送信statusのclaimからsent更新までの最短区間だけにする
 - [ ] app/chairそれぞれで、状態遷移の順序とat least onceを並行リクエストでも確認する
+- [x] wall-clockが逆転した履歴でもapp/chairが状態遷移順に配信することをHTTPで確認する
+  - `MATCHING -> ENROUTE -> PICKUP -> CARRYING` を両endpointで確認
+  - 実行: `./scripts/test-status-notification-order.sh`
 - [x] `retry_after_ms` を30 / 50 / 100msで比較し、通知遅延とDB負荷の交点を測る
   - 50 / 100msはCOMMIT回数を減らしたがスコアを改善せず、実装は30msへ戻した
   - 詳細は [`tuning/10-notification-retry-interval.md`](./tuning/10-notification-retry-interval.md)
@@ -590,7 +599,7 @@
 - [ ] version確認 → waiter登録 → version再確認の順にして、確認と待機開始の間に発生した通知を取りこぼさない
 - [ ] long polling中はDB connectionとtransactionを保持せず、切断・timeout・再接続時もat least onceを維持する
 - [ ] cacheはpayload生成の高速化だけに使い、`app_sent_at` / `chair_sent_at` の配信cursorと混同しない
-- [ ] 未配信statusが複数ある再接続では、cacheの最新1件だけを返さず `created_at, id` 順で全遷移を送る
+- [ ] 未配信statusが複数ある再接続では、cacheの最新1件だけを返さず状態遷移順で全件を送る
 - [ ] JSON polling、JSON long polling、SSEを同一条件で比較し、protocol変更だけではなくDB query数と通知遅延が減った案を採用する
 
 ### 決済と評価
@@ -899,20 +908,22 @@
 
 ## 推奨する直近の実行順
 
-1. current UPDATEのrow-lock待機とcoordinate transaction p50 / p95 / p99を診断runで採取する
-2. current rowをper-chair順序付きqueueでcoalesceし、3秒収束・全履歴・crash整合性を維持したまま
+1. owner椅子一覧のCODE=26を同じchair IDで再現し、DB座標列、owner API snapshot、
+   ベンチマーカーの送信済み座標を突き合わせる
+2. current UPDATEのrow-lock待機とcoordinate transaction p50 / p95 / p99を診断runで採取する
+3. current rowをper-chair順序付きqueueでcoalesceし、3秒収束・全履歴・crash整合性を維持したまま
 39,013回、累積29.033秒のwrite amplificationを減らせるか単独比較する
-3. latest-coordinate cacheの `RwLock` とmaintenance gateの待機・保持時間を計測し、
+4. latest-coordinate cacheの `RwLock` とmaintenance gateの待機・保持時間を計測し、
    2秒再同期時のglobal stallを定量化する
-4. chair statsと最新statusを含む通知payload cacheを実装し、30ms pollingよりDB負荷と通知遅延が減るか確認する
-5. matcherへ地域間の距離上限を追加し、500 / 100 / 30msの実行間隔と組み合わせて比較する
-6. 決済へ `Idempotency-Key` を導入してGET照合をなくす
-7. 外部決済HTTPをDB transactionの外へ出し、障害時の二重決済・欠落を回復できるようにする
-8. app history、owner sales、ride作成のN+1を順に除去する
-9. current-state別表で最新status・statsをO(1)化する
-10. JSON long pollingで不足する場合だけSSEへ移し、状態変更時の即時pushまで実装する
-11. 貪欲matcherと最小費用二部マッチングを比較する
-12. 最後にpool、MySQL、nginx、compiler設定をprofileに基づいて調整する
+5. chair statsと最新statusを含む通知payload cacheを実装し、30ms pollingよりDB負荷と通知遅延が減るか確認する
+6. matcherへ地域間の距離上限を追加し、500 / 100 / 30msの実行間隔と組み合わせて比較する
+7. 決済へ `Idempotency-Key` を導入してGET照合をなくす
+8. 外部決済HTTPをDB transactionの外へ出し、障害時の二重決済・欠落を回復できるようにする
+9. app history、owner sales、ride作成のN+1を順に除去する
+10. current-state別表で最新status・statsをO(1)化する
+11. JSON long pollingで不足する場合だけSSEへ移し、状態変更時の即時pushまで実装する
+12. 貪欲matcherと最小費用二部マッチングを比較する
+13. 最後にpool、MySQL、nginx、compiler設定をprofileに基づいて調整する
 
 ## 記録ルール
 

@@ -178,8 +178,16 @@ hot queryでは必要な列を明示すると、次の3つを同時に管理で�
 ## 履歴と現在状態を使い分ける
 
 `ride_statuses` は状態遷移の履歴、`rides.evaluation` は評価確定後に値が入る現在状態
-です。履歴は「いつ何が起きたか」を復元できますが、現在状態を知るたびに
-`ORDER BY created_at DESC LIMIT 1` が必要になります。
+です。履歴は「いつ何が起きたか」を復元できますが、現在状態を知るたびに履歴から
+最新1件を選ぶ必要があります。
+
+現在のstatusは `ORDER BY status DESC LIMIT 1` で選びます。schemaのENUMが
+`MATCHING -> ENROUTE -> PICKUP -> CARRYING -> ARRIVED -> COMPLETED` の状態進行順に
+定義されているためです。以前使っていた `created_at DESC` は、並行transactionの
+lock待ちでwall-clock順と状態順が逆転し、`CARRYING` の後に古い `PICKUP` を通知する
+失格を再現したため変更しました。時刻は履歴の観測時刻として保持し、状態versionとは
+分けます。詳細は
+[Benchmark 19](./19-status-semantic-order.md) を参照してください。
 
 Benchmark 16の変更前は、nearby検索のたびに各rideの最新statusを履歴から復元し、
 1回の実行計画で相関subqueryが1,671回動いていました。変更後は次の条件を使います。
