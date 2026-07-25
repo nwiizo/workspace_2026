@@ -80,12 +80,12 @@
 | 最新位置をcurrent-state表で管理 | 履歴INSERTと同じtransactionで更新し、cacheを2秒ごとに再同期 | current UPDATEのrow-lock待ちとwrite amplificationを削減 |
 | pending rideと空き椅子のbatch matching | 地域ごとに最大64候補、全体最大64割当、近傍優先、同一地域の距離200以下まで実装済み。speedだけを使う局所greedyは中央値-0.9%で不採用 | 地域ID + INDEX、期限とpickup予測を含む二部matchingを比較 |
 | JSON通知のcache | recipient revisionとchair stats dependency revision付きprocess cache。chairは配送状態機械でcurrent rideを維持。rideありは存在確認connectionをtransactionへ再利用し、2回目のpool取得を診断878 / 878 sampleで削除。通常3走中央値139,198点 | owner `CODE=26`を再修正後、response ACKなしの配送loss、DB connectionを保持しないlong pollingを比較 |
-| 座標更新のpool待ち | 総接続50をgeneral 26 + coordinate 24へ分割。通常3走中央値138,027点で採用。general通知の二重pool取得も削減済み | owner `CODE=26`を再修正後、static partitionのidle非共有を共有pool + admission controlと比較 |
+| 座標更新のpool待ち | 総接続50のshared pool + general permit 26を採用。static / shared近接3組の中央値126,104→135,410点（+7.38%）。coordinateはpermit対象外、general通知の二重取得も削減済み | coordinate current write / COMMIT / row-lockを減らし、必要ならper-chair queueを比較 |
 | 座標更新の非同期・bulk INSERT | pickup / destination候補だけlockし、statusをcurrent readする。全位置履歴とcurrent rowは同じtransaction | 接続隔離後も30msを超える場合に、per-chair順序・全履歴・3秒反映を守るqueueを実験 |
 | 決済HTTP client | process内で1個を共有し、冪等なPOST / retryでconnection poolを再利用済み。診断203 sampleは608 attempts、途中5xx 405回、最終204 | TCP connect回数とconnection再利用率を採取 |
 | 決済の `Idempotency-Key` | ride IDを全POSTへ設定し、確認GETとuser全ride取得を削除済み | 準備transactionと完了transactionの間に決済を置く構成まで実装。TCP connect回数と再利用率を採取する |
 | 招待登録 | 招待者のUNIQUE行を `FOR UPDATE` して同一コードだけを直列化。couponは `COUNT(*)`、reward codeは新規user IDで一意化 | 上限が増えてCOUNTが支配的になった場合だけ、条件付きcounter UPDATEを比較 |
-| SQLx connection pool | 総上限50 / 75 / 100では50を維持。さらに50をgeneral 26 + coordinate 24へ分け、通常3走中央値138,027点で採用 | static partitionのidle非共有をshared pool + admission controlと比較し、query・lock保持も減らす |
+| SQLx connection pool | 総上限50 / 75 / 100では50を維持。static 26 / 24からshared 50 + general permit 26へ変更し、実行順反転込み3組すべてでsharedが上回った | permit待ちとSQLx acquireを分け、query・lock保持時間そのものを減らす |
 
 SSEは形式だけ変更しても、DB query数とpayload生成量が同じなら効果が薄いと考えます。
 Benchmark 26ではJSON payload cacheと状態不変時だけ100msにするpollingを実装し、
@@ -122,12 +122,17 @@ drive区間を同一ride IDで追跡した結果、抽出74 rideでdrive tickを
 pool取得が64.349msで、抽出rideの余分3,718 tickに対してPOST時間からのblocked見積りは
 3,678 tickでした。最終ARRIVED POSTと非周期のride追跡sampleを通常分布から
 除外し、commitとserver response構築の時刻を分けて再集計した値です。
-この結果を受け、総DB接続予算50をgeneral 26 / coordinate 24へ分けました。16 / 20 / 24を
+この結果を受け、総DB接続予算50を一度general 26 / coordinate 24へ分けました。16 / 20 / 24を
 診断比較し、24の通常3走中央値は138,027点で直前133,257点比+3.6%、全走error map空でした。
-上限75 / 100は既に悪化しているため、接続数追加ではなく接続予約として採用しています。
-ただしstatic partitionは片側のidleを共有できず、general 26では通知・評価・matcherが
-飽和するrunがあります。通知の二重取得はBenchmark 45 / 46で削減したため、再発した
-owner `CODE=26`を直した後に共有pool + admission controlを比較します。
+上限75 / 100は悪化したため、接続総数は50を維持しています。
+
+Benchmark 49ではstatic partitionのidle非共有を解消するため、1つのshared pool 50へ戻し、
+general DB phaseだけをSemaphore permit 26で制限しました。static / sharedを交互に
+3組比較し、中央値126,104→135,410点（+7.38%）、全6走error map空でした。
+全組でsharedが上回ったため既定値へ採用しました。HTTP request全体を制限する初期案は、
+外部決済やcache hit中もpermitを持ち、周期sampleの待ちp95 275.731msだったため棄却しています。
+採用版は実際のDB phaseだけを囲みます。詳細は
+[Benchmark 49](./tuning/49-db-shared-pool-admission.md)に記録しています。
 
 通知cacheはDB上の配信cursorの代替にはしません。recipientごとにpayloadとrevisionを保持し、
 app payloadが参照するchair statsにもdependency revisionを持たせます。ride割当・status追加・
@@ -938,6 +943,7 @@ amountを記録するため、ride IDを同じkeyとして再利用すれば、�
 | [46-notification-connection-reuse-adoption.md](./tuning/46-notification-connection-reuse-adoption.md) | 通知connection再利用を通常3走し、差分なし`main`対照でerror因果を分離 | 3走134,732–150,117点、中央値139,198点、直前比+0.85%。全走`pass=true`、`CODE=29` 0件 | 実測n=3。score差は分散より小さいが重複queue待ちを確実に削減して採用。`CODE=26` 77 / 64件は差分なし対照でも94件再現したためowner側の次のP0 |
 | [47-owner-distance-recurrence-diagnostics.md](./tuning/47-owner-distance-recurrence-diagnostics.md) | owner応答、coordinate commit、ベンチ内部履歴をchair IDとマイクロ秒時刻で厳格相関。commit窓は`Instant`で計測 | 再発診断145,128点、`pass=true`、`CODE=26` 94件。owner query p95 660.307ms。`Instant`修正後159,936点・error空、2,983 sampleのcommit窓はp99 123.156ms・最大304.287ms・1秒超0件 | 診断run・未推定。履歴診断30秒は65,908点・42件を全件再相関。chair内時刻が約81ms逆行し、DB距離465・期待429の差36とerrorが一致。1秒超commit仮説を棄却 |
 | [48-owner-distance-monotonic-time.md](./tuning/48-owner-distance-monotonic-time.md) | DBと同じµs精度へ正規化後、chairごとのprocess内high-water markで`recorded_at`を単調増加。同時刻を`id`で決定し、距離不一致と3秒超stalenessを別reasonで診断 | 通常3走139,218–146,999点、中央値141,228点、全走`pass=true`・error map空。診断158,260点、87,005区間のspeed超過0、commit最大197.062ms | 実測n=3。Benchmark 46中央値比+1.46%だがrun間分散より小さく高速化の因果は未確定。実測した時刻逆行を追加SQLなしで防ぐ正当性修正として採用。複数process保証は未対応 |
+| [49-db-shared-pool-admission.md](./tuning/49-db-shared-pool-admission.md) | static 26 / 24と、shared pool 50 + general DB phase permit 26を実行順反転込みで比較 | static中央値126,104点、shared中央値135,410点、差+9,306点（+7.38%）。全6走`pass=true`・error map空。30秒診断はMySQL statusを1秒採取 | 各構成実測n=3、3組すべてsharedが上回ったため既定へ採用。request-wide permitはDB外待ちも枠を塞ぐため棄却し、phase scopeだけを採用 |
 | [80-rust-implementation.md](./tuning/80-rust-implementation.md) | Rust / sqlxとrelease buildの知識 | 再build 30分52秒→11.02秒 | build時間の実測。スコア推定対象外 |
 | [81-evaluation-authorization.md](./tuning/81-evaluation-authorization.md) | 評価rideを認証ユーザー所有へ制限 | 公式prevalidation `pass=true`、別ユーザーHTTP回帰成功 | 正当性修正。60秒スコアはBenchmark 20から更新しない |
 | [90-local-environment.md](./tuning/90-local-environment.md) | build context、BuildKit、固定Colima資源 | context 467MB→32.5KB | sizeの実測。スコア推定対象外 |

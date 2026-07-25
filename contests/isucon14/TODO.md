@@ -364,7 +364,7 @@
 | P0 | 通知2経路 | recipient + chair stats dependency revision付きpayload cache。chairは配送状態機械でcurrent rideを維持。未送信statusは30ms、定常cacheは100ms | connection再利用、response ACKなしの配送loss、long pollingを順に検証 |
 | P0 | `get_chair_stats` | 評価時差分更新 + 主キーreadへ変更 | SQL累積は約89%減、スコア中央値は約3.5%低下したため次の通知施策と合わせて再評価 |
 | P0 | `app_post_ride_evaluation` | 準備transaction、transaction外の冪等決済、ride再lock付き完了transactionへ分割済み | connection所有平均は94.0%短縮。完了時の追加acquireとprocess crash後の自動回収を検討する |
-| P0 | `chair_post_coordinate` | 履歴INSERT + current UPDATE、遷移候補だけride lock + 最新status再読。総接続50をgeneral 26 + coordinate 24へ分け、通常3走中央値138,027点で採用 | shared pool + general admission control、通知二重取得削減、必要ならper-chair queueを比較する |
+| P0 | `chair_post_coordinate` | 履歴INSERT + current UPDATE、遷移候補だけride lock + 最新status再読。shared pool 50 + general DB phase permit 26を近接3組で採用 | current write / COMMIT / row-lockの仕事量を減らし、必要ならper-chair queueを比較する |
 | P1 | `app_get_rides` | rideごとにstatus、coupon、chair、ownerを取得 | 履歴増加に比例するN+1 |
 | P1 | `owner_get_sales` | ownerのchairごとに完了rideを取得し、評価responseと重なったride IDを除外 | N+1、read transactionが暗黙ROLLBACK。複数processではtracker共有が必要 |
 | P1 | `app_post_rides` | userの全rideとride別最新statusを取得 | ライド作成ごとに履歴全体を再走査 |
@@ -372,7 +372,7 @@
 | P1 | 認証middleware | 初期tokenはprocess cache、動的主体は最初のmissだけDB検索 | DB外のtoken失効と複数processのcache invalidationは未対応 |
 | P1 | `payment_gateway` | process共有client + ride IDの冪等POST。エラー時の履歴GETは削除済み | TCP connect回数、retry status別回数、connection再利用率の直接計測は未実施 |
 | P2 | nginx / Rustログ | stock設定のまま全リクエストを処理 | 高頻度経路のログI/Oとproxy overheadが未計測 |
-| P2 | MySQL / sqlx pool | stock MySQL、総接続上限50。50 / 75 / 100では50を維持し、内訳はgeneral 26 + coordinate 24を採用 | static partitionのidle非共有をshared pool + admission controlと比較し、query・lock保持も減らす |
+| P2 | MySQL / sqlx pool | stock MySQL、総接続上限50。shared pool + general DB phase permit 26を採用し、coordinate 24本分の余力を確保 | permit待ちとSQLx acquireを分け、query・lock保持そのものを減らす |
 
 ## Fable独立レビューで追加した正当性不変条件
 
@@ -1235,10 +1235,27 @@
   - 途中runの「反映が遅い」2件は距離不一致と別reasonで診断できるようにした。
     最終診断と通常3走では再発せず、推測で3秒境界を変更しない
   - 詳細: [`tuning/48-owner-distance-monotonic-time.md`](./tuning/48-owner-distance-monotonic-time.md)
-- [ ] static partitionで片側idleを共有できないため、共有pool 50 + general permitの
+- [x] static partitionで片側idleを共有できないため、共有pool 50 + general permitの
   admission controlを24 / 26と比較する
   - pool別permit待ち、`Threads_connected` / `Threads_running`、処理件数あたりrow-lock waitを
     1秒間隔で採取する
+  - request-wide版はcache hitや外部決済中もpermitを持ち、周期sampleの待ちp95が
+    275.731msだったため棄却。採用候補は実際のgeneral DB phaseだけを囲む
+  - 30秒診断はshared 43,524点、static 44,229点でともに`pass=true`・error map空。
+    sharedの周期571 sampleはpermit待ちp95 255.870ms、pool size 50 / idle 0が194件
+  - 1秒MySQL sampleは各32件。sharedは`Threads_running`平均9.75 / 最大50、
+    row-lock waits増分1,410、time増分33,792ms。staticは平均10.56 / 最大41、
+    waits増分1,224、time増分41,623ms
+  - 診断なし近接A/Bを`static→shared`、`shared→static`、`static→shared`で実施。
+    static 112,512 / 126,104 / 129,655点、中央値126,104点。
+    shared 130,167 / 141,586 / 135,410点、中央値135,410点（+7.38%）
+  - 3組すべてsharedが上回り、全6走`pass=true`・error map空のため既定へ採用。
+    staticは`ISUCON_DB_COORDINATE_CONNECTIONS=24`で再現できる
+  - 既定値へ切替後、環境変数なしで131,963点、`pass=true`・error map空。
+    起動logの`total=50 general=26 coordinate=24 shared=true`を確認
+  - ホストのSVG生成、`rustup update`、別`cargo install`と重なった探索runは
+    値と除外理由をBenchmark 49へ残し、中央値へ混ぜない
+  - 詳細: [`tuning/49-db-shared-pool-admission.md`](./tuning/49-db-shared-pool-admission.md)
 - [ ] 接続隔離後もcoordinateが30msを超える場合は、per-chair順序、全履歴、status遷移、
   3秒可視性を維持する非同期queueを別施策として比較する
 - [ ] matcherの目的関数を「割当件数最大化 → 期限超過ride最小化 → pickup予測tick最小化」の辞書順で定義する
@@ -1378,21 +1395,19 @@
 完了済みのmatcher `CODE=32`、owner `CODE=26`、評価phase、pool上限50 / 75 / 100、
 drive phaseの診断は上の各項目へ結果を残しています。現在の未完了項目は次の順です。
 
-1. 総上限50のstatic 26 / 24で見えたgeneral starvationに対し、共有pool 50のまま
-   general permitでcoordinate余力を保証するadmission controlと比較する
-2. static partition後も残るcoordinate p95に対し、per-chair queueへ進む前に
+1. shared pool + general admission後も残るcoordinate p95に対し、per-chair queueへ進む前に
    current write / COMMIT / row lockの処理量を減らせるか確認する
-3. owner距離のwindow集計を、1秒公開watermarkを維持したcurrent-state差分集約と
+2. owner距離のwindow集計を、1秒公開watermarkを維持したcurrent-state差分集約と
    短時間cacheで比較する
-4. `CODE=27`を同じchairのDB current row、process cache、nearby応答で追跡する
-5. latest-coordinate cacheの `RwLock` とmaintenance gateの待機・保持時間を計測し、
+3. `CODE=27`を同じchairのDB current row、process cache、nearby応答で追跡する
+4. latest-coordinate cacheの `RwLock` とmaintenance gateの待機・保持時間を計測し、
    2秒再同期時のglobal stallを定量化する
-6. 最新statusをcurrent-state化し、未送信statusがない通知pollの履歴lookupと
+5. 最新statusをcurrent-state化し、未送信statusがない通知pollの履歴lookupと
    payload再構築をなくす
-7. app history、owner sales、ride作成のN+1を1 endpointずつ除去する
-8. 貪欲matcherと、割当件数・期限超過・pickup予測tickを辞書順にした
+6. app history、owner sales、ride作成のN+1を1 endpointずつ除去する
+7. 貪欲matcherと、割当件数・期限超過・pickup予測tickを辞書順にした
    最小費用二部マッチングを比較する
-9. DB待ちとlock待ちを減らした後にMySQL、nginx、Rust compiler設定をprofileで比較する
+8. DB待ちとlock待ちを減らした後にMySQL、nginx、Rust compiler設定をprofileで比較する
 
 `CODE=8`が再発した場合は、優先順に割り込ませてapp通知のride / user / cursorを
 同一requestで保存します。正当性エラーは得点改善より先に原因を分離します。

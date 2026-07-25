@@ -65,6 +65,8 @@ git -C "$source_dir/isucon14" archive HEAD | tar -x -C contests/isucon14
 | `scripts/report-coordinate-phases.sh` | 診断runのcoordinate phase、row lock、current-state writeを集計 |
 | `scripts/report-evaluation-phases.sh` | 診断runの評価APIをpool、DB、決済HTTP、retry sleep、完了writeへ分解 |
 | `scripts/report-drive-phases.sh` | benchmarkerの理想 / 実tickと、同一rideのcoordinate、CARRYING、app / chair通知を結合 |
+| `scripts/sample-mysql-status.sh` | `Threads_connected` / `Threads_running` / InnoDB row-lock / Questionsを1秒間隔でTSVへ採取 |
+| `scripts/report-db-admission.sh` | general permit待ち、shared pool状態、MySQL status時系列をDB phase別に集計 |
 | `.dockerignore` / `webapp/rust/.dockerignore` | Dockerへ不要なソース・`target/` を送らない |
 
 ## 初期構築方法
@@ -417,27 +419,35 @@ stop-then-startです。複数instanceのrolling restartはこの結果へ含め
 BENCHMARK_DURATION=10 ./scripts/benchmark.sh
 ```
 
-SQLxの総接続予算は既定で50です。その内訳はgeneral 26、`POST /api/chair/coordinate`
-専用24です。`ISUCON_DB_MAX_CONNECTIONS`は2つのpoolそれぞれの上限ではなく合計で、
-coordinate値を差し引いた残りがgeneralになります。どちらも正整数で、
-coordinateは総数より小さい必要があります。coordinateを省略した場合は
-`min(24, total / 2)`で求めるため、総数を24以下へ下げても独立した既定値24で
-起動失敗しません。2つのpoolへ最低1本ずつ残すため、総数の最小値は2です。
+SQLxの総接続予算は既定で50です。1つのshared poolを使い、座標以外のgeneral DB phaseへ
+同時26個までのpermitを掛けます。generalだけでは50本を使い切れないため、
+`POST /api/chair/coordinate`用に24本分の余力を残しながら、片側がidleのときは
+connectionを融通できます。
+
+`ISUCON_DB_MAX_CONNECTIONS`はprocess全体の上限です。permitを省略した場合は
+`coordinate headroom = min(24, total / 2)`、`general permit = total - headroom`で
+導出します。総数の最小値は2です。`ISUCON_DB_COORDINATE_CONNECTIONS`を明示した場合だけ、
+比較用の2 pool構成へ戻ります。
 
 ```sh
-# 既定: total 50 = general 26 + coordinate 24
+# 既定: shared pool 50、general permit 26、coordinate headroom 24
 ISUCON_DB_MAX_CONNECTIONS=50 ./scripts/benchmark.sh 60
 
-# 接続総数50を維持し、配分だけgeneral 30 + coordinate 20へ変える
+# permit数を明示
+ISUCON_DB_GENERAL_PERMITS=26 ./scripts/benchmark.sh 60
+
+# static general 26 + coordinate専用24の対照を再現
 ISUCON_DB_MAX_CONNECTIONS=50 \
-ISUCON_DB_COORDINATE_CONNECTIONS=20 \
+ISUCON_DB_COORDINATE_CONNECTIONS=24 \
 ./scripts/benchmark.sh 60
 ```
 
-起動logの `configured database connection pools` で、実際のtotal / general / coordinateを
-確認できます。総数75 / 100は過去の通常3走で悪化したため、既定値にはしていません。
-配分16 / 20 / 24の診断と採用判断は
+起動logの `configured database connection pools` で、実際のtotal / general /
+coordinate / sharedを確認できます。総数75 / 100は過去の通常3走で悪化したため、
+既定値にはしていません。static配分16 / 20 / 24の診断と採用判断は
 [`tuning/44-db-pool-partition-adoption.md`](./tuning/44-db-pool-partition-adoption.md)
+に、shared admissionのscope、MySQL時系列、近接A/Bは
+[`tuning/49-db-shared-pool-admission.md`](./tuning/49-db-shared-pool-admission.md)
 に記録しています。
 
 ベンチマーカーは実行開始時に `POST /api/initialize` を呼ぶため、DB は初期データへ戻ります。フロントエンドの静的ファイル検証だけを省略したい場合は、公式オプションを次のように有効化できます。
@@ -503,6 +513,7 @@ RESET=1 ./scripts/down.sh
 | DB poolの用途別予約 | 総数50を維持し、general 34 / coordinate 16、30 / 20、26 / 24を診断比較。24 / 26の通常3走は133,797–142,851点、中央値138,027点、全走`pass=true`・error map空。直前中央値比+3.6%。既定値での追加確認も132,756点、`pass=true` |
 | 通知connection再利用 | rideありの存在確認connectionをtransactionへ引き継ぎ、診断878 / 878 sampleで2回目のpool取得を削除。通常3走134,732–150,117点、中央値139,198点（直前比+0.85%）、全走`pass=true`・`CODE=29` 0件。`CODE=26`は2走で再発したが、差分なし`main`対照でも94件再現 |
 | owner距離の時刻単調化 | `Utc::now()`をDBと同じµs精度へ正規化し、chairごとのprocess内high-water markで逆行と同時刻tieを防止。通常3走139,218–146,999点、中央値141,228点、全走`pass=true`・error map空。診断runは87,005移動区間のspeed超過0、`CODE=26` 0。直前中央値比+1.46%だが分散より小さく高速化の因果は未確定 |
+| shared DB pool + general admission | static / sharedを実行順反転込みで3組比較。static中央値126,104点、shared中央値135,410点（+7.38%）、全6走`pass=true`・error map空。sharedを既定に採用し、環境変数なしの最終確認も131,963点・`shared=true` |
 
 初回の初期60秒走行ではMySQLのqueryが十数秒以上へ遅延し、ベンチマーカーの期限を
 超えました。同じ初期revisionを外部コンテナの大きな共有負荷がない条件で再計測
@@ -769,6 +780,13 @@ Benchmark 26修正版の最終確認でも、トップの静的resource 17件は
 `/simulator` は利用者登録iframeとChair Simulatorを描画し、初回bootstrap時の
 app notification / chair activity 401をconsoleからclearした後、1秒間に新しいconsole
 errorは0件でした。chair notificationとcoordinateは継続してHTTP 200です。
+
+Benchmark 49のbackend変更後もPlaywright CLIで再確認しました。トップは
+`Top | ISURIDE`と3導線を表示し、静的resource 17件はすべてHTTP 200、console error 0件です。
+`/simulator`は利用者登録フォームとChair Simulatorを左右に描画しました。初回bootstrapの
+app notification / chair activity 401と既存のObject logをclearした後、2秒間の
+新規console errorは0件でした。一時スクリーンショットを目視し、描画崩れがないことも
+確認しました。
 
 再確認するときは、サービスを起動した状態で次を実行します。
 

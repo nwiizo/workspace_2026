@@ -2358,9 +2358,11 @@ let general = total - coordinate;
 正整数だけを許可し、generalを最低1本残します。0を「共有pool」など別の意味へ暗黙変換すると、
 設定ミスと実験条件が区別できないためです。
 
-coordinate設定を省略した場合は、総数50なら24、小さい総数なら半分になるよう
-`min(24, total / 2)`で導出します。総数だけを16へ下げた既存設定が、独立した
-coordinate既定24との大小関係だけで起動失敗しないためです。2 poolへ最低1本ずつ必要なので、
+Benchmark 44のstatic構成では、coordinate設定を省略した場合に総数50なら24、
+小さい総数なら半分になるよう`min(24, total / 2)`で導出しました。
+Benchmark 49のshared構成でも、この値を「別poolの本数」ではなく
+「generalだけでは使わないheadroom」として維持します。総数だけを16へ下げると
+general permit 8、coordinate headroom 8になります。headroomを最低1本残すため、
 total 1は理由付きで拒否します。
 
 ### poolを分けるときはbackground taskも分類する
@@ -2389,11 +2391,83 @@ generalが26本すべて待っていても、coordinate側にidleがあれば借
 下げましたが、general 26では通知・評価・matcherが飽和しました。それでも通常3走中央値は
 133,257点から138,027点へ約3.6%改善し、全走error map空だったため採用しました。
 
-次の比較候補はshared pool 50 + general admission controlです。接続を共有したまま
-general burstへpermit上限を設ければ、coordinateの余地を残しつつidleを融通できます。
-ただし全general handlerとbackground taskが同じpermitを守らなければ、予約保証に穴が開きます。
+### shared poolではpermitのscopeが不変条件になる
 
-詳細は[Benchmark 44](./44-db-pool-partition-adoption.md)に記録しています。
+Benchmark 49では、1つのshared pool 50とgeneral permit 26を比較し、既定へ採用しました。
+
+```rust
+let permit = admission.acquire("phase_name", &pool).await;
+let mut connection = pool.acquire().await?;
+// query / transaction
+drop(connection);
+drop(permit);
+```
+
+重要なのは、permit数ではなく「どこからどこまでguardを持つか」です。最初の候補は
+coordinate以外のHTTP request全体を囲みました。この形は実装漏れを減らせますが、
+通知cache hit、入力検証、JSON生成、評価の外部決済HTTPまでpermitを消費します。
+周期sampleのpermit待ちp95は275.731msでした。制限したい資源はHTTP request数ではなく
+general DB phase数なので、この版を棄却しました。
+
+採用版は次の境界にします。
+
+```text
+評価:
+permit -> 準備DB -> permit返却
+                     決済HTTP
+permit -> 完了DB -> permit返却
+
+通知:
+payload cache hit -> permitなし
+payload cache miss -> permit -> DB -> permit返却 -> response
+```
+
+認証cache miss、matcher、reconciliation、initialize refreshもgeneral取得として列挙します。
+全general経路がpermitを守ることで、general DB phaseは最大26になり、差分24を
+coordinate用headroomとして残せます。1経路でも直接`pool.acquire()`すれば保証に穴が開くため、
+新しいDB経路を追加するときはhandlerだけでなくmiddlewareとbackground taskも監査します。
+
+### permit待ちとpool待ちは別々に測る
+
+Semaphore permitを取った後にもSQLx connection待ちがあります。
+
+```text
+task queue
+  -> general permit wait
+  -> SQLx pool acquire wait
+  -> MySQL execution / row lock
+```
+
+上流のpermit待ちが増えても、下流のpool待ちやMySQL lock待ちが減り、全体の完了数が増える
+場合があります。1つのlatencyへ合算せず、permit、pool、SQL、COMMITを分けます。
+
+診断logは64回に1回の周期sampleと、30ms以上の強制sampleを出します。percentileへは
+周期sampleだけを使います。遅い値だけ全件追加した集合をpercentileへ入れると、
+実際の分布より遅い側へ偏るためです。
+
+### SQLx callbackだけではpermit guardの寿命を表せない
+
+SQLx 0.8の`before_acquire`はidle connectionを再利用する前のcallbackです。
+新規connectionを開く経路には適用されず、connection返却までSemaphore guardを
+保持するAPIでもありません。全取得経路と所有期間を制御したい今回の用途では、
+DB phaseをRustのscopeとして明示しました。
+
+### 採用結果
+
+static / sharedを実行順反転込みで3組比較しました。
+
+| 構成 | scores | 中央値 |
+| --- | --- | ---: |
+| static 26 / 24 | 112,512 / 126,104 / 129,655 | 126,104 |
+| shared 50 + permit 26 | 130,167 / 141,586 / 135,410 | 135,410 |
+
+全6走は`pass=true`・error map空で、sharedは3組すべてstaticを上回りました。
+中央値差は+7.38%です。環境変数なしをshared既定とし、
+`ISUCON_DB_COORDINATE_CONNECTIONS=24`を明示した場合だけstatic対照へ戻します。
+
+static partitionまでの経緯は[Benchmark 44](./44-db-pool-partition-adoption.md)、
+admission scope、MySQL 1秒時系列、除外runの根拠は
+[Benchmark 49](./49-db-shared-pool-admission.md)に記録しています。
 
 ### INDEXでCASE sortが自動的に消えるとは限らない
 
