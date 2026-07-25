@@ -1787,6 +1787,62 @@ asyncコードの局所latencyだけでなく、下流DBの滞在時間とシス
 同時に見る必要があります。詳細は
 [Benchmark 33](./33-sqlx-pool-capacity.md)に記録しています。
 
+## 未到達phaseを`Option`で表す
+
+Benchmark 34では、app / chair通知のcache hitとcache missを同じ診断型で記録しました。
+cache hitはDBへ到達しないため、すべてのphaseを`u64`の0で初期化すると意味が曖昧になります。
+
+```rust
+struct NotificationDiagnosticSample {
+    cache_lookup_us: Option<u64>,
+    transaction_pool_acquire_us: Option<u64>,
+    pending_status_query_us: Option<u64>,
+}
+```
+
+`Some(0)`はphaseへ到達したがµs単位で0、`None`はphaseへ到達していないことを表します。
+集計時は`null`を除外するため、cache hitを「0µsでDB処理したrequest」としてSQL平均へ
+混ぜません。分岐の多いasync handlerでは、値の0と状態の不在を型で分けることが
+計測の正確さにつながります。
+
+### 暗黙のpool取得を計測可能な境界へ展開する
+
+SQLxの`fetch_optional(&pool)`は内部でconnectionを借り、query後に返します。
+`pool.begin()`もconnection取得とSQL `BEGIN`をまとめます。合算値だけではqueue待ちと
+DB処理を区別できないため、診断対象では明示的な`PoolConnection`へ展開しました。
+
+```rust
+let mut connection = pool.acquire().await?;
+let row = query.fetch_optional(&mut *connection).await?;
+drop(connection);
+
+let mut connection = pool.acquire().await?;
+let mut tx = connection.begin().await?;
+// snapshot内の読み書き
+tx.commit().await?;
+drop(connection);
+```
+
+明示化すると所有期間も自分で管理します。COMMIT後のJSON serializeやcache更新まで
+`connection`変数を生かすと、元の`pool.begin()`より返却が遅くなります。SQL直後または
+COMMIT直後に`drop`し、計測のためにhot pathを悪化させないようにします。
+
+### cancellationでもterminal phaseを残す
+
+診断guardは`Drop`で未出力sampleを記録します。正常終了では`emit_success(self)`が
+guardを消費し、errorやclient切断によるfuture cancellationでは`Drop`が現在の
+`terminal_phase`とtotal時間を出します。
+
+connection取得後に中断した場合は、diagnostic guardが保持する取得時刻から所有時間も
+確定します。実際の`PoolConnection`はRustのdrop順で返却され、診断guardはDB接続そのものを
+所有しません。計測用の構造がconnection lifetimeを延ばさないことが重要です。
+
+診断runではcache missの2回のpool acquire平均合計がapp 77.839ms、chair 82.513msなのに対し、
+rideありの同じ母数による2区間のconnection所有合計は10.540 / 10.021msでした。
+Rustの抽象化を展開する目的は
+「低水準に書けば速い」ことではなく、どの`await`が何の資源を待つかを観測可能にすることです。
+詳細は[Benchmark 34](./34-notification-phase-diagnostics.md)に記録しています。
+
 ## 避けるショートカット
 
 - N+1を無制限の `tokio::spawn` で隠す

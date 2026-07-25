@@ -251,10 +251,10 @@ DIAGNOSTIC_SINCE="$diagnostic_since" ./scripts/report-evaluation-phases.sh
 [`compose.diagnostics.yaml`](./compose.diagnostics.yaml) から
 [`docker/nginx.diagnostic.conf`](./docker/nginx.diagnostic.conf) をmountし、APIのmethod、
 URI、status、request time、upstream response time、request / response bytesを
-JSONでstdoutへ記録します。同じoverlayがRust webappのcoordinateとevaluationのphase samplingも
-有効にします。64 requestに1件について、pool取得、SQL `BEGIN`、履歴INSERT、
-current-state write、ride検索、status遷移、COMMIT、cache更新を分け、
-成功・error / cancellationと最後のphaseをJSONで記録します。
+JSONでstdoutへ記録します。同じoverlayがRust webappのcoordinate、evaluation、app / chair
+notificationのphase samplingも有効にします。coordinateと通知は64 requestに1件、
+evaluationは8 requestに1件について、pool取得、SQL `BEGIN`、主要query、COMMIT、
+connection所有を分け、成功・error / cancellationと最後のphaseをJSONで記録します。
 取得直前のpool size / idle / in-useも同じsampleへ記録します。
 upstream connect time、connection ID、同じconnection上のrequest回数も含みます。
 Cookie、認証token、request body本文、決済情報は記録しません。通常のスコアrunは
@@ -283,6 +283,17 @@ nginx全request、InnoDB process累積を同じ境界の値として混ぜず、
 phase別p50 / p95 / p99は、すべてのphaseを完了した成功sampleだけで計算します。errorまたは
 cancellationでは未到達phaseがあるため、初期値0を成功分布へ混ぜません。失敗sampleは
 terminal phase別の件数とhandler内total latencyを別表へ出し、どこまで進んだかを確認します。
+
+通知診断はcache hit、rideなし、未送信status、定常状態を別pathとして集計します。
+次のコマンドは同じ診断runの開始時刻を使い、app / chairのcache hit率、path別total、
+存在確認とtransactionそれぞれのpool acquire、SQL、connection所有を表示します。
+
+```sh
+notification_diagnostic_since=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+ISUCON_DIAGNOSTIC=1 ./scripts/benchmark.sh 60
+./scripts/report-notification-phases.sh "$notification_diagnostic_since"
+./scripts/report-endpoint-latency.sh "$notification_diagnostic_since"
+```
 
 走行時間は引数または環境変数で指定します。省略時は公式と同じ 60 秒です。
 上記の `test-*.sh` はDBを公式初期データへ戻すため、保持したいローカルデータが
@@ -493,6 +504,21 @@ connection取得後の所有平均は18.637 / 26.527 / 30.410ms、InnoDBの1 wai
 通常中央値も下がるため、既定値50を維持しています。ホスト資源は4 CPU / 4 GiB / 100 GiBの
 ままです。詳細は
 [`tuning/33-sqlx-pool-capacity.md`](./tuning/33-sqlx-pool-capacity.md)を参照してください。
+
+Benchmark 34ではapp / chair通知を1/64 samplingし、cache missを存在確認用acquire、
+存在確認SQL、transaction用acquire、SQL、COMMIT、connection所有へ分けました。
+cache hitはapp 80.7%、chair 75.9%で、hitのp95はいずれも1µsでした。一方cache missは、
+初回acquire平均40.051 / 41.001msに加え、transaction acquire平均37.788 / 41.512msを
+同じrequestで待っていました。rideありの同じ母数で比べた2区間のconnection所有合計は
+平均10.540 / 10.021msです。
+
+診断runは`pass=true`・131,491点・error map空ですが、instrumentation付き1走なので
+通常得点の推定には使いません。pool上限を増やさず、rideありで最初のconnectionを
+transactionへ引き継ぎ、2回目のacquire queueを除く施策を次に比較します。connectionを
+連続所有することで他endpointへ待ちを移していないか、全endpoint p95と通常scoreも確認します。
+詳細は
+[`tuning/34-notification-phase-diagnostics.md`](./tuning/34-notification-phase-diagnostics.md)を
+参照してください。
 
 過去のBenchmark 19では、診断runで `CARRYING` の後に古い `PICKUP` を返す
 CODE=11を再現したため、

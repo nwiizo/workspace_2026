@@ -263,6 +263,16 @@
   - `ISUCON_DB_MAX_CONNECTIONS`を追加し、正の整数だけを許可。未指定時は50
   - CPU / memory / diskは4 CPU / 4 GiB / 100 GiBから変更していない
   - 詳細: [`tuning/33-sqlx-pool-capacity.md`](./tuning/33-sqlx-pool-capacity.md)
+- [x] app / chair通知cache missをpool取得、SQL、connection所有へphase分解する
+  - 診断runは`pass=true`、131,491点、error map空。instrumentation付き1走なので未推定
+  - cache hitはapp 80.7%、chair 75.9%。cache hitのp95はいずれも1µs
+  - cache missでは初回acquire平均40.051 / 41.001msに加え、transaction acquire平均
+    37.788 / 41.512msを同じrequestで待っていた
+  - rideありの同じ母数では2区間のconnection所有合計が平均10.540 / 10.021msで、
+    SQLより再acquireが支配的
+  - rideありでは最初の`PoolConnection`をtransactionへ引き継ぐ施策を次に比較する
+  - 連続所有で他endpointへ待ちを移す可能性もあるため、全endpoint p95と通常scoreで判定する
+  - 詳細: [`tuning/34-notification-phase-diagnostics.md`](./tuning/34-notification-phase-diagnostics.md)
 - [ ] `CODE=26` のowner累積距離が座標responseの受信境界より先へ進む競合を検証する
   - 期待値より実値が4–40程度大きく、直近1回の移動距離に近い例を確認
   - ベンチマーカーのcoordinate POST、world更新、owner検証の順序を同じchairで追う
@@ -280,7 +290,7 @@
 |---|---|---|---|
 | P0 | `internal_get_matching` | 64件batch + 近傍優先、外部pollは500ms | 空き定義の集約、500msの最小待ち |
 | P0 | `app_get_nearby_chairs` | 最新座標はcurrent-state表 + process cache、active / 割当可否はDB、評価はsnapshot + revision + delivery leaseで除外 | 最終run例8.079ms。ride antijoinとtracker確認の内訳を測る |
-| P0 | 通知2経路 | recipient + chair stats dependency revision付きpayload cache。未送信statusは30ms、定常cacheは100ms。cursorはDBに維持 | 診断runのp95はapp 166ms / chair 181ms。response ACKなしの配送loss、cache missのphase分解、long pollingが未検証 |
+| P0 | 通知2経路 | recipient + chair stats dependency revision付きpayload cache。未送信statusは30ms、定常cacheは100ms。cursorはDBに維持 | cache missの2回のpool acquireが支配的。最初のconnection再利用、response ACKなしの配送loss、long pollingを順に検証 |
 | P0 | `get_chair_stats` | 評価時差分更新 + 主キーreadへ変更 | SQL累積は約89%減、スコア中央値は約3.5%低下したため次の通知施策と合わせて再評価 |
 | P0 | `app_post_ride_evaluation` | 準備transaction、transaction外の冪等決済、ride再lock付き完了transactionへ分割済み | connection所有平均は94.0%短縮。完了時の追加acquireとprocess crash後の自動回収を検討する |
 | P0 | `chair_post_coordinate` | 履歴INSERT + current UPDATE、遷移候補だけride lock + 最新status再読 | pool 50維持。上限追加で通常中央値は改善しなかったため、connection取得後のDB滞在をquery別に減らす |
@@ -1153,6 +1163,8 @@
 - [ ] 全APIの30ms超過率とmatching / pickup / driveのtick遅延を記録する
 - [ ] matcherは地域別pending数、available chair数、starvationした最古rideの待ち時間を記録する
 - [ ] 通知はcache hit率、wake latency、recipientあたりSQL数、再接続時replay件数を記録する
+  - [x] 1/64 samplingでcache hit率、path別total、pool acquire、SQL、connection所有を記録
+  - [ ] long polling実装時にwake latencyと再接続時replay件数を記録
 - [ ] 座標queueはdepth、最古未flush時間、batch件数、drop / retry数、status反映遅延を記録する
 - [ ] エンドポイント件数とp50 / p95 / p99を記録する
 - [x] SQL回数、累積時間、走査行数を記録する
@@ -1168,21 +1180,22 @@
    retry sleepだけで平均201.719msと確認した
 3. 短い準備transaction、transaction外の冪等決済、rideを再lockする短い完了transactionへ
    分ける。決済成功後のDB失敗は同じkeyで再開し、二重status・stats更新を防ぐ
-4. app / chair通知cache missのtransaction保持時間を計測し、
-   高頻度pollが50接続を占有する割合を評価APIと分ける
-5. 長い保持区間を短縮した後もacquire待ちが残る場合だけ、pool上限を比較する。
-   MySQL CPU、Threads_running、row lock、COMMIT p95を同時に記録する
-6. owner request開始時に既知の座標までを集計する方法を設計し、決定的な赤・緑テストと
+4. app / chair通知cache missのphase計測は完了。connection所有平均は約10msだが、
+   同じrequestの2回のacquire平均合計がapp 77.839ms、chair 82.513msだった
+5. pool上限50 / 75 / 100の比較は完了し、通常3走中央値が最も高い50を維持した
+6. rideあり通知で、存在確認に使ったconnectionを返さず同じconnectionでtransactionを
+   開き、2回目のacquire queueだけを除く
+7. owner request開始時に既知の座標までを集計する方法を設計し、決定的な赤・緑テストと
    通常3走で`CODE=26`のerror予算・scoreを比較する
-7. latest-coordinate cacheの `RwLock` とmaintenance gateの待機・保持時間を計測し、
+8. latest-coordinate cacheの `RwLock` とmaintenance gateの待機・保持時間を計測し、
    2秒再同期時のglobal stallを定量化する
-8. 最新statusをcurrent-state化し、未送信statusがない通知pollの履歴lookupとpayload再構築をなくす
-9. matcherへ地域間の距離上限を追加し、500 / 100 / 30msの実行間隔と組み合わせて比較する
-10. app history、owner sales、ride作成のN+1を順に除去する
-11. current-state別表で最新statusをO(1)化する
-12. JSON long pollingで不足する場合だけSSEへ移し、状態変更時の即時pushまで実装する
-13. 貪欲matcherと最小費用二部マッチングを比較する
-14. 最後にMySQL、nginx、compiler設定をprofileに基づいて調整する
+9. 最新statusをcurrent-state化し、未送信statusがない通知pollの履歴lookupとpayload再構築をなくす
+10. matcherへ地域間の距離上限を追加し、500 / 100 / 30msの実行間隔と組み合わせて比較する
+11. app history、owner sales、ride作成のN+1を順に除去する
+12. current-state別表で最新statusをO(1)化する
+13. JSON long pollingで不足する場合だけSSEへ移し、状態変更時の即時pushまで実装する
+14. 貪欲matcherと最小費用二部マッチングを比較する
+15. 最後にMySQL、nginx、compiler設定をprofileに基づいて調整する
 
 ## 記録ルール
 

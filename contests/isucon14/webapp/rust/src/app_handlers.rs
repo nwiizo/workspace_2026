@@ -12,6 +12,9 @@ use std::time::Instant;
 use ulid::Ulid;
 
 use crate::models::{Chair, Coupon, Owner, PaymentToken, Ride, RideStatus, User};
+use crate::notification_diagnostic::{
+    NotificationConnectionStage, NotificationDiagnostic, NotificationEndpoint,
+};
 use crate::{AppState, Coordinate, Error};
 
 pub fn app_routes(app_state: AppState) -> axum::Router<AppState> {
@@ -1074,24 +1077,61 @@ async fn app_get_notification(
     }): State<AppState>,
     axum::Extension(user): axum::Extension<User>,
 ) -> Result<Response, Error> {
+    let mut diagnostic = NotificationDiagnostic::sampled(NotificationEndpoint::App);
     let (cached_payload, cache_revision) = notification_cache.app(&user.id);
+    if let Some(diagnostic) = &mut diagnostic {
+        let elapsed_us = diagnostic.elapsed_since_checkpoint_us();
+        diagnostic.sample.cache_lookup_us = Some(elapsed_us);
+    }
     if let Some(cached_payload) = cached_payload {
-        return Ok(crate::json_bytes_response(cached_payload));
+        let response = crate::json_bytes_response(cached_payload);
+        if let Some(mut diagnostic) = diagnostic {
+            diagnostic.sample.path = "cache_hit";
+            diagnostic.sample.terminal_phase = "response";
+            diagnostic.sample.response_us = Some(diagnostic.elapsed_since_checkpoint_us());
+            diagnostic.emit_success();
+        }
+        return Ok(response);
     }
 
+    if let Some(diagnostic) = &mut diagnostic {
+        diagnostic.observe_pool(&pool, NotificationConnectionStage::InitialLookup);
+        diagnostic.sample.terminal_phase = "initial_pool_acquire";
+    }
+    let mut initial_connection = pool.acquire().await?;
+    if let Some(diagnostic) = &mut diagnostic {
+        diagnostic.connection_acquired(NotificationConnectionStage::InitialLookup);
+        diagnostic.sample.initial_pool_acquire_us = Some(diagnostic.elapsed_since_checkpoint_us());
+        diagnostic.sample.terminal_phase = "latest_ride_query";
+    }
     let latest_ride: Option<(String, Option<String>)> = sqlx::query_as(
         "SELECT id, chair_id FROM rides WHERE user_id = ? ORDER BY created_at DESC LIMIT 1",
     )
     .bind(&user.id)
-    .fetch_optional(&pool)
+    .fetch_optional(&mut *initial_connection)
     .await?;
+    if let Some(diagnostic) = &mut diagnostic {
+        diagnostic.sample.latest_ride_query_us = Some(diagnostic.elapsed_since_checkpoint_us());
+    }
+    drop(initial_connection);
+    if let Some(diagnostic) = &mut diagnostic {
+        diagnostic.connection_released();
+    }
     let Some((_, dependency_chair_id)) = latest_ride else {
         let payload = axum::body::Bytes::from(serde_json::to_vec(&AppGetNotificationResponse {
             data: None,
             retry_after_ms: Some(crate::CACHED_NOTIFICATION_RETRY_AFTER_MS),
         })?);
         notification_cache.insert_app_if_current(user.id, cache_revision, None, payload.clone());
-        return Ok(crate::json_bytes_response(payload));
+        let response = crate::json_bytes_response(payload);
+        if let Some(mut diagnostic) = diagnostic {
+            diagnostic.sample.path = "no_ride";
+            diagnostic.sample.cache_insert_attempted = true;
+            diagnostic.sample.terminal_phase = "response";
+            diagnostic.sample.response_us = Some(diagnostic.elapsed_since_checkpoint_us());
+            diagnostic.emit_success();
+        }
+        return Ok(response);
     };
     // Chair statistics are part of the app notification payload and can change
     // when another user evaluates a later ride on the same chair. Capture this
@@ -1100,31 +1140,62 @@ async fn app_get_notification(
     let chair_stats_revision = dependency_chair_id
         .as_deref()
         .map(|chair_id| notification_cache.chair_stats_revision(chair_id));
+    if let Some(diagnostic) = &mut diagnostic {
+        diagnostic.sample.dependency_revision_us = Some(diagnostic.elapsed_since_checkpoint_us());
+        diagnostic.observe_pool(&pool, NotificationConnectionStage::Transaction);
+        diagnostic.sample.terminal_phase = "transaction_pool_acquire";
+    }
 
     // 通知内容を組み立てる複数の SELECT と通知済み更新は、同じ
     // スナップショットで扱う必要がある。ライドがない利用者だけを
     // トランザクション開始前に返し、整合性と負荷削減を両立する。
-    let mut tx = pool.begin().await?;
+    let mut connection = pool.acquire().await?;
+    if let Some(diagnostic) = &mut diagnostic {
+        diagnostic.connection_acquired(NotificationConnectionStage::Transaction);
+        diagnostic.sample.transaction_pool_acquire_us =
+            Some(diagnostic.elapsed_since_checkpoint_us());
+        diagnostic.sample.terminal_phase = "transaction_begin";
+    }
+    let mut tx = connection.begin().await?;
+    if let Some(diagnostic) = &mut diagnostic {
+        diagnostic.sample.transaction_begin_us = Some(diagnostic.elapsed_since_checkpoint_us());
+        diagnostic.sample.terminal_phase = "ride_query";
+    }
     let ride: Ride =
         sqlx::query_as("SELECT * FROM rides WHERE user_id = ? ORDER BY created_at DESC LIMIT 1")
             .bind(&user.id)
             .fetch_one(&mut *tx)
             .await?;
+    if let Some(diagnostic) = &mut diagnostic {
+        diagnostic.sample.ride_query_us = Some(diagnostic.elapsed_since_checkpoint_us());
+        diagnostic.sample.terminal_phase = "pending_status_query";
+    }
     let chair_dependency_matches = ride.chair_id.as_deref() == dependency_chair_id.as_deref();
 
     let yet_sent_ride_status: Option<RideStatus> = sqlx::query_as("SELECT * FROM ride_statuses WHERE ride_id = ? AND app_sent_at IS NULL ORDER BY status ASC LIMIT 1")
         .bind(&ride.id)
         .fetch_optional(&mut *tx)
         .await?;
+    if let Some(diagnostic) = &mut diagnostic {
+        diagnostic.sample.pending_status_query_us = Some(diagnostic.elapsed_since_checkpoint_us());
+    }
     let (ride_status_id, status) = if let Some(yet_sent_ride_status) = yet_sent_ride_status {
         (Some(yet_sent_ride_status.id), yet_sent_ride_status.status)
     } else {
-        (
-            None,
-            crate::get_latest_ride_status(&mut *tx, &ride.id).await?,
-        )
+        if let Some(diagnostic) = &mut diagnostic {
+            diagnostic.sample.terminal_phase = "latest_status_query";
+        }
+        let latest_status = crate::get_latest_ride_status(&mut *tx, &ride.id).await?;
+        if let Some(diagnostic) = &mut diagnostic {
+            diagnostic.sample.latest_status_query_us =
+                Some(diagnostic.elapsed_since_checkpoint_us());
+        }
+        (None, latest_status)
     };
 
+    if let Some(diagnostic) = &mut diagnostic {
+        diagnostic.sample.terminal_phase = "fare_query";
+    }
     let fare = calculate_discounted_fare(
         &mut tx,
         &user.id,
@@ -1135,6 +1206,9 @@ async fn app_get_notification(
         ride.destination_longitude,
     )
     .await?;
+    if let Some(diagnostic) = &mut diagnostic {
+        diagnostic.sample.fare_query_us = Some(diagnostic.elapsed_since_checkpoint_us());
+    }
 
     let mut data = AppGetNotificationResponseData {
         ride_id: ride.id,
@@ -1154,12 +1228,22 @@ async fn app_get_notification(
     };
 
     if let Some(chair_id) = &ride.chair_id {
+        if let Some(diagnostic) = &mut diagnostic {
+            diagnostic.sample.terminal_phase = "chair_query";
+        }
         let chair: Chair = sqlx::query_as("SELECT * FROM chairs WHERE id = ?")
             .bind(chair_id)
             .fetch_one(&mut *tx)
             .await?;
+        if let Some(diagnostic) = &mut diagnostic {
+            diagnostic.sample.chair_query_us = Some(diagnostic.elapsed_since_checkpoint_us());
+            diagnostic.sample.terminal_phase = "chair_stats_query";
+        }
 
         let stats = get_chair_stats(&mut tx, &chair.id).await?;
+        if let Some(diagnostic) = &mut diagnostic {
+            diagnostic.sample.chair_stats_query_us = Some(diagnostic.elapsed_since_checkpoint_us());
+        }
 
         data.chair = Some(AppGetNotificationResponseChair {
             id: chair.id,
@@ -1170,13 +1254,30 @@ async fn app_get_notification(
     }
 
     if let Some(ride_status_id) = &ride_status_id {
+        if let Some(diagnostic) = &mut diagnostic {
+            diagnostic.sample.terminal_phase = "sent_update";
+        }
         sqlx::query("UPDATE ride_statuses SET app_sent_at = CURRENT_TIMESTAMP(6) WHERE id = ?")
             .bind(ride_status_id)
             .execute(&mut *tx)
             .await?;
+        if let Some(diagnostic) = &mut diagnostic {
+            diagnostic.sample.sent_update_us = Some(diagnostic.elapsed_since_checkpoint_us());
+        }
     }
 
+    if let Some(diagnostic) = &mut diagnostic {
+        diagnostic.sample.terminal_phase = "commit";
+    }
     tx.commit().await?;
+    if let Some(diagnostic) = &mut diagnostic {
+        diagnostic.sample.commit_us = Some(diagnostic.elapsed_since_checkpoint_us());
+    }
+    drop(connection);
+    if let Some(diagnostic) = &mut diagnostic {
+        diagnostic.connection_released();
+        diagnostic.sample.terminal_phase = "response";
+    }
 
     let cacheable = ride_status_id.is_none() && chair_dependency_matches;
     let response = AppGetNotificationResponse {
@@ -1196,7 +1297,18 @@ async fn app_get_notification(
             payload.clone(),
         );
     }
-    Ok(crate::json_bytes_response(payload))
+    let response = crate::json_bytes_response(payload);
+    if let Some(mut diagnostic) = diagnostic {
+        diagnostic.sample.path = if ride_status_id.is_some() {
+            "pending_status"
+        } else {
+            "steady_state"
+        };
+        diagnostic.sample.cache_insert_attempted = cacheable;
+        diagnostic.sample.response_us = Some(diagnostic.elapsed_since_checkpoint_us());
+        diagnostic.emit_success();
+    }
+    Ok(response)
 }
 
 async fn get_chair_stats(
