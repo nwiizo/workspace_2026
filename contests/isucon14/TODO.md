@@ -273,6 +273,19 @@
   - rideありでは最初の`PoolConnection`をtransactionへ引き継ぐ施策を次に比較する
   - 連続所有で他endpointへ待ちを移す可能性もあるため、全endpoint p95と通常scoreで判定する
   - 詳細: [`tuning/34-notification-phase-diagnostics.md`](./tuning/34-notification-phase-diagnostics.md)
+- [x] 通知の存在確認connectionをtransactionへ引き継ぐ候補を診断する
+  - rideありの成功sampleでは2回目のpool acquireをapp 153件、chair 126件すべてで削除
+  - 診断runは52,564点、`pass=false`、`CODE=26` 60件、`CODE=29` 142件で
+    エラー上限200件へ達したため不採用
+  - 失敗後DBで、`updated_at`最大rideは送信済みなのに別rideへ未送信statusが残る
+    hidden pending状態を25 chairで確認
+  - connection再利用のソースはBenchmark 34へ戻し、次はride選択だけを独立修正する
+  - 詳細: [`tuning/35-notification-connection-reuse.md`](./tuning/35-notification-connection-reuse.md)
+- [ ] chair通知で`updated_at`最大rideより、未送信statusを持つrideを優先する
+  - 失敗runのhidden pending fixtureを固定し、期待ride / user / statusをHTTPで確認する
+  - 未送信がない定常状態は従来の`updated_at DESC`をfallbackとして維持する
+  - 既存`(ride_id, chair_sent_at, status)` INDEXの利用とsortを`EXPLAIN ANALYZE`する
+  - `CODE=29` 0件と通常3走中央値を確認してからconnection再利用を再試験する
 - [ ] `CODE=26` のowner累積距離が座標responseの受信境界より先へ進む競合を検証する
   - 期待値より実値が4–40程度大きく、直近1回の移動距離に近い例を確認
   - ベンチマーカーのcoordinate POST、world更新、owner検証の順序を同じchairで追う
@@ -290,7 +303,7 @@
 |---|---|---|---|
 | P0 | `internal_get_matching` | 64件batch + 近傍優先、外部pollは500ms | 空き定義の集約、500msの最小待ち |
 | P0 | `app_get_nearby_chairs` | 最新座標はcurrent-state表 + process cache、active / 割当可否はDB、評価はsnapshot + revision + delivery leaseで除外 | 最終run例8.079ms。ride antijoinとtracker確認の内訳を測る |
-| P0 | 通知2経路 | recipient + chair stats dependency revision付きpayload cache。未送信statusは30ms、定常cacheは100ms。cursorはDBに維持 | cache missの2回のpool acquireが支配的。最初のconnection再利用、response ACKなしの配送loss、long pollingを順に検証 |
+| P0 | 通知2経路 | recipient + chair stats dependency revision付きpayload cache。未送信statusは30ms、定常cacheは100ms。cursorはDBに維持 | `updated_at`最大rideが別rideの未送信statusを隠す反例を先に修正。その後connection再利用、response ACKなしの配送loss、long pollingを順に検証 |
 | P0 | `get_chair_stats` | 評価時差分更新 + 主キーreadへ変更 | SQL累積は約89%減、スコア中央値は約3.5%低下したため次の通知施策と合わせて再評価 |
 | P0 | `app_post_ride_evaluation` | 準備transaction、transaction外の冪等決済、ride再lock付き完了transactionへ分割済み | connection所有平均は94.0%短縮。完了時の追加acquireとprocess crash後の自動回収を検討する |
 | P0 | `chair_post_coordinate` | 履歴INSERT + current UPDATE、遷移候補だけride lock + 最新status再読 | pool 50維持。上限追加で通常中央値は改善しなかったため、connection取得後のDB滞在をquery別に減らす |
@@ -776,6 +789,10 @@
 
 ### JSON通知の短期改善
 
+- [ ] chair通知で未送信statusを持つrideを`updated_at`最大rideより優先する
+  - Benchmark 35失敗後DBでhidden pendingを25 chair確認
+  - `CODE=29` 142件でerror budgetを消費したため、connection再利用は一度戻した
+  - 詳細: [`tuning/35-notification-connection-reuse.md`](./tuning/35-notification-connection-reuse.md)
 - [ ] ride存在確認とtransaction内の最新ride再取得を1回へまとめる
 - [ ] 未送信statusがない場合は高価なpayloadを再構築せず `data: null` を返せるかprevalidationで確認する
   - status追加なしで `rides.chair_id` が変わり、同じ `MATCHING` のpayloadへchair情報を
