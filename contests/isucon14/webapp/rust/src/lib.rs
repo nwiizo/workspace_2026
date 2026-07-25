@@ -1196,9 +1196,9 @@ GROUP BY chair_id
 #[cfg(test)]
 mod tests {
     use super::{
-        hold_active_evaluation_until_response_drop, insert_if_newer, merge_newer_locations,
-        merge_recorded_at_high_watermarks, ActiveRideEvaluationTracker, DbAdmission,
-        LatestChairLocation, LatestChairLocationCache, NotificationCache,
+        calculate_fare_with_discount, hold_active_evaluation_until_response_drop, insert_if_newer,
+        merge_newer_locations, merge_recorded_at_high_watermarks, ActiveRideEvaluationTracker,
+        DbAdmission, LatestChairLocation, LatestChairLocationCache, NotificationCache,
         EVALUATION_RESPONSE_DELIVERY_GRACE,
     };
     use axum::body::Bytes;
@@ -1206,6 +1206,13 @@ mod tests {
     use std::collections::HashMap;
     use std::sync::Arc;
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn fare_discount_reduces_only_the_metered_component() {
+        assert_eq!(calculate_fare_with_discount(0, 0, 2, 3, 200), 800);
+        assert_eq!(calculate_fare_with_discount(0, 0, 2, 3, 500), 500);
+        assert_eq!(calculate_fare_with_discount(0, 0, 2, 3, 3_000), 500);
+    }
 
     #[tokio::test]
     async fn database_admission_limits_concurrent_general_work() {
@@ -1918,6 +1925,23 @@ pub fn calculate_fare(
             dest_longitude,
         );
     INITIAL_FARE + metered_fare
+}
+
+pub fn calculate_fare_with_discount(
+    pickup_latitude: i32,
+    pickup_longitude: i32,
+    dest_latitude: i32,
+    dest_longitude: i32,
+    discount: i32,
+) -> i32 {
+    let metered_fare = FARE_PER_DISTANCE
+        * calculate_distance(
+            pickup_latitude,
+            pickup_longitude,
+            dest_latitude,
+            dest_longitude,
+        );
+    INITIAL_FARE + std::cmp::max(metered_fare - discount, 0)
 }
 
 pub mod app_handlers;

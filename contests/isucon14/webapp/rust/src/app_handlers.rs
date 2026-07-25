@@ -11,7 +11,7 @@ use std::sync::{
 use std::time::Instant;
 use ulid::Ulid;
 
-use crate::models::{Chair, Coupon, Owner, PaymentToken, Ride, RideStatus, User};
+use crate::models::{Chair, Coupon, PaymentToken, Ride, RideStatus, User};
 use crate::notification_diagnostic::{
     NotificationConnectionStage, NotificationDiagnostic, NotificationEndpoint,
 };
@@ -315,6 +315,55 @@ struct GetAppRidesResponseItemChair {
     model: String,
 }
 
+#[derive(Debug, sqlx::FromRow)]
+struct AppRideRow {
+    id: String,
+    pickup_latitude: i32,
+    pickup_longitude: i32,
+    destination_latitude: i32,
+    destination_longitude: i32,
+    evaluation: i32,
+    requested_at: chrono::DateTime<chrono::Utc>,
+    completed_at: chrono::DateTime<chrono::Utc>,
+    chair_id: String,
+    chair_name: String,
+    chair_model: String,
+    owner_name: String,
+    discount: i32,
+}
+
+impl AppRideRow {
+    fn into_response_item(self) -> GetAppRidesResponseItem {
+        GetAppRidesResponseItem {
+            id: self.id,
+            pickup_coordinate: Coordinate {
+                latitude: self.pickup_latitude,
+                longitude: self.pickup_longitude,
+            },
+            destination_coordinate: Coordinate {
+                latitude: self.destination_latitude,
+                longitude: self.destination_longitude,
+            },
+            chair: GetAppRidesResponseItemChair {
+                id: self.chair_id,
+                owner: self.owner_name,
+                name: self.chair_name,
+                model: self.chair_model,
+            },
+            fare: crate::calculate_fare_with_discount(
+                self.pickup_latitude,
+                self.pickup_longitude,
+                self.destination_latitude,
+                self.destination_longitude,
+                self.discount,
+            ),
+            evaluation: self.evaluation,
+            requested_at: self.requested_at.timestamp_millis(),
+            completed_at: self.completed_at.timestamp_millis(),
+        }
+    }
+}
+
 async fn app_get_rides(
     State(AppState {
         pool,
@@ -324,66 +373,45 @@ async fn app_get_rides(
     axum::Extension(user): axum::Extension<User>,
 ) -> Result<axum::Json<GetAppRidesResponse>, Error> {
     let _admission_guard = general_db_admission.acquire("app_get_rides", &pool).await;
-    let mut tx = pool.begin().await?;
-
-    let rides: Vec<Ride> =
-        sqlx::query_as("SELECT * FROM rides WHERE user_id = ? ORDER BY created_at DESC")
-            .bind(&user.id)
-            .fetch_all(&mut *tx)
-            .await?;
-
-    let mut items = Vec::with_capacity(rides.len());
-    for ride in rides {
-        let status = crate::get_latest_ride_status(&mut *tx, &ride.id).await?;
-        if status != "COMPLETED" {
-            continue;
-        }
-
-        let fare = calculate_discounted_fare(
-            &mut tx,
-            &user.id,
-            Some(&ride),
-            ride.pickup_latitude,
-            ride.pickup_longitude,
-            ride.destination_latitude,
-            ride.destination_longitude,
-        )
-        .await?;
-
-        let chair: Chair = sqlx::query_as("SELECT * FROM chairs WHERE id = ?")
-            .bind(&ride.chair_id)
-            .fetch_one(&mut *tx)
-            .await?;
-
-        let owner: Owner = sqlx::query_as("SELECT * FROM owners WHERE id = ?")
-            .bind(chair.owner_id)
-            .fetch_one(&mut *tx)
-            .await?;
-
-        items.push(GetAppRidesResponseItem {
-            id: ride.id,
-            pickup_coordinate: Coordinate {
-                latitude: ride.pickup_latitude,
-                longitude: ride.pickup_longitude,
-            },
-            destination_coordinate: Coordinate {
-                latitude: ride.destination_latitude,
-                longitude: ride.destination_longitude,
-            },
-            chair: GetAppRidesResponseItemChair {
-                id: chair.id,
-                owner: owner.name,
-                name: chair.name,
-                model: chair.model,
-            },
-            fare,
-            evaluation: ride.evaluation.unwrap(),
-            requested_at: ride.created_at.timestamp_millis(),
-            completed_at: ride.updated_at.timestamp_millis(),
-        });
-    }
-
-    tx.commit().await?;
+    // Completion writes COMPLETED and evaluation in the same transaction.
+    // coupons.used_by is not UNIQUE in the schema, so LIMIT 1 preserves the
+    // previous fetch_optional cardinality even if inconsistent data exists.
+    let rides: Vec<AppRideRow> = sqlx::query_as(
+        r#"
+SELECT
+  rides.id,
+  rides.pickup_latitude,
+  rides.pickup_longitude,
+  rides.destination_latitude,
+  rides.destination_longitude,
+  rides.evaluation,
+  rides.created_at AS requested_at,
+  rides.updated_at AS completed_at,
+  chairs.id AS chair_id,
+  chairs.name AS chair_name,
+  chairs.model AS chair_model,
+  owners.name AS owner_name,
+  COALESCE((
+    SELECT coupons.discount
+    FROM coupons
+    WHERE coupons.used_by = rides.id
+    LIMIT 1
+  ), 0) AS discount
+FROM rides
+INNER JOIN chairs ON chairs.id = rides.chair_id
+INNER JOIN owners ON owners.id = chairs.owner_id
+WHERE rides.user_id = ?
+  AND rides.evaluation IS NOT NULL
+ORDER BY rides.created_at DESC
+        "#,
+    )
+    .bind(&user.id)
+    .fetch_all(&pool)
+    .await?;
+    let items = rides
+        .into_iter()
+        .map(AppRideRow::into_response_item)
+        .collect();
 
     Ok(axum::Json(GetAppRidesResponse { rides: items }))
 }
@@ -1533,14 +1561,11 @@ async fn calculate_discounted_fare(
         }
     };
 
-    let metered_fare = crate::FARE_PER_DISTANCE
-        * crate::calculate_distance(
-            pickup_latitude,
-            pickup_longitude,
-            dest_latitude,
-            dest_longitude,
-        );
-    let discounted_metered_fare = std::cmp::max(metered_fare - discount, 0);
-
-    Ok(crate::INITIAL_FARE + discounted_metered_fare)
+    Ok(crate::calculate_fare_with_discount(
+        pickup_latitude,
+        pickup_longitude,
+        dest_latitude,
+        dest_longitude,
+        discount,
+    ))
 }
