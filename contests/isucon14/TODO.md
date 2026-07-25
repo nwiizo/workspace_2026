@@ -1183,6 +1183,29 @@
     [`tuning/42-db-pool-partition-24.md`](./tuning/42-db-pool-partition-24.md)、
     [`tuning/43-db-pool-partition-20.md`](./tuning/43-db-pool-partition-20.md)、
     [`tuning/44-db-pool-partition-adoption.md`](./tuning/44-db-pool-partition-adoption.md)
+- [x] rideあり通知の存在確認connectionを、現在の配送状態機械を維持したまま
+  transactionへ引き継ぐ
+  - 診断は146,532点、`pass=true`・error map空。rideありの周期sampleは
+    app 436 / chair 442件で、2回目のpool取得を878 / 878件すべて0にした
+  - 初回取得平均は82.235 / 82.547ms残り、取得直前idle 0はapp 338 / 436、
+    chair 349 / 447件。general pool飽和自体を解消したとは扱わない
+  - 通知順序、hidden pending、delivery gap、current ride継続、古いpending無視、
+    initialize / auth cacheの固定回帰に成功。診断・通常3走で`CODE=12/29` 0件
+  - 通常3走は134,732 / 150,117 / 139,198点、中央値139,198点。
+    Benchmark 44中央値138,027点比+0.85%。差はrun間分散より小さいため、
+    重複queue待ちの確実な削減と中央値非悪化を採用理由にする
+  - `CODE=26`は通常run 2 / 3で77 / 64件再発したが、通知差分なしの完全な`main`
+    対照でも135,807点・94件を再現。通知errorとは分け、owner側のP0へ戻す
+  - 詳細:
+    [`tuning/45-notification-connection-reuse-diagnostics.md`](./tuning/45-notification-connection-reuse-diagnostics.md)、
+    [`tuning/46-notification-connection-reuse-adoption.md`](./tuning/46-notification-connection-reuse-adoption.md)
+- [ ] 再発した`CODE=26`について、owner距離の更新時刻省略数、対象履歴行数、
+  query時間を診断sampleへ追加する
+  - 同じchair IDでowner request開始時刻、安定境界、採用したlocation ID /
+    `created_at`、最新location、JSONの`total_distance_updated_at`有無を保存する
+  - 候補通常runの77 / 64件と、差分なし対照94件の`got - want`を集計し、
+    Benchmark 38の固定fixtureが覆っていない並行順序を追加する
+  - 計測できたら公開watermarkを保ったcurrent-state差分集約と1秒cacheを比較する
 - [ ] static partitionで片側idleを共有できないため、共有pool 50 + general permitの
   admission controlを24 / 26と比較する
   - pool別permit待ち、`Threads_connected` / `Threads_running`、処理件数あたりrow-lock waitを
@@ -1326,22 +1349,21 @@
 完了済みのmatcher `CODE=32`、owner `CODE=26`、評価phase、pool上限50 / 75 / 100、
 drive phaseの診断は上の各項目へ結果を残しています。現在の未完了項目は次の順です。
 
-1. rideあり通知の二重pool取得を、現在の配送状態機械を維持したまま単独で再比較する
+1. 再発した`CODE=26`についてowner距離の更新時刻省略数、対象履歴行数、query時間を
+   採取し、同じchairのrequest境界とwatermarkを保存して再修正する
 2. 総上限50のstatic 26 / 24で見えたgeneral starvationに対し、共有pool 50のまま
    general permitでcoordinate余力を保証するadmission controlと比較する
 3. static partition後も残るcoordinate p95に対し、per-chair queueへ進む前に
    current write / COMMIT / row lockの処理量を減らせるか確認する
 4. `CODE=27`を同じchairのDB current row、process cache、nearby応答で追跡する
-5. owner距離の更新時刻省略数、対象履歴行数、query時間を診断時だけ記録し、
-   current-state集約と比較する
-6. latest-coordinate cacheの `RwLock` とmaintenance gateの待機・保持時間を計測し、
+5. latest-coordinate cacheの `RwLock` とmaintenance gateの待機・保持時間を計測し、
    2秒再同期時のglobal stallを定量化する
-7. 最新statusをcurrent-state化し、未送信statusがない通知pollの履歴lookupと
+6. 最新statusをcurrent-state化し、未送信statusがない通知pollの履歴lookupと
    payload再構築をなくす
-8. app history、owner sales、ride作成のN+1を1 endpointずつ除去する
-9. 貪欲matcherと、割当件数・期限超過・pickup予測tickを辞書順にした
+7. app history、owner sales、ride作成のN+1を1 endpointずつ除去する
+8. 貪欲matcherと、割当件数・期限超過・pickup予測tickを辞書順にした
    最小費用二部マッチングを比較する
-10. DB待ちとlock待ちを減らした後にMySQL、nginx、Rust compiler設定をprofileで比較する
+9. DB待ちとlock待ちを減らした後にMySQL、nginx、Rust compiler設定をprofileで比較する
 
 `CODE=8`が再発した場合は、優先順に割り込ませてapp通知のride / user / cursorを
 同一requestで保存します。正当性エラーは得点改善より先に原因を分離します。

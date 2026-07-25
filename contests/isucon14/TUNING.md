@@ -75,12 +75,12 @@
 | 高頻度検索へのINDEX | 主要INDEX、`coupons(code)`、`coupons(used_by)` を追加済み。`users(access_token)` と `users(invitation_code)` は既存の `UNIQUE` INDEXで充足 | prepared statement統計で次の全件走査を探し、未使用INDEXを増やさない |
 | nearbyの2N+1解消 | 最新座標はcurrent-state表 + process cache、active / 割当可否はDBで合成。評価は開始snapshot・completion revision・response body drop後1秒leaseで除外し、initialize世代をgenerationで分離 | ride antijoinとtracker確認の内訳を計測 |
 | owner椅子一覧をownerで先に絞る | 実装・単独ベンチ済み | 最新位置と累積距離のcurrent-state化 |
-| owner累積距離の公開境界 | request開始1秒前の安定snapshotを使用し、古い安定時刻と新しい未安定行が併存する短時間だけoptional時刻を省略。SQLとRustはmicrosecond精度で比較し、`CODE=26`は最終3走0件 | 省略数・履歴行数・query時間を診断し、公開watermarkを保ったcurrent-state差分集約と1秒cacheを比較 |
+| owner累積距離の公開境界 | request開始1秒前の安定snapshotを使用し、古い安定時刻と新しい未安定行が併存する短時間だけoptional時刻を省略。Benchmark 38最終3走は`CODE=26` 0件だったが、Benchmark 46候補2走と差分なし対照で再発 | 省略数・履歴行数・query時間を診断し、同じchairのrequest境界と採用watermarkを保存して再修正 |
 | owner売上の評価境界 | 完了時刻を最終SQLで保存し、owner requestと重なる評価ride IDだけをrevision trackerで除外 | body drop後のclient計上差はprotocol ACKなしでは残る。複数process前に共有化 |
 | 最新位置をcurrent-state表で管理 | 履歴INSERTと同じtransactionで更新し、cacheを2秒ごとに再同期 | current UPDATEのrow-lock待ちとwrite amplificationを削減 |
 | pending rideと空き椅子のbatch matching | 地域ごとに最大64候補、全体最大64割当、近傍優先、同一地域の距離200以下まで実装済み。speedだけを使う局所greedyは中央値-0.9%で不採用 | 地域ID + INDEX、期限とpickup予測を含む二部matchingを比較 |
-| JSON通知のcache | recipient revisionとchair stats dependency revision付きprocess cacheを実装。chairは配送状態機械でcurrent rideを維持。未送信status中は30ms、定常cacheは100ms | `CODE=8/27`を解消して通常3走を安定させた後、connection再利用、response ACKなしの配送loss、DB connectionを保持しないlong pollingを比較 |
-| 座標更新のpool待ち | 総接続50をgeneral 26 + coordinate 24へ分割。通常3走133,797–142,851点、中央値138,027点、直前比+3.6%、全走error map空 | static partitionのidle非共有とgeneral starvationを、共有pool + admission control、通知二重取得削減と比較 |
+| JSON通知のcache | recipient revisionとchair stats dependency revision付きprocess cache。chairは配送状態機械でcurrent rideを維持。rideありは存在確認connectionをtransactionへ再利用し、2回目のpool取得を診断878 / 878 sampleで削除。通常3走中央値139,198点 | owner `CODE=26`を再修正後、response ACKなしの配送loss、DB connectionを保持しないlong pollingを比較 |
+| 座標更新のpool待ち | 総接続50をgeneral 26 + coordinate 24へ分割。通常3走中央値138,027点で採用。general通知の二重pool取得も削減済み | owner `CODE=26`を再修正後、static partitionのidle非共有を共有pool + admission controlと比較 |
 | 座標更新の非同期・bulk INSERT | pickup / destination候補だけlockし、statusをcurrent readする。全位置履歴とcurrent rowは同じtransaction | 接続隔離後も30msを超える場合に、per-chair順序・全履歴・3秒反映を守るqueueを実験 |
 | 決済HTTP client | process内で1個を共有し、冪等なPOST / retryでconnection poolを再利用済み。診断203 sampleは608 attempts、途中5xx 405回、最終204 | TCP connect回数とconnection再利用率を採取 |
 | 決済の `Idempotency-Key` | ride IDを全POSTへ設定し、確認GETとuser全ride取得を削除済み | 準備transactionと完了transactionの間に決済を置く構成まで実装。TCP connect回数と再利用率を採取する |
@@ -126,7 +126,8 @@ pool取得が64.349msで、抽出rideの余分3,718 tickに対してPOST時間�
 診断比較し、24の通常3走中央値は138,027点で直前133,257点比+3.6%、全走error map空でした。
 上限75 / 100は既に悪化しているため、接続数追加ではなく接続予約として採用しています。
 ただしstatic partitionは片側のidleを共有できず、general 26では通知・評価・matcherが
-飽和するrunがあります。次は共有pool + admission controlと通知の二重取得削減を比較します。
+飽和するrunがあります。通知の二重取得はBenchmark 45 / 46で削減したため、再発した
+owner `CODE=26`を直した後に共有pool + admission controlを比較します。
 
 通知cacheはDB上の配信cursorの代替にはしません。recipientごとにpayloadとrevisionを保持し、
 app payloadが参照するchair statsにもdependency revisionを持たせます。ride割当・status追加・
@@ -171,7 +172,7 @@ ISUCON14の公式ベンチマーカーは、単にHTTP requestを大量送信す
 
 そのため、単一APIだけを速くしても、状態の順序を壊したり、完了rideが増えなければ
 総スコアは上がりません。最終行の `pass`、スコア、error mapに加え、途中の
-`eval reqs` とmatching / pickup / drive不満率を読みます。
+`eval reqs` とmatching / pickup / pickup + drive合算不満率を読みます。
 
 #### score・`pass`・error map・最終評価数
 
@@ -933,6 +934,8 @@ amountを記録するため、ride IDを同じkeyとして再利用すれば、�
 | [42-db-pool-partition-24.md](./tuning/42-db-pool-partition-24.md) | general 26 / coordinate 24へ再配分 | 152,128点、完了2,386、drive不満74.0%、周期sampleのcoordinate pool平均30.414ms | 診断n=1・未推定。`pass=true`・error map空。coordinateは改善したがgeneral飽和のため通常runへ進めた |
 | [43-db-pool-partition-20.md](./tuning/43-db-pool-partition-20.md) | general 30 / coordinate 20の中間比較 | 145,732点、完了2,327、drive不満80.6%、周期sampleのcoordinate pool平均62.854ms | 診断n=1・未推定。`pass=true`・error map空。generalは中間だがcoordinate待ちが共有時相当 |
 | [44-db-pool-partition-adoption.md](./tuning/44-db-pool-partition-adoption.md) | general 26 / coordinate 24を通常runで採用判定 | 3走133,797–142,851点、中央値138,027点、直前比+3.6%。既定値確認132,756点 | 比較3走は全て`pass=true`・error map空。実効設定4走の記述中央値135,912点、直前比+2.0% |
+| [45-notification-connection-reuse-diagnostics.md](./tuning/45-notification-connection-reuse-diagnostics.md) | 現在のchair配送状態機械を維持し、ride存在確認connectionをtransactionへ再利用 | 146,532点、評価2,305件。rideありapp 436 / chair 442 sampleの2回目pool取得を全廃。所有平均9.875 / 10.906ms | 診断n=1・未推定。`pass=true`・error map空・`CODE=29` 0件。初回取得平均は約82ms残り、general飽和自体は未解消 |
+| [46-notification-connection-reuse-adoption.md](./tuning/46-notification-connection-reuse-adoption.md) | 通知connection再利用を通常3走し、差分なし`main`対照でerror因果を分離 | 3走134,732–150,117点、中央値139,198点、直前比+0.85%。全走`pass=true`、`CODE=29` 0件 | 実測n=3。score差は分散より小さいが重複queue待ちを確実に削減して採用。`CODE=26` 77 / 64件は差分なし対照でも94件再現したためowner側の次のP0 |
 | [80-rust-implementation.md](./tuning/80-rust-implementation.md) | Rust / sqlxとrelease buildの知識 | 再build 30分52秒→11.02秒 | build時間の実測。スコア推定対象外 |
 | [81-evaluation-authorization.md](./tuning/81-evaluation-authorization.md) | 評価rideを認証ユーザー所有へ制限 | 公式prevalidation `pass=true`、別ユーザーHTTP回帰成功 | 正当性修正。60秒スコアはBenchmark 20から更新しない |
 | [90-local-environment.md](./tuning/90-local-environment.md) | build context、BuildKit、固定Colima資源 | context 467MB→32.5KB | sizeの実測。スコア推定対象外 |

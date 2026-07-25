@@ -145,8 +145,8 @@ jq --slurp --raw-output '
 ' "$json_log"
 
 printf '\nconnection ownership by successful DB path\n\n'
-printf '| endpoint | DB path | samples | avg_us | p50_us | p95_us | p99_us | max_us |\n'
-printf '|---|---|---:|---:|---:|---:|---:|---:|\n'
+printf '| endpoint | DB path | samples | reused | avg_us | p50_us | p95_us | p99_us | max_us |\n'
+printf '|---|---|---:|---:|---:|---:|---:|---:|---:|\n'
 jq --slurp --raw-output '
   [
     .[] |
@@ -154,6 +154,7 @@ jq --slurp --raw-output '
     {
       endpoint,
       db_path: (if .path == "no_ride" then "no_ride" else "ride_present" end),
+      connection_reused: (.connection_reused // false),
       connection_owned_us
     }
   ] |
@@ -161,7 +162,8 @@ jq --slurp --raw-output '
   group_by([.endpoint, .db_path])[] |
   ([.[].connection_owned_us] | sort) as $values |
   ($values | length) as $length |
-  "| \(.[0].endpoint) | \(.[0].db_path) | \($length) | " +
+  (map(select(.connection_reused)) | length) as $reused |
+  "| \(.[0].endpoint) | \(.[0].db_path) | \($length) | \($reused) | " +
   "\(($values | add) / $length | floor) | " +
   "\($values[(($length - 1) * 0.50 | floor)]) | " +
   "\($values[(($length - 1) * 0.95 | floor)]) | " +

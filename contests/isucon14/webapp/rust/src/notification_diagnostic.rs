@@ -55,6 +55,7 @@ pub(crate) struct NotificationDiagnosticSample {
     pub(crate) latest_ride_query_us: Option<u64>,
     initial_connection_owned_us: Option<u64>,
     pub(crate) dependency_revision_us: Option<u64>,
+    connection_reused: bool,
     pub(crate) transaction_pool_acquire_us: Option<u64>,
     pub(crate) transaction_begin_us: Option<u64>,
     pub(crate) transaction_pool_size_before: Option<u64>,
@@ -124,6 +125,7 @@ impl NotificationDiagnostic {
                 latest_ride_query_us: None,
                 initial_connection_owned_us: None,
                 dependency_revision_us: None,
+                connection_reused: false,
                 transaction_pool_acquire_us: None,
                 transaction_begin_us: None,
                 transaction_pool_size_before: None,
@@ -228,6 +230,13 @@ impl NotificationDiagnostic {
                         .unwrap_or_default(),
                 ),
         );
+    }
+
+    pub(crate) fn reuse_connection_for_transaction(&mut self) {
+        self.connection_released();
+        self.sample.connection_reused = true;
+        self.sample.transaction_pool_acquire_us = Some(0);
+        self.connection_acquired(NotificationConnectionStage::Transaction);
     }
 
     fn emit_record(&mut self) {

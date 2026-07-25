@@ -306,9 +306,14 @@ ISUCON_DIAGNOSTIC=1 ./scripts/benchmark.sh 60
 
 ## 次のTODO
 
-1. hidden pending状態をHTTP回帰fixtureで再現する
-2. chair通知のride選択で未送信statusを持つrideを優先する
-3. `EXPLAIN ANALYZE`で既存INDEXの利用、走査行数、sortを確認する
-4. 通知順序・cache revision・initializeの既存回帰を実行する
-5. 通常60秒3走で`CODE=29`、全error、score中央値を確認する
-6. 正当性が安定した後、connection再利用を改めて単独比較する
+この時点で挙げた項目はBenchmark 36、45、46で実施しました。
+
+1. hidden pendingとdelivery gapをHTTP固定fixtureで再現
+2. chair通知を配送cursorに基づくcurrent ride状態機械へ変更
+3. `EXPLAIN ANALYZE`と既存INDEXを確認
+4. 通知順序、cache revision、initialize回帰を実行
+5. 通常60秒3走で`CODE=29` 0件を確認
+6. connection再利用を再比較し、rideあり878 sampleの2回目取得を全廃
+
+再診断は[Benchmark 45](./45-notification-connection-reuse-diagnostics.md)、採用判定は
+[Benchmark 46](./46-notification-connection-reuse-adoption.md)に記録しています。

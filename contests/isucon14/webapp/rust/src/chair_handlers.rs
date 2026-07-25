@@ -646,11 +646,11 @@ async fn chair_get_notification(
     if let Some(diagnostic) = &mut diagnostic {
         diagnostic.sample.latest_ride_query_us = Some(diagnostic.elapsed_since_checkpoint_us());
     }
-    drop(initial_connection);
-    if let Some(diagnostic) = &mut diagnostic {
-        diagnostic.connection_released();
-    }
     if ride_exists.is_none() {
+        drop(initial_connection);
+        if let Some(diagnostic) = &mut diagnostic {
+            diagnostic.connection_released();
+        }
         let payload = axum::body::Bytes::from(serde_json::to_vec(&ChairGetNotificationResponse {
             data: None,
             retry_after_ms: Some(crate::CACHED_NOTIFICATION_RETRY_AFTER_MS),
@@ -670,17 +670,10 @@ async fn chair_get_notification(
     // ライドがある場合は、通知対象の読み取りから通知済み更新までを
     // 同じトランザクションに閉じ込める。
     if let Some(diagnostic) = &mut diagnostic {
-        diagnostic.observe_pool(&pool, NotificationConnectionStage::Transaction);
-        diagnostic.sample.terminal_phase = "transaction_pool_acquire";
-    }
-    let mut connection = pool.acquire().await?;
-    if let Some(diagnostic) = &mut diagnostic {
-        diagnostic.connection_acquired(NotificationConnectionStage::Transaction);
-        diagnostic.sample.transaction_pool_acquire_us =
-            Some(diagnostic.elapsed_since_checkpoint_us());
+        diagnostic.reuse_connection_for_transaction();
         diagnostic.sample.terminal_phase = "transaction_begin";
     }
-    let mut tx = connection.begin().await?;
+    let mut tx = initial_connection.begin().await?;
     if let Some(diagnostic) = &mut diagnostic {
         diagnostic.sample.transaction_begin_us = Some(diagnostic.elapsed_since_checkpoint_us());
         diagnostic.sample.terminal_phase = "ride_query";
@@ -778,7 +771,7 @@ LIMIT 1
     if let Some(diagnostic) = &mut diagnostic {
         diagnostic.sample.commit_us = Some(diagnostic.elapsed_since_checkpoint_us());
     }
-    drop(connection);
+    drop(initial_connection);
     if let Some(diagnostic) = &mut diagnostic {
         diagnostic.connection_released();
         diagnostic.sample.terminal_phase = "response";

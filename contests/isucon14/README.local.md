@@ -467,6 +467,7 @@ RESET=1 ./scripts/down.sh
 | pickup予測tick優先matcher | `ceil(distance / speed)` を最小化する局所greedyを比較。通常3走126,948–134,611点、中央値133,257点、全run `pass=true`・error map空。Benchmark 38比-0.9%、pickup不満はほぼ不変のため距離優先へ復元 |
 | drive区間のride単位診断 | 最終診断1走146,727点・未推定、`pass=true`・error map空。全2,310 rideのdrive不満77.3%。抽出74 ride・1,191 coordinate POSTの86.6%がclient 30ms以上で、server平均76.515msのうちpool取得が64.349ms。Rust / Go barrierと`dropped_lines=0`を確認 |
 | DB poolの用途別予約 | 総数50を維持し、general 34 / coordinate 16、30 / 20、26 / 24を診断比較。24 / 26の通常3走は133,797–142,851点、中央値138,027点、全走`pass=true`・error map空。直前中央値比+3.6%。既定値での追加確認も132,756点、`pass=true` |
+| 通知connection再利用 | rideありの存在確認connectionをtransactionへ引き継ぎ、診断878 / 878 sampleで2回目のpool取得を削除。通常3走134,732–150,117点、中央値139,198点（直前比+0.85%）、全走`pass=true`・`CODE=29` 0件。`CODE=26`は2走で再発したが、差分なし`main`対照でも94件再現 |
 
 初回の初期60秒走行ではMySQLのqueryが十数秒以上へ遅延し、ベンチマーカーの期限を
 超えました。同じ初期revisionを外部コンテナの大きな共有負荷がない条件で再計測
@@ -602,11 +603,18 @@ cache hitはapp 80.7%、chair 75.9%で、hitのp95はいずれも1µsでした�
 平均10.540 / 10.021msです。
 
 診断runは`pass=true`・131,491点・error map空ですが、instrumentation付き1走なので
-通常得点の推定には使いません。pool上限を増やさず、rideありで最初のconnectionを
-transactionへ引き継ぎ、2回目のacquire queueを除く施策を次に比較します。connectionを
-連続所有することで他endpointへ待ちを移していないか、全endpoint p95と通常scoreも確認します。
-詳細は
+通常得点の推定には使いません。その後、現在のchair配送状態機械を維持したまま
+最初のconnectionをtransactionへ引き継ぎました。再診断ではrideありapp 436件、
+chair 442件の2回目のpool取得がすべて0になり、`CODE=29`は再発していません。
+
+通常3走は134,732 / 150,117 / 139,198点、中央値139,198点です。直前のpool分離版
+138,027点比+0.85%で、run間分散より差が小さいため得点向上を断定しませんが、
+重複queue待ちを確実に削除し中央値も悪化していないため採用しました。`CODE=26`は
+差分なし`main`対照でも94件再現し、owner距離境界の次のP0へ戻しています。詳細は
 [`tuning/34-notification-phase-diagnostics.md`](./tuning/34-notification-phase-diagnostics.md)を
+起点に、
+[`tuning/45-notification-connection-reuse-diagnostics.md`](./tuning/45-notification-connection-reuse-diagnostics.md)と
+[`tuning/46-notification-connection-reuse-adoption.md`](./tuning/46-notification-connection-reuse-adoption.md)を
 参照してください。
 
 過去のBenchmark 19では、診断runで `CARRYING` の後に古い `PICKUP` を返す

@@ -1843,6 +1843,66 @@ Rustの抽象化を展開する目的は
 「低水準に書けば速い」ことではなく、どの`await`が何の資源を待つかを観測可能にすることです。
 詳細は[Benchmark 34](./34-notification-phase-diagnostics.md)に記録しています。
 
+## `PoolConnection`を返さずtransactionへ引き継ぐ
+
+Benchmark 45では、通知の存在確認に使った`PoolConnection<MySql>`を、rideありの場合だけ
+同じrequestのtransactionへ引き継ぎました。
+
+```rust
+let mut connection = pool.acquire().await?;
+let ride_exists = find_ride(&mut connection).await?;
+
+if ride_exists.is_none() {
+    drop(connection);
+    return Ok(no_ride_response());
+}
+
+let mut tx = connection.begin().await?;
+// payloadを同じsnapshotで読み、sent_atを更新
+tx.commit().await?;
+drop(connection);
+```
+
+`PoolConnection`に対する`begin()`は、poolからもう1本を取得する処理ではありません。
+現在借りているphysical connectionへSQL `BEGIN`を送ります。そのため2回目の
+`pool.acquire().await`を削除できます。
+
+ただし、最初のSELECTがtransactionへ入るわけではありません。実行順は次のままです。
+
+```text
+autocommit SELECT -> BEGIN -> transaction内SELECT / UPDATE -> COMMIT
+```
+
+同じconnectionと同じtransactionを混同すると、snapshot境界を誤って説明することに
+なります。
+
+### 所有時間とqueue回数は別の指標
+
+再利用すると、1 requestのconnection所有時間は連続します。代わりにpool queueへ並ぶ回数が
+2回から1回になります。
+
+```text
+返却して再取得:  所有A -> pool待ち -> 所有B
+連続再利用:      所有A ----------------> 所有B
+```
+
+どちらがよいかは、所有時間と再取得待ちの比で変わります。今回の通知は連続所有が平均
+約10–11ms、削除対象の再取得待ちは変更前診断で平均約54–55msでした。評価APIのように
+外部HTTPを数百ms待つ処理では逆にconnectionを返すべきです。
+
+診断ではphysical connectionを返さない境界でも、内訳を比較できるよう論理的に
+`initial_connection_owned_us`と`transaction_connection_owned_us`へ分けます。
+`connection_reused=true`と`transaction_pool_acquire_us=0`を同時に記録し、
+「未到達」と「再取得せず0ms」を区別します。
+
+rideなしでconnectionを返し忘れると、空pollingが一般poolを占有します。Rustでは
+scope終了でもdropされますが、早期returnの直前で明示的にdropし、診断の返却時点とも
+一致させています。
+
+詳細なphaseは[Benchmark 45](./45-notification-connection-reuse-diagnostics.md)、
+通常3走の採用判断は[Benchmark 46](./46-notification-connection-reuse-adoption.md)に
+記録しています。
+
 ## SQLの`CASE`で配送状態機械を表す
 
 Benchmark 36では、chair通知の対象rideを`updated_at`だけで選ぶ実装を、
