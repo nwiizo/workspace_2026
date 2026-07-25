@@ -359,7 +359,7 @@
 
 | 優先度 | 対象 | 現在の処理 | 主な問題 |
 |---|---|---|---|
-| P0 | `internal_get_matching` | 地域ごとに最大64候補、全体最大64割当、距離200以下の同一地域近傍優先、外部pollは500ms | speedを含むpickup予測tick、空き定義の集約、地域ID + INDEXとの比較 |
+| P0 | `internal_get_matching` | 地域ごとに最大64候補、全体最大64割当、距離200以下の同一地域近傍優先、外部pollは500ms。speed局所greedyは不採用 | 空き定義の集約、地域ID + INDEX、待ち時間を含む二部matchingとの比較 |
 | P0 | `app_get_nearby_chairs` | 最新座標はcurrent-state表 + process cache、active / 割当可否はDB、評価はsnapshot + revision + delivery leaseで除外 | 最終run例8.079ms。ride antijoinとtracker確認の内訳を測る |
 | P0 | 通知2経路 | recipient + chair stats dependency revision付きpayload cache。chairは配送状態機械でcurrent rideを維持。未送信statusは30ms、定常cacheは100ms | connection再利用、response ACKなしの配送loss、long pollingを順に検証 |
 | P0 | `get_chair_stats` | 評価時差分更新 + 主キーreadへ変更 | SQL累積は約89%減、スコア中央値は約3.5%低下したため次の通知施策と合わせて再評価 |
@@ -1135,7 +1135,16 @@
   pending用 `(chair_id, region_id, created_at, id)` と現在位置用 `(region_id, chair_id)` で
   返却64件より広い走査を減らせるか比較する
 - [ ] pickup座標とchair座標を地域bucketへ分類し、同一地域内だけを候補にする方式と単純な距離上限を比較する
-- [ ] chair modelのspeedを候補取得時にJOINし、距離ではなく `ceil(distance / speed)` のpickup予測tickを最小化する
+- [x] chair modelのspeedを候補取得時にJOINし、距離ではなく
+  `ceil(distance / speed)` のpickup予測tickを最小化して比較する
+  - 通常3走134,611 / 126,948 / 133,257点、中央値133,257点、全走`pass=true`・error map空
+  - Benchmark 38中央値134,428点比-0.9%で、pickup不満中央値は28.9%→28.8%とほぼ不変
+  - 診断2,772割当の予測pickup平均9 tickだが、dispatch距離条件外は820件、約29.6%
+  - pendingがavailableを上回るsampleは104回中73回。局所greedyでは供給不足と
+    batch全体の機会損失を解けないため実装を戻した
+  - 詳細: [`tuning/39-matcher-pickup-ticks.md`](./tuning/39-matcher-pickup-ticks.md)
+- [ ] `PICKUP -> CARRYING -> ARRIVED` を同一ride IDで追跡し、理想tick、実tick、
+  coordinate POST、chair / app通知、pool取得のどこでdriveの余分な5 tickを超えるか計測する
 - [ ] matcherの目的関数を「割当件数最大化 → 期限超過ride最小化 → pickup予測tick最小化」の辞書順で定義する
 - [ ] 64件batch内の貪欲法と最小費用二部マッチングを、計算時間・空車移動距離・完了数で比較する
 - [ ] 二部マッチングではride待ち時間をcostへ加え、近い新規rideだけが選ばれて古いrideがstarvationしないようにする
@@ -1293,8 +1302,9 @@
 12. latest-coordinate cacheの `RwLock` とmaintenance gateの待機・保持時間を計測し、
    2秒再同期時のglobal stallを定量化する
 13. 最新statusをcurrent-state化し、未送信statusがない通知pollの履歴lookupとpayload再構築をなくす
-14. matcherの地域間距離上限と地域別候補quotaは追加済み。次はspeedを含むpickup予測tickと
-    地域ID + 複合INDEXを個別に比較する
+14. speedを含むpickup予測tickの局所greedyは3走中央値-0.9%で不採用。
+    次はdrive約70%のtick遅延を同一rideでphase分解し、地域ID + 複合INDEXまたは
+    batch全体の最小費用matchingを個別に比較する
 15. app history、owner sales、ride作成のN+1を順に除去する
 16. current-state別表で最新statusをO(1)化する
 17. JSON long pollingで不足する場合だけSSEへ移し、状態変更時の即時pushまで実装する

@@ -2044,6 +2044,36 @@ Rustが「新しくない」と判断する最大999マイクロ秒の穴がで�
 詳細と通常3走は
 [Benchmark 38](./38-owner-distance-watermark.md)に記録しています。
 
+## `div_ceil`で予測tickを整数のまま計算する
+
+Benchmark 39では、距離とspeedからpickupまでの理想tickを比較しました。
+
+```rust
+let pickup_ticks = distance.div_ceil(speed);
+```
+
+浮動小数点へ変換して `ceil()` する必要はありません。整数の
+`distance / speed` は端数を切り捨てるため、距離8・speed 7を1 tickと誤ります。
+`div_ceil`なら2 tickになり、「次のtickで残り1だけ進む」動作と一致します。
+
+speedが0なら除算できないため、DBのmaster dataを信用するだけでなく、比較関数では
+正数へ変換できる候補だけを使う実験にしました。
+
+```rust
+let speed = u64::try_from(speed).ok().filter(|speed| *speed > 0)?;
+let pickup_ticks = distance.div_ceil(speed);
+```
+
+この局所計算自体は正しく、距離30・speed 2より距離50・speed 7が早い反例も
+テストできました。しかし通常3走中央値は約0.9%低下したため、production実装は
+元へ戻しています。
+
+重要なのは、純粋関数が正しいことと、service全体の目的関数が正しいことは別だという点です。
+現在のgreedy法で高速椅子を1 rideへ使うと、後続rideはその椅子を使えません。
+batch全体の割当件数、待ち時間、予測tickを同時に最適化するには、1候補の
+`min_by_key`ではなく二部matchingとして扱う必要があります。実測と不採用理由は
+[Benchmark 39](./39-matcher-pickup-ticks.md)に記録しています。
+
 ### INDEXでCASE sortが自動的に消えるとは限らない
 
 `rides(chair_id, created_at)`は1 chairの候補へ絞り、
