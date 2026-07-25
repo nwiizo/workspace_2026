@@ -9,6 +9,9 @@ use chrono::{DateTime, NaiveDate, Utc};
 use crate::models::{Chair, Owner, Ride};
 use crate::{AppState, Error};
 
+const OWNER_DISTANCE_VISIBILITY_LAG_MILLISECONDS: i64 = 1_000;
+const OWNER_DISTANCE_MAX_STALENESS_MILLISECONDS: i64 = 3_000;
+
 pub fn owner_routes(app_state: AppState) -> axum::Router<AppState> {
     let routes =
         axum::Router::new().route("/api/owner/owners", axum::routing::post(owner_post_owners));
@@ -197,8 +200,13 @@ fn calculate_sale(ride: &crate::models::Ride) -> i32 {
 
 #[cfg(test)]
 mod tests {
-    use super::sum_visible_sales;
+    use super::{should_suppress_owner_distance_timestamp, sum_visible_sales};
+    use chrono::{DateTime, Utc};
     use std::collections::HashSet;
+
+    fn datetime_from_micros(timestamp_micros: i64) -> DateTime<Utc> {
+        DateTime::from_timestamp_micros(timestamp_micros).expect("valid test timestamp")
+    }
 
     #[test]
     fn owner_sales_excludes_only_overlapping_ride_ids() {
@@ -209,6 +217,96 @@ mod tests {
         let excluded_ride_ids = HashSet::from(["overlapping".to_owned()]);
 
         assert_eq!(sum_visible_sales(&ride_sales, &excluded_ride_ids), 700);
+    }
+
+    #[test]
+    fn owner_distance_hides_a_stale_timestamp_while_a_recent_row_is_unstable() {
+        let stable = datetime_from_micros(1_000_000);
+        let latest = datetime_from_micros(5_500_000);
+        let snapshot = datetime_from_micros(5_000_000);
+        let freshness_boundary = datetime_from_micros(2_000_000);
+
+        assert!(should_suppress_owner_distance_timestamp(
+            Some(&stable),
+            Some(&latest),
+            &snapshot,
+            &freshness_boundary,
+        ));
+    }
+
+    #[test]
+    fn owner_distance_keeps_a_fresh_stable_timestamp() {
+        let stable = datetime_from_micros(4_000_000);
+        let latest = datetime_from_micros(5_500_000);
+        let snapshot = datetime_from_micros(5_000_000);
+        let freshness_boundary = datetime_from_micros(2_000_000);
+
+        assert!(!should_suppress_owner_distance_timestamp(
+            Some(&stable),
+            Some(&latest),
+            &snapshot,
+            &freshness_boundary,
+        ));
+    }
+
+    #[test]
+    fn owner_distance_keeps_an_old_timestamp_without_a_newer_unstable_row() {
+        let stable = datetime_from_micros(1_000_000);
+        let latest = datetime_from_micros(4_500_000);
+        let snapshot = datetime_from_micros(5_000_000);
+        let freshness_boundary = datetime_from_micros(2_000_000);
+
+        assert!(!should_suppress_owner_distance_timestamp(
+            Some(&stable),
+            Some(&latest),
+            &snapshot,
+            &freshness_boundary,
+        ));
+    }
+
+    #[test]
+    fn owner_distance_uses_microseconds_after_the_snapshot_boundary() {
+        let stable = datetime_from_micros(1_000_000);
+        let latest = datetime_from_micros(5_000_050);
+        let snapshot = datetime_from_micros(5_000_000);
+        let freshness_boundary = datetime_from_micros(2_000_000);
+
+        assert!(should_suppress_owner_distance_timestamp(
+            Some(&stable),
+            Some(&latest),
+            &snapshot,
+            &freshness_boundary,
+        ));
+    }
+
+    #[test]
+    fn owner_distance_uses_microseconds_before_the_freshness_boundary() {
+        let stable = datetime_from_micros(1_999_999);
+        let latest = datetime_from_micros(5_000_050);
+        let snapshot = datetime_from_micros(5_000_000);
+        let freshness_boundary = datetime_from_micros(2_000_000);
+
+        assert!(should_suppress_owner_distance_timestamp(
+            Some(&stable),
+            Some(&latest),
+            &snapshot,
+            &freshness_boundary,
+        ));
+    }
+
+    #[test]
+    fn owner_distance_keeps_exact_boundary_values() {
+        let stable = datetime_from_micros(2_000_000);
+        let latest = datetime_from_micros(5_000_000);
+        let snapshot = datetime_from_micros(5_000_000);
+        let freshness_boundary = datetime_from_micros(2_000_000);
+
+        assert!(!should_suppress_owner_distance_timestamp(
+            Some(&stable),
+            Some(&latest),
+            &snapshot,
+            &freshness_boundary,
+        ));
     }
 }
 
@@ -262,6 +360,7 @@ struct ChairWithDetail {
     created_at: DateTime<Utc>,
     total_distance: MysqlDecimal,
     total_distance_updated_at: Option<DateTime<Utc>>,
+    latest_location_created_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -281,18 +380,44 @@ struct OwnerGetChairResponseChair {
     total_distance_updated_at: Option<i64>,
 }
 
+fn should_suppress_owner_distance_timestamp(
+    stable_updated_at: Option<&DateTime<Utc>>,
+    latest_location_created_at: Option<&DateTime<Utc>>,
+    distance_snapshot_at: &DateTime<Utc>,
+    freshness_boundary: &DateTime<Utc>,
+) -> bool {
+    matches!(
+        (stable_updated_at, latest_location_created_at),
+        (Some(stable), Some(latest))
+            if stable < freshness_boundary && latest > distance_snapshot_at
+    )
+}
+
 async fn owner_get_chairs(
     State(AppState { pool, .. }): State<AppState>,
     axum::Extension(owner): axum::Extension<Owner>,
 ) -> Result<axum::Json<OwnerGetChairResponse>, Error> {
+    // A coordinate row becomes visible at COMMIT slightly before the chair
+    // client receives recorded_at. Returning that row to an owner in this gap
+    // exposes a distance watermark that the client cannot identify yet.
+    // ISUCON14 explicitly allows this field to lag by up to three seconds, so
+    // use one stable watermark for both the sum and updated_at.
+    let request_started_at = Utc::now();
+    let distance_snapshot_at = request_started_at
+        - chrono::Duration::milliseconds(OWNER_DISTANCE_VISIBILITY_LAG_MILLISECONDS);
+    let freshness_boundary = request_started_at
+        - chrono::Duration::milliseconds(OWNER_DISTANCE_MAX_STALENESS_MILLISECONDS);
     let chairs: Vec<ChairWithDetail> = sqlx::query_as(r#"SELECT chairs.id,
        chairs.name,
        chairs.model,
        chairs.is_active,
        chairs.created_at,
        IFNULL(total_distance, 0) AS total_distance,
-       total_distance_updated_at
+       total_distance_updated_at,
+       chair_current_locations.created_at AS latest_location_created_at
 FROM chairs
+       LEFT JOIN chair_current_locations
+              ON chair_current_locations.chair_id = chairs.id
        LEFT JOIN (SELECT chair_id,
                           SUM(IFNULL(distance, 0)) AS total_distance,
                           MAX(created_at)          AS total_distance_updated_at
@@ -305,11 +430,13 @@ FROM chairs
                          FROM chair_locations
                          INNER JOIN chairs AS owner_chairs
                                  ON owner_chairs.id = chair_locations.chair_id
-                         WHERE owner_chairs.owner_id = ?) tmp
+                         WHERE owner_chairs.owner_id = ?
+                           AND chair_locations.created_at <= ?) tmp
                    GROUP BY chair_id) distance_table ON distance_table.chair_id = chairs.id
 WHERE chairs.owner_id = ?
     "#)
     .bind(&owner.id)
+    .bind(distance_snapshot_at.naive_utc())
     .bind(&owner.id)
     .fetch_all(&pool)
     .await?;
@@ -317,16 +444,29 @@ WHERE chairs.owner_id = ?
     Ok(axum::Json(OwnerGetChairResponse {
         chairs: chairs
             .into_iter()
-            .map(|chair| OwnerGetChairResponseChair {
-                id: chair.id,
-                name: chair.name,
-                model: chair.model,
-                active: chair.is_active,
-                registered_at: chair.created_at.timestamp_millis(),
-                total_distance: chair.total_distance.0,
-                total_distance_updated_at: chair
-                    .total_distance_updated_at
-                    .map(|t| t.timestamp_millis()),
+            .map(|chair| {
+                let suppress_unstable_timestamp = should_suppress_owner_distance_timestamp(
+                    chair.total_distance_updated_at.as_ref(),
+                    chair.latest_location_created_at.as_ref(),
+                    &distance_snapshot_at,
+                    &freshness_boundary,
+                );
+
+                OwnerGetChairResponseChair {
+                    id: chair.id,
+                    name: chair.name,
+                    model: chair.model,
+                    active: chair.is_active,
+                    registered_at: chair.created_at.timestamp_millis(),
+                    total_distance: chair.total_distance.0,
+                    total_distance_updated_at: if suppress_unstable_timestamp {
+                        None
+                    } else {
+                        chair
+                            .total_distance_updated_at
+                            .map(|updated_at| updated_at.timestamp_millis())
+                    },
+                }
             })
             .collect(),
     }))
