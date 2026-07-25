@@ -2997,6 +2997,148 @@ writeを含む処理へ同じ省略を適用してはいけません。status、
 詳細なSQL、INDEX、実測値は
 [Benchmark 52](./52-app-rides-batch.md)に記録しています。
 
+## write handlerのN+1とcheck-then-actを一緒に解く
+
+### readを速くしても並行更新の正しさは保証されない
+
+ride作成の旧実装は、userの全rideと各rideの最新statusを読んでactive rideがないことを
+確認してから、新しいrideをINSERTしていました。このN+1を集約SQLへ変えるだけなら
+読み取りは軽くなりますが、次の並行実行は残ります。
+
+```text
+request A: activeなし
+request B: activeなし
+request A: INSERT
+request B: INSERT
+```
+
+Rustの各handlerは別taskとして進むため、queryが速いか遅いかにかかわらず、判定とINSERTの
+間へ別taskが入れます。1 process内の `Mutex` でuser IDを守る案もありますが、
+webappを複数processや複数hostへ増やすとmutexを共有できません。
+
+今回は全processが共有するMySQLのusers主キー行を直列化地点にしました。
+
+```rust
+sqlx::query("SELECT id FROM users WHERE id = ? FOR UPDATE")
+    .bind(user.id)
+    .fetch_one(&mut *tx)
+    .await?;
+```
+
+同じuserだけが同じ行で待ち、異なるuserは並行できます。lockを取る順序は既存の招待reward
+処理と同じ `users -> coupons` にそろえました。個々のSQLが正しくても、異なるhandlerが
+逆順に行をlockするとdeadlockのcycleを作るため、共有する資源の順序まで確認します。
+
+### lock待ちの後にsnapshotを作る
+
+MySQLのREPEATABLE READでは通常のSELECTがconsistent-read snapshotを作ります。
+先にride集約を読み、その後でuser row lockを待つと、待機中に先行transactionが作った
+rideを古いsnapshotから見落とす可能性があります。
+
+```text
+1. users行をFOR UPDATEして、先行transactionのcommitを待つ
+2. ride集約をtransaction最初のconsistent readとして実行する
+3. 最新のcommit済みrideを含むsnapshotで判定する
+```
+
+`.await` の位置だけを見るとlock queryを1本増やしたように見えます。しかし、この1本は
+不要な待ちではなく、check-then-actを正しく直列化するための境界です。SQL数を減らす施策と
+必要な排他制御を区別します。
+
+### 永続化modelではなく、判断に必要なprojectionを返す
+
+全rideを `Vec<Ride>` へdecodeせず、判断に必要な2値だけを返します。
+
+```rust
+#[derive(sqlx::FromRow)]
+struct UserRideState {
+    ride_count: i64,
+    has_active_ride: i64,
+}
+```
+
+対応するSQLは1 userのINDEX範囲を1回走査し、初回ride判定とactive判定を同時に返します。
+
+```sql
+SELECT
+  COUNT(*) AS ride_count,
+  CAST(COALESCE(MAX(evaluation IS NULL), 0) AS SIGNED)
+    AS has_active_ride
+FROM rides
+WHERE user_id = ?
+```
+
+`MAX` は空集合でNULLになるため `COALESCE` が必要です。真偽式のMySQL型を
+`CAST(... AS SIGNED)` でSQLxの `i64` に合わせることで、driver依存の暗黙変換を
+handlerへ漏らしません。
+
+couponも全列を持つ永続化modelではなく、ride作成に必要な値だけを所有します。
+
+```rust
+#[derive(sqlx::FromRow)]
+struct RideCoupon {
+    code: String,
+    discount: i32,
+}
+```
+
+取得した `RideCoupon` はclaimとfare計算が終わるまでhandlerが所有します。
+参照をtransactionの外へ持ち出したり、同じcouponをもう一度SELECTしたりする必要は
+ありません。
+
+### 選んだ値を再利用し、書込み結果を検証する
+
+旧実装はrideをINSERTした後にrideを再SELECTし、couponをclaimした後に
+`used_by = ride_id` からcouponを再SELECTしていました。handler自身が生成したride ID、
+座標、時刻と、lockして選んだcouponのdiscountはすでに手元にあります。
+
+再SELECTを消すときは「書込みが成功したはず」と仮定せず、条件付きUPDATEの結果を
+検証します。
+
+```rust
+let result = sqlx::query(
+    "UPDATE coupons
+     SET used_by = ?
+     WHERE user_id = ? AND code = ? AND used_by IS NULL",
+)
+.bind(&ride_id)
+.bind(user.id)
+.bind(&coupon.code)
+.execute(&mut *tx)
+.await?;
+
+if result.rows_affected() != 1 {
+    return Err(Error::Conflict("coupon already used"));
+}
+```
+
+この確認により、実際にはclaimできなかった割引をresponseのfareへ反映しません。
+「SELECTを減らす」と「結果確認を省く」は別です。UPDATEの更新行数で同じ事実を確認できる
+場合にだけ、再読を削除します。
+
+### 並行fixtureはsleepだけに依存させない
+
+並行requestを単にbackground実行すると、実行環境によって直列になり、競合を再現できない
+ことがあります。固定fixtureではMySQL sessionがuserの次に参照される範囲をlockし、
+`--unbuffered` のready markerを確認してから8 requestを一斉に送ります。
+
+確認するのはHTTP件数だけではありません。
+
+- 202は1件、409は7件
+- DB上のactive rideは1件
+- 初期statusの`MATCHING`も1件
+- 招待rewardとの並行実行後も、使用couponとfareが同じ直列化順序に対応する
+- MySQL 1062と1213の増分が0
+
+偶然1回成功しただけでは、lock順序、DB結果、response計算の整合を証明できないためです。
+
+この変更で診断runのride作成p95は518msから384msへ短縮しました。通常3走の総スコア
+中央値は2.37%低下しましたがrun間の幅より小さく、総スコアの因果は未確定です。
+高速化を断定せず、排他制御の修正と、N+1・重複往復を実測どおりに記録します。
+
+詳細なSQL、INDEX、固定fixture、通常runは
+[Benchmark 53](./53-app-post-rides-current-state.md)に記録しています。
+
 ## 避けるショートカット
 
 - N+1を無制限の `tokio::spawn` で隠す

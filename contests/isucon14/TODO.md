@@ -367,7 +367,7 @@
 | P0 | `chair_post_coordinate` | 履歴INSERT + current UPDATE、遷移候補だけride lock + 最新status再読。shared pool 50 + general DB phase permit 26を近接3組で採用。`AFTER INSERT`とper-chair非同期queueは通常中央値を悪化させ棄却 | 同期commit境界を維持し、current投影・ride lookup・COMMITの仕事量そのものを減らす |
 | 完了 | `app_get_rides` | `evaluation IS NOT NULL`、chair / owner JOIN、coupon相関lookupを1 statementで取得。明示read transactionも除去 | 通常3走中央値128,584点。HTTP p95 373msのadmission / pool / response内訳は未計測 |
 | P1 | `owner_get_sales` | ownerのchairごとに完了rideを取得し、評価responseと重なったride IDを除外 | N+1、read transactionが暗黙ROLLBACK。複数processではtracker共有が必要 |
-| P1 | `app_post_rides` | userの全rideとride別最新statusを取得 | ライド作成ごとに履歴全体を再走査 |
+| 完了 | `app_post_rides` | users行を直列化し、1 userのINDEX範囲を`COUNT + MAX`で集約。couponは優先順付き1 statementで選択 | 同一user 8並行作成を1成功・7競合へ修正。通常3走中央値125,536点、作成API p95 384ms |
 | P2 | `app_post_users` | 招待者UNIQUE行を直列化地点にし、couponは `COUNT(*)`、rewardは新規user IDで一意化 | 現在の上限3では十分。上限や同一code集中が増えた場合だけcounterの条件付きUPDATEを比較 |
 | P1 | 認証middleware | 初期tokenはprocess cache、動的主体は最初のmissだけDB検索 | DB外のtoken失効と複数processのcache invalidationは未対応 |
 | P1 | `payment_gateway` | process共有client + ride IDの冪等POST。エラー時の履歴GETは削除済み | TCP connect回数、retry status別回数、connection再利用率の直接計測は未実施 |
@@ -989,6 +989,18 @@
     直前同期版中央値127,499点から+0.85%
   - 全走`pass=true`・error map空。旧新JSONのSHA-256一致、固定fixture、54 Rust testを確認
   - 詳細: [`tuning/52-app-rides-batch.md`](./tuning/52-app-rides-batch.md)
+- [x] `app_post_rides`のcheck-then-act競合を修正し、ride / couponの重複queryを削減する
+  - 変更前の診断runは作成API2,613件、平均217ms、p95 518ms、p99 646ms
+  - users主キー行を `FOR UPDATE` し、同一userのride作成と招待reward付与を直列化
+  - rideは既存の`(user_id, created_at)`範囲を`COUNT + MAX(evaluation IS NULL)`で集約し、
+    couponは`PRIMARY(user_id, code)`範囲から優先順付き1 statementで選択
+  - 変更後の診断runは作成API2,493件、平均163ms、p95 384ms、p99 477ms
+  - 変更前の固定fixtureは同一user 8並行作成を8件とも受理。変更後は1成功・7競合、
+    active rideと`MATCHING`は各1件、招待reward並行時もcouponとfareが整合
+  - 通常3走129,832 / 125,536 / 124,346点、推定代表値の中央値125,536点。
+    直前中央値比2.37%低下はrun間の幅より小さく、総スコア改善の因果は未確定
+  - 全走`pass=true`・error map空、MySQL 1062 / 1213増分0
+  - 詳細: [`tuning/53-app-post-rides-current-state.md`](./tuning/53-app-post-rides-current-state.md)
 - [ ] 最新座標をメモリ上では即時更新し、`chair_locations` を30 / 50 / 100ms単位でbulk INSERTする
 - [x] queue内の中間座標は累積距離と乗車地点・目的地への到達判定に必要なので、最新1件へ無条件にcoalesceしない
   - 実験は全座標をbounded FIFOへ保持し、24件の履歴数と順序を固定fixtureで確認
@@ -1038,12 +1050,23 @@
 
 ### ライド作成
 
-- [ ] 進行中rideの有無を `EXISTS` 1回で判定する
-- [ ] userごとのactive rideを一意に表現できるcurrent-state表を検討する
-- [ ] INSERT後の `COUNT(*)` とride再SELECTをなくす
-- [ ] 使用couponの選択とclaimを1 SQLまたは条件付きUPDATEへまとめる
+- [x] 進行中rideの有無を1 user範囲の集約1回で判定する
+  - `COUNT(*)`と`MAX(evaluation IS NULL)`を同じstatementで取得し、初回ride判定も共有
+- [x] userごとのactive rideを一意に表現できるcurrent-state表を検討する
+  - users主キー行を `FOR UPDATE` し、ride作成と招待reward付与のlock順序を
+    `users -> coupons`へ統一
+  - 専用current-state表やgenerated column + UNIQUE INDEXは、追加writeとmigrationを
+    要する。現状は1 user最大11 rideの集約が平均0.207msなので不採用
+- [x] INSERT後の `COUNT(*)` とride再SELECTをなくす
+  - INSERT前の集約結果と生成済みride ID / 時刻からresponseを構築
+- [x] 使用couponの選択を1 SQLへまとめ、claimを条件付きUPDATEにする
+  - `CP_NEW2024`を初回だけ優先し、それ以外は`created_at, code`順
+  - `UPDATE ... WHERE used_by IS NULL`の`rows_affected = 1`を確認
 - [ ] fareとdiscountをrideへ保存する場合は、別表または初期ダンプ後のALTERを使う
-- [ ] 同一userからの並行作成で2件のactive rideを作らない
+- [x] 同一userからの並行作成で2件のactive rideを作らない
+  - barrier付き8並行requestで1成功・7件409、DB上のactive ride / `MATCHING`各1件
+  - 詳細: [`scripts/test-app-post-rides-concurrency.sh`](./scripts/test-app-post-rides-concurrency.sh)、
+    [`tuning/53-app-post-rides-current-state.md`](./tuning/53-app-post-rides-current-state.md)
 
 ### オーナー売上
 
@@ -1438,6 +1461,9 @@
 - [x] 完了ride一覧の未完了除外、降順、couponなし・通常割引・過大割引、
   millisecond変換、UTF-8、初期データ不変条件
   - `./scripts/test-app-rides-batch.sh`
+- [x] ride作成の初回coupon優先、通常coupon順、fare、既存active拒否、
+  同一user 8並行作成、招待rewardとの並行実行
+  - `./scripts/test-app-post-rides-concurrency.sh`
 - [ ] `rides.updated_at` と履歴 `completed_at` が完全一致すること
 - [ ] 既存表へ列を追加しても列名なし初期ダンプをロードできること
 - [ ] initialize直後とwebapp再起動後
@@ -1461,7 +1487,12 @@
   - 1 jobずつ永続化する候補でshard別depth、queue wait、ACK→commit、
     full / closed / failed / stale counterを採取。128相当のsample最大depthは21 / 64
   - bulk batchとretryは実装せず、1 job / transaction、retry 0として比較
-- [ ] エンドポイント件数とp50 / p95 / p99を記録する
+- [x] エンドポイント件数とp50 / p95 / p99を記録する
+  - Benchmark 52診断では `GET /api/app/rides` 12,100件、p95 373ms
+  - Benchmark 53対照では `POST /api/app/rides` 2,613件、平均217ms、
+    p50 193ms、p95 518ms、p99 646ms
+  - Benchmark 53候補では2,493件、平均163ms、p50 159ms、
+    p95 384ms、p99 477ms
 - [x] SQL回数、累積時間、走査行数を記録する
 - [ ] pool待ち、MySQL CPU、webapp CPU、block I/Oを記録する
 - [x] 改善しなければ変更を重ねずrevert候補として記録する
@@ -1473,23 +1504,21 @@
 完了済みのmatcher `CODE=32`、owner `CODE=26`、評価phase、pool上限50 / 75 / 100、
 drive phaseの診断は上の各項目へ結果を残しています。現在の未完了項目は次の順です。
 
-1. `app_post_rides`のuser全履歴とride別最新status走査を、現在rideのcurrent-stateへ
-   置き換えられるか正当性fixture付きで比較する
-2. `app_get_rides`のgeneral admission、pool acquire、SQL、row mapping、responseを
+1. `app_get_rides`のgeneral admission、pool acquire、SQL、row mapping、responseを
    phase分解し、p95 373msのうちSQL平均0.322ms以外の待ちを特定する
-3. nearbyのride antijoinとevaluation tracker確認を分け、どちらが高頻度pollの
+2. nearbyのride antijoinとevaluation tracker確認を分け、どちらが高頻度pollの
    DB時間を支配するか計測する
-4. owner距離のwindow集計を、1秒公開watermarkを維持したcurrent-state差分集約と
+3. owner距離のwindow集計を、1秒公開watermarkを維持したcurrent-state差分集約と
    短時間cacheで比較する
-5. `CODE=27`を同じchairのDB current row、process cache、nearby応答で追跡する
-6. latest-coordinate cacheの `RwLock` とmaintenance gateの待機・保持時間を計測し、
+4. `CODE=27`を同じchairのDB current row、process cache、nearby応答で追跡する
+5. latest-coordinate cacheの `RwLock` とmaintenance gateの待機・保持時間を計測し、
    2秒再同期時のglobal stallを定量化する
-7. 最新statusをcurrent-state化し、未送信statusがない通知pollの履歴lookupと
+6. 最新statusをcurrent-state化し、未送信statusがない通知pollの履歴lookupと
    payload再構築をなくす
-8. owner salesのN+1を独立して除去する
-9. 貪欲matcherと、割当件数・期限超過・pickup予測tickを辞書順にした
+7. owner salesのN+1を独立して除去する
+8. 貪欲matcherと、割当件数・期限超過・pickup予測tickを辞書順にした
    最小費用二部マッチングを比較する
-10. DB待ちとlock待ちを減らした後にMySQL、nginx、Rust compiler設定をprofileで比較する
+9. DB待ちとlock待ちを減らした後にMySQL、nginx、Rust compiler設定をprofileで比較する
 
 `CODE=8`が再発した場合は、優先順に割り込ませてapp通知のride / user / cursorを
 同一requestで保存します。正当性エラーは得点改善より先に原因を分離します。
