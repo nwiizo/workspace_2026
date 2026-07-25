@@ -2074,6 +2074,179 @@ batch全体の割当件数、待ち時間、予測tickを同時に最適化す�
 `min_by_key`ではなく二部matchingとして扱う必要があります。実測と不採用理由は
 [Benchmark 39](./39-matcher-pickup-ticks.md)に記録しています。
 
+## ride単位の診断を通常サンプルから分離する
+
+Benchmark 40では、同じrideの全coordinate、`CARRYING`、app / chair通知を追う必要が
+ありました。一方、全rideの全requestを同期stdoutへ出すと、ログI/Oが新しい律速になり、
+診断したい挙動を変えます。高頻度JSONはrequest処理でserializeした後channelへ渡し、
+専用threadがstdoutへ書くようにしました。
+
+### 非同期writerでもstdout lockを待機中に保持しない
+
+初版はwriter threadが `StdoutLock` を取得したままchannelの次要素を待ちました。
+
+```rust
+let mut output = stdout.lock();
+for line in receiver {
+    writeln!(output, "{line}")?;
+}
+```
+
+これはrequest側のchannel sendを短くしますが、通常のtracing subscriberもstdoutを
+使うため、Tokio workerがlog出力で停止します。実際に最初の診断JSON後からAPIが進まず、
+完了ride 0、`CODE=32`で0点になりました。
+
+lockは1行ごとに取得・解放します。
+
+```rust
+for line in receiver {
+    let mut output = stdout.lock();
+    let _ = writeln!(output, "{line}");
+    let _ = output.flush();
+}
+```
+
+修正後の最終runは `pass=true`、2,310完了rideへ戻りました。channelを入れただけでは非干渉性を
+保証できません。channel容量、serialize cost、出力先のlock保持範囲、終了時のdrainを
+別々に確認します。
+
+Rustは16,384行の `sync_channel` と `try_send` を使い、stdout停止時もmemoryが
+無制限に増えないようにします。queue満杯時の欠落数をatomic counterへ加え、
+診断専用flush endpointはFIFO上のbarrierをwriterへ送り、barrier以前の全行をflushして
+欠落数を返します。reportは0件だけを受理します。Go benchmarkerもValidationの最後に
+channelへbarrierを送り、先行するclient診断行のwrite完了を待ってからprocessを終了します。
+
+### `OnceLock`で通常経路を止めない
+
+診断の有効状態はprocess中に変わらないため、環境変数をrequestごとに読みません。
+
+```rust
+static DRIVE_DIAGNOSTICS_ENABLED: OnceLock<bool> = OnceLock::new();
+
+pub(crate) fn enabled() -> bool {
+    *DRIVE_DIAGNOSTICS_ENABLED.get_or_init(|| {
+        std::env::var_os("ISUCON_DIAGNOSTIC").as_deref()
+            == Some(std::ffi::OsStr::new("1"))
+    })
+}
+```
+
+通常runでは最初の判定後はboolを読むだけで、診断objectを作りません。診断runは
+スコア推定へ使わないため、`Instant`の取得やphase field更新は許容します。
+
+### 同じrideをRustとGoで選ぶ
+
+processごとにrandom samplingすると、Rust serverで選んだrideとGo benchmarkerで
+選んだrideが一致しません。そこでride IDをFNV-1aでhashし、32 bucketの0だけを選びます。
+
+```rust
+fn ride_bucket(ride_id: &str) -> u64 {
+    ride_id.as_bytes().iter().fold(FNV_OFFSET_BASIS, |hash, byte| {
+        (hash ^ u64::from(*byte)).wrapping_mul(FNV_PRIME)
+    }) % TRACE_RIDE_BUCKETS
+}
+```
+
+`wrapping_mul`が必要なのは、FNV-1aが固定幅整数のoverflowを計算の一部として使うためです。
+debug buildの通常乗算へ置き換えるとoverflow panicになり得ます。Goの`uint64`乗算は
+同じく2の64乗でwrapします。
+
+RustとGoのunit testへ同じ2つのride IDと期待bucketを置き、hash定数やbyte処理が
+片方だけ変わった場合に検出します。3,200個の連番IDから70–130件が選ばれる緩い
+分布テストも置き、全件または0件になる実装ミスを検出します。これはhash品質の
+統計検定ではなく、診断samplingのsanity checkです。
+
+### 周期サンプルと強制traceを同じpercentileへ混ぜない
+
+既存のcoordinate / notification診断は64 requestに1件でした。ride追跡は選択rideの
+全requestです。この2種類を一緒に集計すると、走行中のrequestが過剰に含まれます。
+
+各sampleに次を持たせました。
+
+```text
+periodic_sample = sequence % 64 == 0
+trace_ride      = selected rideのイベントか
+```
+
+診断objectは、診断runでは一旦作成します。ride IDはSQL後に判明するため、request開始時には
+trace対象か判断できないからです。最後に `periodic_sample || force_emit` の場合だけ
+JSONを書きます。
+
+```rust
+fn emit_record(&mut self) {
+    self.emitted = true;
+    if !self.sample.periodic_sample && !self.force_emit {
+        return;
+    }
+    // JSONを1行だけ出力
+}
+```
+
+`emitted = true` を早期returnより前に設定します。そうしないと `Drop` が同じsampleを
+もう一度emitしようとします。errorやcancellationで途中returnしても、周期sampleまたは
+trace対象なら `Drop` がterminal phaseまでを残します。
+
+従来のレポートは次のfilterを通します。
+
+```jq
+select(if has("periodic_sample") then .periodic_sample == true else true end)
+```
+
+`jq` の `//` はnullだけでなくfalseでも右辺を返します。
+`(.periodic_sample // true)` と書くと、明示的なfalseまでtrueになり、ride追跡sampleが
+周期分布へ混ざります。`has(...)` でfield有無を先に分ければ、falseを保持しつつ、
+field追加前の保存ログだけを既定trueとして読めます。true / false / fieldなしは
+`scripts/test-diagnostic-filters.sh` のfixtureで固定しました。driveレポートは逆に
+`.trace_ride == true` だけを使います。
+
+### `pool.begin()`を計測可能な2区間へ分ける
+
+`CARRYING` statusでは、ride追跡対象だけpool取得とSQL `BEGIN`を分けて記録します。
+実際のtransaction開始は全requestで次の同じ経路を使います。
+
+```rust
+let mut connection = pool.acquire().await?;
+let mut tx = connection.begin().await?;
+```
+
+`pool.begin().await?` は短いですが、connection取得待ちとMySQLの `BEGIN` を足した時間しか
+取れません。今回の平均はpool 65.725ms、BEGIN 0.888msだったため、分離しないと
+SQL transaction開始が遅いと誤解します。
+
+`tx.commit().await?` が成功した直後に `commit_us` とwall-clock時刻を記録し、その後で
+`drop(connection)`、cache invalidationを行います。commit計測へpool返却を混ぜず、
+transactionがconnectionを借用する形へ変わっても返却位置を明示します。
+
+coordinate遷移も同じくcommit直後の `committed_at_unix_us` を記録します。通知はDB commit
+ではなく、handlerが成功responseを作り終えた
+`response_built_at_unix_us` です。serverがresponseを作った時刻とclientが受信した時刻を
+同じ「配送」と呼ばないことで、milestone gapの意味を保ちます。
+
+### server時間とclient時間を両方取る
+
+Axum handlerの `total_us` はnginx、network、Go client decode、schedulerを含みません。
+ベンチマーカーの `SendChairCoordinate` でも `time.Since(start)` を記録しました。
+
+```text
+client coordinate request平均 106.873ms
+server coordinate request平均  76.515ms
+差                            30.358ms
+```
+
+どちらもrequest単位の直接平均です。serverだけを見れば約77msですが、chairの `tickDone` が解放されるのはclient処理が
+終わった後です。採点へつながる待ちはclient observed timeです。一方、改善対象を
+pool / SQL / COMMITへ分けるにはserver phaseが必要です。片方だけでは原因と影響を
+同時に説明できません。clientのblocked tickは成否にかかわらず
+`picked_up_tick < world_tick < arrived_tick` のattemptを使い、失敗件数を別表示します。
+最終runの失敗attemptは0件でした。server phase分布は成功handlerだけに限定します。
+目的地へ移動したtickでは `ArrivedAt` がPOST前に確定するため、最終ARRIVED POSTの
+待ち時間をblocked tickへ足してはいけません。失敗attemptのrequest時間は含めますが、
+attempt間のretry backoffは含まないため、失敗があるrunではblocked tickを下限値として
+失敗件数と併読します。
+
+計測結果と接続予約の次仮説は
+[Benchmark 40](./40-drive-phase-diagnostics.md)に記録しています。
+
 ### INDEXでCASE sortが自動的に消えるとは限らない
 
 `rides(chair_id, created_at)`は1 chairの候補へ絞り、

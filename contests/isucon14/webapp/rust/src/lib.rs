@@ -13,6 +13,7 @@ use tokio::sync::{Mutex, RwLock};
 
 use crate::models::{Chair, Owner, User};
 
+pub(crate) mod drive_diagnostic;
 pub(crate) mod matcher_diagnostic;
 pub(crate) mod notification_diagnostic;
 

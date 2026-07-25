@@ -6,3 +6,7 @@ services:
   nginx:
     volumes:
       - ./docker/nginx.diagnostic.conf:/etc/nginx/conf.d/default.conf:ro
+
+  benchmark:
+    environment:
+      ISUCON_DIAGNOSTIC: "1"

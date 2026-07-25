@@ -1,4 +1,3 @@
-use std::io::Write as _;
 use std::sync::{
     atomic::{AtomicU64, Ordering},
     OnceLock,
@@ -42,6 +41,12 @@ pub(crate) enum NotificationConnectionStage {
 pub(crate) struct NotificationDiagnosticSample {
     endpoint: &'static str,
     sequence: u64,
+    periodic_sample: bool,
+    trace_ride: bool,
+    ride_id: Option<String>,
+    ride_status: Option<String>,
+    recipient_id: Option<String>,
+    response_built_at_unix_us: Option<u64>,
     pub(crate) cache_lookup_us: Option<u64>,
     pub(crate) initial_pool_acquire_us: Option<u64>,
     pub(crate) initial_pool_size_before: Option<u64>,
@@ -80,6 +85,7 @@ pub(crate) struct NotificationDiagnostic {
     connection_acquired_at: Option<Instant>,
     connection_stage: Option<NotificationConnectionStage>,
     pub(crate) sample: NotificationDiagnosticSample,
+    force_emit: bool,
     emitted: bool,
 }
 
@@ -93,9 +99,7 @@ impl NotificationDiagnostic {
         }
 
         let sequence = endpoint.next_sequence();
-        if sequence.checked_rem(NOTIFICATION_DIAGNOSTIC_SAMPLE_EVERY) != Some(0) {
-            return None;
-        }
+        let periodic_sample = sequence.checked_rem(NOTIFICATION_DIAGNOSTIC_SAMPLE_EVERY) == Some(0);
 
         let started_at = Instant::now();
         Some(Self {
@@ -106,6 +110,12 @@ impl NotificationDiagnostic {
             sample: NotificationDiagnosticSample {
                 endpoint: endpoint.name(),
                 sequence,
+                periodic_sample,
+                trace_ride: false,
+                ride_id: None,
+                ride_status: None,
+                recipient_id: None,
+                response_built_at_unix_us: None,
                 cache_lookup_us: None,
                 initial_pool_acquire_us: None,
                 initial_pool_size_before: None,
@@ -137,8 +147,28 @@ impl NotificationDiagnostic {
                 outcome: "error_or_cancelled",
                 terminal_phase: "cache_lookup",
             },
+            force_emit: false,
             emitted: false,
         })
+    }
+
+    pub(crate) fn trace_ride_event(
+        &mut self,
+        ride_id: &str,
+        ride_status: &str,
+        recipient_id: &str,
+    ) {
+        if !matches!(ride_status, "PICKUP" | "CARRYING" | "ARRIVED")
+            || !crate::drive_diagnostic::should_trace_ride(ride_id)
+        {
+            return;
+        }
+
+        self.force_emit = true;
+        self.sample.trace_ride = true;
+        self.sample.ride_id = Some(ride_id.to_owned());
+        self.sample.ride_status = Some(ride_status.to_owned());
+        self.sample.recipient_id = Some(recipient_id.to_owned());
     }
 
     pub(crate) fn elapsed_since_checkpoint_us(&mut self) -> u64 {
@@ -202,17 +232,19 @@ impl NotificationDiagnostic {
 
     fn emit_record(&mut self) {
         self.emitted = true;
+        if !self.sample.periodic_sample && !self.force_emit {
+            return;
+        }
         if self.connection_acquired_at.is_some() {
             self.connection_released();
         }
+        self.sample.response_built_at_unix_us = Some(crate::drive_diagnostic::unix_time_us());
         self.sample.total_us = self
             .started_at
             .elapsed()
             .as_micros()
             .min(u128::from(u64::MAX)) as u64;
-        if let Ok(json) = serde_json::to_string(&self.sample) {
-            let _ = writeln!(std::io::stdout().lock(), "NOTIFICATION_DIAGNOSTIC {json}");
-        }
+        crate::drive_diagnostic::emit("NOTIFICATION_DIAGNOSTIC", &self.sample);
     }
 
     pub(crate) fn emit_success(mut self) {

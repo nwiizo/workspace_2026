@@ -359,12 +359,12 @@
 
 | 優先度 | 対象 | 現在の処理 | 主な問題 |
 |---|---|---|---|
-| P0 | `internal_get_matching` | 地域ごとに最大64候補、全体最大64割当、距離200以下の同一地域近傍優先、外部pollは500ms。speed局所greedyは不採用 | 空き定義の集約、地域ID + INDEX、待ち時間を含む二部matchingとの比較 |
+| P0 | `internal_get_matching` | 地域ごとに最大64候補、全体最大64割当、距離200以下の同一地域近傍優先、外部pollは500ms。speed局所greedyは不採用 | 空き定義の集約、地域ID + INDEX、期限とpickup予測を含む二部matchingとの比較 |
 | P0 | `app_get_nearby_chairs` | 最新座標はcurrent-state表 + process cache、active / 割当可否はDB、評価はsnapshot + revision + delivery leaseで除外 | 最終run例8.079ms。ride antijoinとtracker確認の内訳を測る |
 | P0 | 通知2経路 | recipient + chair stats dependency revision付きpayload cache。chairは配送状態機械でcurrent rideを維持。未送信statusは30ms、定常cacheは100ms | connection再利用、response ACKなしの配送loss、long pollingを順に検証 |
 | P0 | `get_chair_stats` | 評価時差分更新 + 主キーreadへ変更 | SQL累積は約89%減、スコア中央値は約3.5%低下したため次の通知施策と合わせて再評価 |
 | P0 | `app_post_ride_evaluation` | 準備transaction、transaction外の冪等決済、ride再lock付き完了transactionへ分割済み | connection所有平均は94.0%短縮。完了時の追加acquireとprocess crash後の自動回収を検討する |
-| P0 | `chair_post_coordinate` | 履歴INSERT + current UPDATE、遷移候補だけride lock + 最新status再読 | pool 50維持。上限追加で通常中央値は改善しなかったため、connection取得後のDB滞在をquery別に減らす |
+| P0 | `chair_post_coordinate` | 履歴INSERT + current UPDATE、遷移候補だけride lock + 最新status再読。drive追跡1,191 POSTの86.6%がclient 30ms以上、server時間の84.1%がpool待ち | 総接続50内のgeneral 34 + coordinate 16を検証開始値にし、static partitionとadmission controlを比較する |
 | P1 | `app_get_rides` | rideごとにstatus、coupon、chair、ownerを取得 | 履歴増加に比例するN+1 |
 | P1 | `owner_get_sales` | ownerのchairごとに完了rideを取得し、評価responseと重なったride IDを除外 | N+1、read transactionが暗黙ROLLBACK。複数processではtracker共有が必要 |
 | P1 | `app_post_rides` | userの全rideとride別最新statusを取得 | ライド作成ごとに履歴全体を再走査 |
@@ -1143,8 +1143,36 @@
   - pendingがavailableを上回るsampleは104回中73回。局所greedyでは供給不足と
     batch全体の機会損失を解けないため実装を戻した
   - 詳細: [`tuning/39-matcher-pickup-ticks.md`](./tuning/39-matcher-pickup-ticks.md)
-- [ ] `PICKUP -> CARRYING -> ARRIVED` を同一ride IDで追跡し、理想tick、実tick、
+- [x] `PICKUP -> CARRYING -> ARRIVED` を同一ride IDで追跡し、理想tick、実tick、
   coordinate POST、chair / app通知、pool取得のどこでdriveの余分な5 tickを超えるか計測する
+  - 最終診断1走は146,727点、`pass=true`、error map空。
+    instrumentation付きなのでscoreは未推定
+  - 全2,310完了rideのdrive不満は77.3%、余分tickは中央値22、p95 144
+  - 1/32で選んだ74 rideはdrive tickを増やし得る1,191 coordinate POST中1,031件、
+    86.6%がclient 30ms以上。失敗POSTは0件
+  - client coordinate request平均106.873ms、server phase平均76.515ms、
+    `pool.acquire()`平均64.349msでserver時間の約84.1%
+  - 抽出rideの余分3,718 tickに対し、POST時間からのblocked見積りは3,678 tick
+  - current UPDATE平均2.681msよりpool待ちが支配的なため、SQL単体書換えを次にしない
+  - 最終ARRIVED POSTをblocked tickから除外し、client失敗attemptは別件数で含める。
+    attempt間のretry backoffはrequest durationに入らないため、失敗があるrunでは
+    blocked見積りを下限値として失敗件数と併読する
+    server phaseの失敗sampleと追跡用非周期sampleは成功分布から分離し、
+    DB commit / server response構築 / client受信の時刻境界を区別
+  - 非同期writer初版はstdout lockをchannel待機中も保持し、完了ride 0、
+    `CODE=25/32`で0点。1行ごとのlockへ修正して上記runで復旧を確認
+  - Rust report前とGo Validation終了時にFIFO barrierを待ち、Rust queueの
+    `dropped_lines=0`を確認。client / serverの末尾未flushを除外
+  - 詳細: [`tuning/40-drive-phase-diagnostics.md`](./tuning/40-drive-phase-diagnostics.md)
+- [ ] 総DB接続上限50をgeneral 34 + coordinate 16へ分け、coordinateの30ms超過率、
+  drive不満、通知 / matcher / 評価p95、完了数、通常3走中央値を比較する
+  - 34 / 16は採用値ではなく検証開始値。固定partitionでは片側のidleを共有できない
+  - coordinate / general別のsize、idle、acquire、connection所有と、MySQL総接続数、
+    `Threads_running`、処理件数あたりrow-lock waitを同じrunで採取する
+  - initialize、reconciliation、matcherを含む全pool利用先をどちらへ置くか一覧化する
+  - general starvationが出た場合は共有pool 50 + general 34 permitのadmission controlを比較する
+- [ ] 接続隔離後もcoordinateが30msを超える場合は、per-chair順序、全履歴、status遷移、
+  3秒可視性を維持する非同期queueを別施策として比較する
 - [ ] matcherの目的関数を「割当件数最大化 → 期限超過ride最小化 → pickup予測tick最小化」の辞書順で定義する
 - [ ] 64件batch内の貪欲法と最小費用二部マッチングを、計算時間・空車移動距離・完了数で比較する
 - [ ] 二部マッチングではride待ち時間をcostへ加え、近い新規rideだけが選ばれて古いrideがstarvationしないようにする
@@ -1279,37 +1307,28 @@
 
 ## 推奨する直近の実行順
 
-1. `CODE=32`のmatcher phase・候補数・最古待ち・割当距離の診断は完了。
-   地域別quotaと距離200以下を実装し、通常3走143,887 / 140,426 / 137,801点、
-   全走`pass=true`・`CODE=32` 0件
-2. `CODE=26`のowner距離watermark修正は完了。赤・緑fixtureと通常3走で検証し、
-   132,225 / 134,428 / 137,075点、全走error map空
-3. `CODE=8`が再発したらapp通知のride / user / cursorを同一requestで保存する
-4. 評価APIのphase計測は完了。connection所有平均319.754msの約94.6%が決済で、
-   retry sleepだけで平均201.719msと確認した
-5. 短い準備transaction、transaction外の冪等決済、rideを再lockする短い完了transactionへ
-   分ける。決済成功後のDB失敗は同じkeyで再開し、二重status・stats更新を防ぐ
-6. app / chair通知cache missのphase計測は完了。connection所有平均は約10msだが、
-   同じrequestの2回のacquire平均合計がapp 77.839ms、chair 82.513msだった
-7. pool上限50 / 75 / 100の比較は完了し、通常3走中央値が最も高い50を維持した
-8. chair通知のride選択は配送状態機械へ変更済み。hidden pendingとdelivery gapの
-   固定回帰、Benchmark 38通常3走の`CODE=12/26/29/32` 0件を確認
-9. owner距離はrequest開始1秒前の安定snapshotへ固定済み。次は診断時だけ
-   更新時刻省略数、対象履歴行数、query時間を記録してcurrent-state集約と比較する
-10. `CODE=27`を同じchairのDB current row、process cache、nearby応答で追跡する
-11. rideあり通知のconnection再利用は、`CODE=27`を解消してerror mapを安定させてから
-   再比較する
-12. latest-coordinate cacheの `RwLock` とmaintenance gateの待機・保持時間を計測し、
+完了済みのmatcher `CODE=32`、owner `CODE=26`、評価phase、pool上限50 / 75 / 100、
+drive phaseの診断は上の各項目へ結果を残しています。現在の未完了項目は次の順です。
+
+1. 総上限50を維持したgeneral 34 + coordinate 16を最初の比較条件として実装し、
+   pool別待ち、drive tick、general endpoint、MySQL競合、通常3走中央値で採否を決める
+2. static partitionでgeneral starvationまたは片側idleが出た場合は、共有pool 50のまま
+   generalだけ34 permitへ制限するadmission controlと比較する
+3. rideあり通知の二重pool取得を、現在の配送状態機械を維持したまま単独で再比較する
+4. `CODE=27`を同じchairのDB current row、process cache、nearby応答で追跡する
+5. owner距離の更新時刻省略数、対象履歴行数、query時間を診断時だけ記録し、
+   current-state集約と比較する
+6. latest-coordinate cacheの `RwLock` とmaintenance gateの待機・保持時間を計測し、
    2秒再同期時のglobal stallを定量化する
-13. 最新statusをcurrent-state化し、未送信statusがない通知pollの履歴lookupとpayload再構築をなくす
-14. speedを含むpickup予測tickの局所greedyは3走中央値-0.9%で不採用。
-    次はdrive約70%のtick遅延を同一rideでphase分解し、地域ID + 複合INDEXまたは
-    batch全体の最小費用matchingを個別に比較する
-15. app history、owner sales、ride作成のN+1を順に除去する
-16. current-state別表で最新statusをO(1)化する
-17. JSON long pollingで不足する場合だけSSEへ移し、状態変更時の即時pushまで実装する
-18. 貪欲matcherと最小費用二部マッチングを比較する
-19. 最後にMySQL、nginx、compiler設定をprofileに基づいて調整する
+7. 最新statusをcurrent-state化し、未送信statusがない通知pollの履歴lookupと
+   payload再構築をなくす
+8. app history、owner sales、ride作成のN+1を1 endpointずつ除去する
+9. 貪欲matcherと、割当件数・期限超過・pickup予測tickを辞書順にした
+   最小費用二部マッチングを比較する
+10. DB待ちとlock待ちを減らした後にMySQL、nginx、Rust compiler設定をprofileで比較する
+
+`CODE=8`が再発した場合は、優先順に割り込ませてapp通知のride / user / cursorを
+同一requestで保存します。正当性エラーは得点改善より先に原因を分離します。
 
 ## 記録ルール
 

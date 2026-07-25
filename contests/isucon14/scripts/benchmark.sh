@@ -32,7 +32,19 @@ if [ "${SKIP_STATIC_SANITY_CHECK:-0}" = "1" ]; then
   set -- "$@" --skip-static-sanity-check
 fi
 
-"$compose" --profile benchmark run \
+if [ -n "${BENCHMARK_OUTPUT_FILE:-}" ]; then
+  set +e
+  "$compose" --profile benchmark run \
+    --rm \
+    --name "$benchmark_name" \
+    benchmark "$@" >"$BENCHMARK_OUTPUT_FILE" 2>&1
+  benchmark_status=$?
+  set -e
+  cat "$BENCHMARK_OUTPUT_FILE"
+  exit "$benchmark_status"
+fi
+
+exec "$compose" --profile benchmark run \
   --rm \
   --name "$benchmark_name" \
   benchmark "$@"

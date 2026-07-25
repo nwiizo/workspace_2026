@@ -46,6 +46,7 @@ git -C "$source_dir/isucon14" archive HEAD | tar -x -C contests/isucon14
 | `docker/nginx.conf` | 静的ファイル配信と Rust API へのプロキシ |
 | `docker/client-config/config.json` | 公開イメージ取得とHomebrew CLI plugin検出用のプロジェクト専用 Docker 設定 |
 | `scripts/compose.sh` | Compose plugin / standalone Compose の差を吸収 |
+| `scripts/flush-diagnostics.sh` | Rust診断queueをbarrierまでflushし、欠落行があれば集計を停止 |
 | `scripts/up.sh` / `down.sh` | 起動、停止、DBを含む完全初期化 |
 | `scripts/smoke-test.sh` | トップ画面と初期化 API の疎通確認 |
 | `scripts/test-auth-cache.sh` | 初期token、動的登録、initialize失敗・成功後の認証cacheをHTTPとSQL回数で確認 |
@@ -54,6 +55,7 @@ git -C "$source_dir/isucon14" archive HEAD | tar -x -C contests/isucon14
 | `scripts/test-chair-notification-pending-ride.sh` | hidden pendingとdelivery gapでもchair通知がcurrent rideを維持することをHTTPで確認 |
 | `scripts/test-chair-stats-consistency.sh` | 全初期chairを照合し、欠損・誤値・余分なrowを再起動で修復 |
 | `scripts/test-chair-stats-transitions.sh` | 評価の所有者認可、完了条件、決済rollback、barrier付き並行評価、再送時の非加算をHTTP検証 |
+| `scripts/test-diagnostic-filters.sh` | 周期boolean、drive tick、commit / outcome、相関rideの各filterを固定fixtureで検証 |
 | `scripts/payment-barrier-handler.sh` | 2件の決済POSTが到達するまで204を返さず、評価のTOCTOU競合を決定的に作るテスト用handler |
 | `scripts/test-owner-sales-response-boundary.sh` | 遅い決済中の評価完了時刻とowner salesの`until`境界をHTTP・決済TCP accept・InnoDB行ロック・response JSON・SQLで確認 |
 | `scripts/test-username-collision.sh` | 同じusernameを2回登録し、別user・別認証・招待couponを維持した限定再試行を確認 |
@@ -62,6 +64,7 @@ git -C "$source_dir/isucon14" archive HEAD | tar -x -C contests/isucon14
 | `scripts/report-endpoint-latency.sh` | 診断runのnginx timing logをendpoint別に集計 |
 | `scripts/report-coordinate-phases.sh` | 診断runのcoordinate phase、row lock、current-state writeを集計 |
 | `scripts/report-evaluation-phases.sh` | 診断runの評価APIをpool、DB、決済HTTP、retry sleep、完了writeへ分解 |
+| `scripts/report-drive-phases.sh` | benchmarkerの理想 / 実tickと、同一rideのcoordinate、CARRYING、app / chair通知を結合 |
 | `.dockerignore` / `webapp/rust/.dockerignore` | Dockerへ不要なソース・`target/` を送らない |
 
 ## 初期構築方法
@@ -267,7 +270,7 @@ DIAGNOSTIC_SINCE="$diagnostic_since" ./scripts/report-evaluation-phases.sh
 [`docker/nginx.diagnostic.conf`](./docker/nginx.diagnostic.conf) をmountし、APIのmethod、
 URI、status、request time、upstream response time、request / response bytesを
 JSONでstdoutへ記録します。同じoverlayがRust webappのcoordinate、evaluation、app / chair
-notificationのphase samplingとmatcherの全呼出し計測も有効にします。coordinateと通知は64 requestに1件、
+notificationのphase sampling、matcherの全呼出し、benchmarkerのdrive tick計測も有効にします。coordinateと通知は64 requestに1件、
 evaluationは8 requestに1件について、pool取得、SQL `BEGIN`、主要query、COMMIT、
 connection所有を分け、成功・error / cancellationと最後のphaseをJSONで記録します。
 取得直前のpool size / idle / in-useも同じsampleへ記録します。
@@ -316,6 +319,47 @@ notification_diagnostic_since=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 ISUCON_DIAGNOSTIC=1 ./scripts/benchmark.sh 60
 ./scripts/report-notification-phases.sh "$notification_diagnostic_since"
 ./scripts/report-endpoint-latency.sh "$notification_diagnostic_since"
+```
+
+drive診断はベンチマーカー内の理想 / 実tickを使うため、benchmark containerのstdoutを
+ファイルへ保存します。RustとGoは同じFNV-1a bucketでride IDの約1/32を選び、そのrideの
+coordinate POST、`CARRYING`、PICKUP / CARRYING / ARRIVEDを返したserver側pollを結合します。
+drive tickとの相関では成否にかかわらず
+`picked_up_tick < world_tick < arrived_tick` のattemptを使い、失敗数を別表示します。
+`ArrivedAt`確定後の最終POSTを
+除きます。周期サンプルとride追跡サンプルは別fieldにし、従来レポートのpercentileへ
+混ぜません。DB遷移はcommit時刻、通知はserver handlerがresponseを構築した時刻であり、
+client受信時刻ではありません。
+
+```sh
+drive_diagnostic_since=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+drive_benchmark_log=$(mktemp /tmp/isucon14-drive.XXXXXX)
+
+ISUCON_DIAGNOSTIC=1 \
+BENCHMARK_OUTPUT_FILE="$drive_benchmark_log" \
+./scripts/benchmark.sh 60
+
+./scripts/report-drive-phases.sh \
+  "$drive_diagnostic_since" \
+  "$drive_benchmark_log"
+```
+
+`BENCHMARK_OUTPUT_FILE`を指定した場合も、終了後に同じ内容をterminalへ表示し、
+benchmarkのexit statusを維持します。保存ファイルにはride ID、chair ID、座標、
+tick、response時間が含まれますが、Cookie、access token、決済情報は含みません。
+不要になった一時ファイルは確認後に削除してください。
+
+高頻度のride追跡JSONはrequest / tick処理からchannelへ渡し、専用writerがstdoutへ
+書きます。Rust writerは通常のtracingを止めないよう1行ごとにstdout lockを解放します。
+queueは16,384行を上限にし、満杯で落とした行を数えます。各reportは集計前に
+`scripts/flush-diagnostics.sh` を呼び、barrier以前の出力完了を待ちます。欠落が1行でも
+あれば不完全なpercentileを出さず停止します。Go benchmarker側もValidation終了前に
+同じFIFO barrierを待ちます。診断実装を変更した場合は、最初のJSON後もmatcher・API・
+完了rideが進むことを確認します。
+周期filterは次で独立確認できます。
+
+```sh
+./scripts/test-diagnostic-filters.sh
 ```
 
 走行時間は引数または環境変数で指定します。省略時は公式と同じ 60 秒です。
@@ -405,6 +449,7 @@ RESET=1 ./scripts/down.sh
 | matcherの地域間割当を除外 | 地域ごとにride / chairを最大64件取得し、距離200以下だけへ最大64件割当。通常3走137,801–143,887点、中央値140,426点、全run `pass=true`・`CODE=32` 0件。境界付き診断は150,696点、2,738割当の距離200超0件、最古待ち5.034秒、`CODE=26` 92件。通常3走の`CODE=26`は118 / 136 / 120件 |
 | owner累積距離の可視watermark | request開始1秒前までを安定snapshotとし、3秒より古い安定時刻と新しい未安定行が併存する間だけoptional更新時刻を省略。SQLとRustの境界判定はmicrosecond精度を維持。最終通常3走132,225–137,075点、中央値134,428点、全run `pass=true`・error map空、`CODE=26` 0件 |
 | pickup予測tick優先matcher | `ceil(distance / speed)` を最小化する局所greedyを比較。通常3走126,948–134,611点、中央値133,257点、全run `pass=true`・error map空。Benchmark 38比-0.9%、pickup不満はほぼ不変のため距離優先へ復元 |
+| drive区間のride単位診断 | 最終診断1走146,727点・未推定、`pass=true`・error map空。全2,310 rideのdrive不満77.3%。抽出74 ride・1,191 coordinate POSTの86.6%がclient 30ms以上で、server平均76.515msのうちpool取得が64.349ms。Rust / Go barrierと`dropped_lines=0`を確認 |
 
 初回の初期60秒走行ではMySQLのqueryが十数秒以上へ遅延し、ベンチマーカーの期限を
 超えました。同じ初期revisionを外部コンテナの大きな共有負荷がない条件で再計測

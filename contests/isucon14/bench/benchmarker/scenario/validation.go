@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/isucon/isucandar"
+	"github.com/isucon/isucon14/bench/benchmarker/scenario/worldclient"
 )
 
 // Validation はシナリオの結果検証処理を行う
@@ -15,6 +16,7 @@ func (s *Scenario) Validation(ctx context.Context, step *isucandar.BenchmarkStep
 	time.Sleep(5 * time.Second)
 	s.paymentServer.Close()
 	s.sendResultWait.Wait()
+	worldclient.FlushDriveDiagnostics()
 
 	for _, region := range s.world.Regions {
 		s.contestantLogger.Info("最終地域情報",

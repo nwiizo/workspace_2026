@@ -2,9 +2,11 @@ package scenario
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
 	"sync"
 	"time"
 
@@ -59,6 +61,62 @@ type Scenario struct {
 	evaluationMapLock         sync.RWMutex
 	failed                    bool
 	sendResultWait            sync.WaitGroup
+}
+
+type driveBenchmarkDiagnostic struct {
+	EventAtUnixUS    int64  `json:"event_at_unix_us"`
+	RideID           string `json:"ride_id"`
+	ChairID          string `json:"chair_id"`
+	ChairModel       string `json:"chair_model"`
+	ChairSpeed       int    `json:"chair_speed"`
+	Distance         int    `json:"distance"`
+	IdealDriveTicks  int64  `json:"ideal_drive_ticks"`
+	ActualDriveTicks int64  `json:"actual_drive_ticks"`
+	ExcessDriveTicks int64  `json:"excess_drive_ticks"`
+	DrivePass        bool   `json:"drive_pass"`
+	MatchedTick      int64  `json:"matched_tick"`
+	DispatchedTick   int64  `json:"dispatched_tick"`
+	PickedUpTick     int64  `json:"picked_up_tick"`
+	ArrivedTick      int64  `json:"arrived_tick"`
+	PickupWaitTicks  int64  `json:"pickup_wait_ticks"`
+}
+
+var driveBenchmarkDiagnosticsEnabled = os.Getenv("ISUCON_DIAGNOSTIC") == "1"
+
+func emitDriveBenchmarkDiagnostic(req *world.Request, eval world.Evaluation) {
+	if !driveBenchmarkDiagnosticsEnabled || req.Chair == nil || req.Chair.Model.Speed <= 0 {
+		return
+	}
+
+	distance := req.PickupPoint.DistanceTo(req.DestinationPoint)
+	speed := req.Chair.Model.Speed
+	idealDriveTicks := int64(distance / speed)
+	if distance%speed != 0 {
+		idealDriveTicks++
+	}
+	actualDriveTicks := req.ArrivedAt - req.PickedUpAt
+	sample := driveBenchmarkDiagnostic{
+		EventAtUnixUS:    time.Now().UnixMicro(),
+		RideID:           req.ServerID,
+		ChairID:          req.Chair.ServerID,
+		ChairModel:       req.Chair.Model.Name,
+		ChairSpeed:       speed,
+		Distance:         distance,
+		IdealDriveTicks:  idealDriveTicks,
+		ActualDriveTicks: actualDriveTicks,
+		ExcessDriveTicks: actualDriveTicks - idealDriveTicks,
+		DrivePass:        eval.Drive,
+		MatchedTick:      req.MatchedAt,
+		DispatchedTick:   req.DispatchedAt,
+		PickedUpTick:     req.PickedUpAt,
+		ArrivedTick:      req.ArrivedAt,
+		PickupWaitTicks:  req.PickedUpAt - req.DispatchedAt,
+	}
+	encoded, err := json.Marshal(sample)
+	if err != nil {
+		return
+	}
+	fmt.Printf("DRIVE_BENCHMARK_DIAGNOSTIC %s\n", encoded)
 }
 
 func NewScenario(target, addr, paymentURL string, paymentBindPort int, logger *slog.Logger, reporter benchrun.Reporter, meter metric.Meter, prepareOnly bool, skipStaticFileSanityCheck bool) *Scenario {
@@ -157,6 +215,7 @@ func NewScenario(target, addr, paymentURL string, paymentBindPort int, logger *s
 	go func() {
 		for req := range completedRequestChan {
 			eval := req.CalculateEvaluation()
+			emitDriveBenchmarkDiagnostic(req, eval)
 			intervals := req.Intervals()
 			requestsRecorder.Add(context.Background(), 1, metric.WithAttributes(attribute.Int("score", eval.Score()), attribute.Bool("matching", eval.Matching), attribute.Bool("dispatch", eval.Dispatch), attribute.Bool("pickup", eval.Pickup), attribute.Bool("drive", eval.Drive)))
 			matchingLatency.Record(context.Background(), intervals[0])

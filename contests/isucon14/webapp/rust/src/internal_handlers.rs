@@ -102,10 +102,28 @@ fn plan_matches(
 }
 
 pub fn internal_routes() -> axum::Router<AppState> {
-    axum::Router::new().route(
-        "/api/internal/matching",
-        axum::routing::get(internal_get_matching),
-    )
+    axum::Router::new()
+        .route(
+            "/api/internal/matching",
+            axum::routing::get(internal_get_matching),
+        )
+        .route(
+            "/api/internal/diagnostics/flush",
+            axum::routing::post(internal_post_diagnostics_flush),
+        )
+}
+
+#[derive(serde::Serialize)]
+struct DiagnosticFlushResponse {
+    dropped_lines: u64,
+}
+
+async fn internal_post_diagnostics_flush() -> Result<axum::Json<DiagnosticFlushResponse>, Error> {
+    if !crate::drive_diagnostic::enabled() {
+        return Err(Error::NotFound("diagnostics are disabled"));
+    }
+    let dropped_lines = crate::drive_diagnostic::flush().await?;
+    Ok(axum::Json(DiagnosticFlushResponse { dropped_lines }))
 }
 
 // このAPIをインスタンス内から一定間隔で叩かせることで、椅子とライドをマッチングさせる

@@ -1192,6 +1192,11 @@ async fn app_get_notification(
         }
         (None, latest_status)
     };
+    if ride_status_id.is_some() {
+        if let Some(diagnostic) = &mut diagnostic {
+            diagnostic.trace_ride_event(&ride.id, &status, &user.id);
+        }
+    }
 
     if let Some(diagnostic) = &mut diagnostic {
         diagnostic.sample.terminal_phase = "fare_query";

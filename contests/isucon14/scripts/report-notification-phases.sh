@@ -16,6 +16,8 @@ if [ -z "$diagnostic_since" ]; then
   exit 2
 fi
 
+"$script_dir/flush-diagnostics.sh"
+
 raw_log=$(mktemp "${TMPDIR:-/tmp}/isucon14-notification-raw.XXXXXX")
 json_log=$(mktemp "${TMPDIR:-/tmp}/isucon14-notification-json.XXXXXX")
 
@@ -32,7 +34,10 @@ ISUCON_DIAGNOSTIC=1 "$compose" logs \
   --timestamps \
   --since "$diagnostic_since" \
   webapp >"$raw_log"
-sed -n 's/^.*NOTIFICATION_DIAGNOSTIC //p' "$raw_log" >"$json_log"
+sed -n 's/^.*NOTIFICATION_DIAGNOSTIC //p' "$raw_log" |
+  jq --compact-output \
+    'select(if has("periodic_sample") then .periodic_sample == true else true end)' \
+    >"$json_log"
 
 if [ ! -s "$json_log" ]; then
   echo "指定時刻以降のnotification診断sampleがありません: $diagnostic_since" >&2

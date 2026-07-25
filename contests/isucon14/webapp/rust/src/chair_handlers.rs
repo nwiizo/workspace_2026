@@ -3,7 +3,6 @@ use axum::http::StatusCode;
 use axum::response::Response;
 use axum_extra::extract::cookie::Cookie;
 use axum_extra::extract::CookieJar;
-use std::io::Write as _;
 use std::sync::{
     atomic::{AtomicU64, Ordering},
     OnceLock,
@@ -132,6 +131,16 @@ static COORDINATE_DIAGNOSTICS_ENABLED: OnceLock<bool> = OnceLock::new();
 #[derive(serde::Serialize)]
 struct CoordinateDiagnosticSample {
     sequence: u64,
+    periodic_sample: bool,
+    trace_ride: bool,
+    ride_id: Option<String>,
+    chair_id: Option<String>,
+    latitude: Option<i32>,
+    longitude: Option<i32>,
+    recorded_at_ms: Option<i64>,
+    transition_status: Option<String>,
+    committed_at_unix_us: Option<u64>,
+    event_at_unix_us: Option<u64>,
     cache_lookup_us: u64,
     pool_acquire_us: u64,
     transaction_begin_us: u64,
@@ -157,6 +166,7 @@ struct CoordinateDiagnostic {
     started_at: Instant,
     checkpoint_at: Instant,
     sample: CoordinateDiagnosticSample,
+    force_emit: bool,
     emitted: bool,
 }
 
@@ -170,9 +180,7 @@ impl CoordinateDiagnostic {
         }
 
         let sequence = COORDINATE_DIAGNOSTIC_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-        if sequence.checked_rem(COORDINATE_DIAGNOSTIC_SAMPLE_EVERY) != Some(0) {
-            return None;
-        }
+        let periodic_sample = sequence.checked_rem(COORDINATE_DIAGNOSTIC_SAMPLE_EVERY) == Some(0);
 
         let started_at = Instant::now();
         Some(Self {
@@ -180,6 +188,16 @@ impl CoordinateDiagnostic {
             checkpoint_at: started_at,
             sample: CoordinateDiagnosticSample {
                 sequence,
+                periodic_sample,
+                trace_ride: false,
+                ride_id: None,
+                chair_id: None,
+                latitude: None,
+                longitude: None,
+                recorded_at_ms: None,
+                transition_status: None,
+                committed_at_unix_us: None,
+                event_at_unix_us: None,
                 cache_lookup_us: 0,
                 pool_acquire_us: 0,
                 transaction_begin_us: 0,
@@ -200,8 +218,29 @@ impl CoordinateDiagnostic {
                 outcome: "error_or_cancelled",
                 terminal_phase: "cache_lookup",
             },
+            force_emit: false,
             emitted: false,
         })
+    }
+
+    fn trace_ride_event(
+        &mut self,
+        ride_id: &str,
+        chair_id: &str,
+        coordinate: &Coordinate,
+        recorded_at_ms: i64,
+    ) {
+        if !crate::drive_diagnostic::should_trace_ride(ride_id) {
+            return;
+        }
+
+        self.force_emit = true;
+        self.sample.trace_ride = true;
+        self.sample.ride_id = Some(ride_id.to_owned());
+        self.sample.chair_id = Some(chair_id.to_owned());
+        self.sample.latitude = Some(coordinate.latitude);
+        self.sample.longitude = Some(coordinate.longitude);
+        self.sample.recorded_at_ms = Some(recorded_at_ms);
     }
 
     fn elapsed_since_checkpoint_us(&mut self) -> u64 {
@@ -213,11 +252,13 @@ impl CoordinateDiagnostic {
 
     fn emit_record(&mut self) {
         self.emitted = true;
+        if !self.sample.periodic_sample && !self.force_emit {
+            return;
+        }
+        self.sample.event_at_unix_us = Some(crate::drive_diagnostic::unix_time_us());
         let total_us = self.started_at.elapsed().as_micros();
         self.sample.total_us = total_us.min(u128::from(u64::MAX)) as u64;
-        if let Ok(json) = serde_json::to_string(&self.sample) {
-            let _ = writeln!(std::io::stdout().lock(), "COORDINATE_DIAGNOSTIC {json}");
-        }
+        crate::drive_diagnostic::emit("COORDINATE_DIAGNOSTIC", &self.sample);
     }
 
     fn emit_success(mut self) {
@@ -444,6 +485,16 @@ LIMIT 1
         diagnostic.sample.terminal_phase = "transition";
     }
     if let Some(ride) = ride {
+        if ride.evaluation.is_none() {
+            if let Some(diagnostic) = &mut diagnostic {
+                diagnostic.trace_ride_event(
+                    &ride.id,
+                    &chair.id,
+                    &req,
+                    recorded_at.and_utc().timestamp_millis(),
+                );
+            }
+        }
         let is_pickup =
             req.latitude == ride.pickup_latitude && req.longitude == ride.pickup_longitude;
         let is_destination = req.latitude == ride.destination_latitude
@@ -484,6 +535,7 @@ LIMIT 1
                     notification_user_id = Some(ride.user_id);
                     if let Some(diagnostic) = &mut diagnostic {
                         diagnostic.sample.transition_inserted = true;
+                        diagnostic.sample.transition_status = Some(next_status.to_owned());
                     }
                 }
             }
@@ -496,12 +548,13 @@ LIMIT 1
     }
 
     tx.commit().await?;
-    drop(connection);
     if let Some(diagnostic) = &mut diagnostic {
         let elapsed_us = diagnostic.elapsed_since_checkpoint_us();
         diagnostic.sample.commit_us = elapsed_us;
+        diagnostic.sample.committed_at_unix_us = Some(crate::drive_diagnostic::unix_time_us());
         diagnostic.sample.terminal_phase = "cache_update";
     }
+    drop(connection);
     if let Some(user_id) = notification_user_id {
         notification_cache.invalidate_app(&user_id);
         notification_cache.invalidate_chair(&chair.id);
@@ -688,6 +741,11 @@ LIMIT 1
         }
         (None, latest_status)
     };
+    if yet_sent_ride_status_id.is_some() {
+        if let Some(diagnostic) = &mut diagnostic {
+            diagnostic.trace_ride_event(&ride.id, &status, &chair.id);
+        }
+    }
 
     if let Some(diagnostic) = &mut diagnostic {
         diagnostic.sample.terminal_phase = "user_query";
@@ -773,6 +831,96 @@ struct PostChairRidesRideIDStatusRequest {
     status: String,
 }
 
+#[derive(serde::Serialize)]
+struct RideStatusDiagnosticSample {
+    committed_at_unix_us: Option<u64>,
+    event_at_unix_us: Option<u64>,
+    ride_id: String,
+    chair_id: String,
+    status: String,
+    pool_size_before: u64,
+    pool_idle_before: u64,
+    pool_in_use_before: u64,
+    pool_acquire_us: u64,
+    transaction_begin_us: u64,
+    ride_lock_us: u64,
+    status_write_us: u64,
+    commit_us: u64,
+    total_us: u64,
+    outcome: &'static str,
+    terminal_phase: &'static str,
+}
+
+struct RideStatusDiagnostic {
+    started_at: Instant,
+    checkpoint_at: Instant,
+    sample: RideStatusDiagnosticSample,
+    emitted: bool,
+}
+
+impl RideStatusDiagnostic {
+    fn traced(pool: &sqlx::MySqlPool, ride_id: &str, chair_id: &str, status: &str) -> Option<Self> {
+        if status != "CARRYING" || !crate::drive_diagnostic::should_trace_ride(ride_id) {
+            return None;
+        }
+
+        let started_at = Instant::now();
+        let pool_size = u64::from(pool.size());
+        let pool_idle = u64::try_from(pool.num_idle()).unwrap_or(u64::MAX);
+        Some(Self {
+            started_at,
+            checkpoint_at: started_at,
+            sample: RideStatusDiagnosticSample {
+                committed_at_unix_us: None,
+                event_at_unix_us: None,
+                ride_id: ride_id.to_owned(),
+                chair_id: chair_id.to_owned(),
+                status: status.to_owned(),
+                pool_size_before: pool_size,
+                pool_idle_before: pool_idle,
+                pool_in_use_before: pool_size.saturating_sub(pool_idle),
+                pool_acquire_us: 0,
+                transaction_begin_us: 0,
+                ride_lock_us: 0,
+                status_write_us: 0,
+                commit_us: 0,
+                total_us: 0,
+                outcome: "error_or_cancelled",
+                terminal_phase: "pool_acquire",
+            },
+            emitted: false,
+        })
+    }
+
+    fn elapsed_since_checkpoint_us(&mut self) -> u64 {
+        let now = Instant::now();
+        let elapsed = crate::drive_diagnostic::duration_us(now.duration_since(self.checkpoint_at));
+        self.checkpoint_at = now;
+        elapsed
+    }
+
+    fn emit_record(&mut self) {
+        self.emitted = true;
+        self.sample.event_at_unix_us = Some(crate::drive_diagnostic::unix_time_us());
+        self.sample.total_us = crate::drive_diagnostic::duration_us(self.started_at.elapsed());
+        crate::drive_diagnostic::emit("RIDE_STATUS_DIAGNOSTIC", &self.sample);
+    }
+
+    fn emit_success(mut self) {
+        self.sample.outcome = "success";
+        self.sample.terminal_phase = "complete";
+        self.emit_record();
+    }
+}
+
+impl Drop for RideStatusDiagnostic {
+    fn drop(&mut self) {
+        if !self.emitted {
+            self.emit_record();
+        }
+    }
+}
+
 async fn chair_post_ride_status(
     State(AppState {
         pool,
@@ -783,7 +931,17 @@ async fn chair_post_ride_status(
     Path((ride_id,)): Path<(String,)>,
     axum::Json(req): axum::Json<PostChairRidesRideIDStatusRequest>,
 ) -> Result<StatusCode, Error> {
-    let mut tx = pool.begin().await?;
+    let mut diagnostic = RideStatusDiagnostic::traced(&pool, &ride_id, &chair.id, &req.status);
+    let mut connection = pool.acquire().await?;
+    if let Some(diagnostic) = &mut diagnostic {
+        diagnostic.sample.pool_acquire_us = diagnostic.elapsed_since_checkpoint_us();
+        diagnostic.sample.terminal_phase = "transaction_begin";
+    }
+    let mut tx = connection.begin().await?;
+    if let Some(diagnostic) = &mut diagnostic {
+        diagnostic.sample.transaction_begin_us = diagnostic.elapsed_since_checkpoint_us();
+        diagnostic.sample.terminal_phase = "ride_lock";
+    }
 
     let Some(ride): Option<Ride> = sqlx::query_as("SELECT * FROM rides WHERE id = ? FOR UPDATE")
         .bind(ride_id)
@@ -792,6 +950,10 @@ async fn chair_post_ride_status(
     else {
         return Err(Error::NotFound("rides not found"));
     };
+    if let Some(diagnostic) = &mut diagnostic {
+        diagnostic.sample.ride_lock_us = diagnostic.elapsed_since_checkpoint_us();
+        diagnostic.sample.terminal_phase = "status_write";
+    }
 
     if ride.chair_id.is_none_or(|chair_id| chair_id != chair.id) {
         return Err(Error::BadRequest("not assigned to this ride"));
@@ -834,10 +996,23 @@ async fn chair_post_ride_status(
             return Err(Error::BadRequest("invalid status"));
         }
     };
+    if let Some(diagnostic) = &mut diagnostic {
+        diagnostic.sample.status_write_us = diagnostic.elapsed_since_checkpoint_us();
+        diagnostic.sample.terminal_phase = "commit";
+    }
 
     tx.commit().await?;
+    if let Some(diagnostic) = &mut diagnostic {
+        diagnostic.sample.commit_us = diagnostic.elapsed_since_checkpoint_us();
+        diagnostic.sample.committed_at_unix_us = Some(crate::drive_diagnostic::unix_time_us());
+        diagnostic.sample.terminal_phase = "cache_invalidation";
+    }
+    drop(connection);
     notification_cache.invalidate_app(&ride.user_id);
     notification_cache.invalidate_chair(&chair.id);
+    if let Some(diagnostic) = diagnostic {
+        diagnostic.emit_success();
+    }
 
     Ok(StatusCode::NO_CONTENT)
 }

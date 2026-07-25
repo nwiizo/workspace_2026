@@ -196,10 +196,43 @@ func (c *ownerClient) BrowserAccess(ctx *world.Context, scenario benchrun.Fronte
 }
 
 func (c *chairClient) SendChairCoordinate(ctx *world.Context, chair *world.Chair) (*world.SendChairCoordinateResponse, error) {
+	diagnosticStartedAt := time.Time{}
+	diagnosticRideID := ""
+	diagnosticRideStatus := ""
+	diagnosticWorldTick := int64(0)
+	if chair.Request != nil && shouldTraceRide(chair.Request.ServerID) {
+		diagnosticStartedAt = time.Now()
+		diagnosticRideID = chair.Request.ServerID
+		diagnosticRideStatus = chair.Request.Statuses.Chair.String()
+		diagnosticWorldTick = ctx.CurrentTime()
+	}
 	response, err := c.client.ChairPostCoordinate(c.ctx, &api.Coordinate{
 		Latitude:  chair.Location.Current().X,
 		Longitude: chair.Location.Current().Y,
 	})
+	if !diagnosticStartedAt.IsZero() {
+		emitDriveDiagnostic("COORDINATE_CLIENT_DIAGNOSTIC", struct {
+			EventAtUnixUS int64  `json:"event_at_unix_us"`
+			RideID        string `json:"ride_id"`
+			ChairID       string `json:"chair_id"`
+			RideStatus    string `json:"ride_status"`
+			WorldTick     int64  `json:"world_tick"`
+			Latitude      int    `json:"latitude"`
+			Longitude     int    `json:"longitude"`
+			DurationUS    int64  `json:"duration_us"`
+			Success       bool   `json:"success"`
+		}{
+			EventAtUnixUS: time.Now().UnixMicro(),
+			RideID:        diagnosticRideID,
+			ChairID:       chair.ServerID,
+			RideStatus:    diagnosticRideStatus,
+			WorldTick:     diagnosticWorldTick,
+			Latitude:      chair.Location.Current().X,
+			Longitude:     chair.Location.Current().Y,
+			DurationUS:    time.Since(diagnosticStartedAt).Microseconds(),
+			Success:       err == nil,
+		})
+	}
 	if err != nil {
 		return nil, WrapCodeError(ErrorCodeFailedToPostCoordinate, err)
 	}
