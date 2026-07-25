@@ -245,11 +245,17 @@ cd contests/isucon14
 endpoint別のp50 / p95 / p99を採るときだけ、診断overlayを有効にします。
 
 ```sh
-diagnostic_since=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+utc_now() {
+  python3 -c 'from datetime import datetime, timezone; print(datetime.now(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z"))'
+}
+
+diagnostic_since=$(utc_now)
 ISUCON_DIAGNOSTIC=1 ./scripts/benchmark.sh 60
+diagnostic_until=$(utc_now)
 DIAGNOSTIC_SINCE="$diagnostic_since" ./scripts/report-endpoint-latency.sh
 DIAGNOSTIC_SINCE="$diagnostic_since" ./scripts/report-coordinate-phases.sh
 DIAGNOSTIC_SINCE="$diagnostic_since" ./scripts/report-evaluation-phases.sh
+./scripts/report-matcher-phases.sh "$diagnostic_since" "$diagnostic_until"
 ```
 
 `ISUCON_DIAGNOSTIC=1` は
@@ -257,10 +263,14 @@ DIAGNOSTIC_SINCE="$diagnostic_since" ./scripts/report-evaluation-phases.sh
 [`docker/nginx.diagnostic.conf`](./docker/nginx.diagnostic.conf) をmountし、APIのmethod、
 URI、status、request time、upstream response time、request / response bytesを
 JSONでstdoutへ記録します。同じoverlayがRust webappのcoordinate、evaluation、app / chair
-notificationのphase samplingも有効にします。coordinateと通知は64 requestに1件、
+notificationのphase samplingとmatcherの全呼出し計測も有効にします。coordinateと通知は64 requestに1件、
 evaluationは8 requestに1件について、pool取得、SQL `BEGIN`、主要query、COMMIT、
 connection所有を分け、成功・error / cancellationと最後のphaseをJSONで記録します。
 取得直前のpool size / idle / in-useも同じsampleへ記録します。
+matcher集計はpending / available / matched件数、最古pending待ち時間、phase latency、
+地域別候補数、UPDATE競合、割当距離を表示します。matcherだけは開始と終了の両境界を
+必須にし、成功した最後の `POST /api/initialize` より前とベンチ終了後のsampleを自動で
+除外します。前runのpending rideや、終了後も動き続けるmatcherを現在runへ混ぜません。
 upstream connect time、connection ID、同じconnection上のrequest回数も含みます。
 Cookie、認証token、request body本文、決済情報は記録しません。通常のスコアrunは
 環境変数を付けずに実行し、access log、時刻取得、sample JSON、同期stdout writeの追加処理と
@@ -270,6 +280,10 @@ Cookie、認証token、request body本文、決済情報は記録しません。
 `/api/app/rides/[^/]+/evaluation` と `/api/chair/rides/[^/]+/status` へ正規化されます。
 診断runは原因を調べる値で、通常runの3走中央値と混ぜません。
 `DIAGNOSTIC_SINCE` は同じnginx containerに残る前回runのlogを混ぜないため必須です。
+matcher reportでは `diagnostic_until` も必須です。benchmark commandの直後にUTC時刻を
+microsecond精度で取得し、負荷終了後のsampleを母集団へ混ぜないでください。秒だけの
+`date ...%SZ` は小数部を切り捨て、command完了と同じ秒に出た最終sampleを最大1秒弱
+除外し得るため、上記ではPythonのUTC時刻を使います。
 `compose logs` またはJSON抽出に失敗した場合も、空の集計を成功として扱わず停止します。
 通常表の4xx合計とは別に、clientがresponse完了前に切断したHTTP 499をendpoint別に出します。
 
@@ -384,6 +398,7 @@ RESET=1 ./scripts/down.sh
 | 招待登録の並行安全化 | 招待者UNIQUE行を直列化地点にし、couponを `COUNT(*)`、reward codeを新規user IDで一意化。3走99,775–105,304点、中央値102,569点、全run `pass=true`・error map空。並行回帰テストのMySQL 1062 / 1213増分0 |
 | coordinateのpool取得分解 | 診断1走124,064点・未推定。1,173 sampleでacquire p95 113.156ms、SQL BEGIN p95 2.327ms。78.1%がpool size 50 / idle 0 |
 | chair通知の配送状態機械 | レビュー修正後は86,532点`pass=true`、43,980 / 44,825点`pass=false`。`CODE=12/29`は0件だが`CODE=32`が2走。推定代表値なし。hidden pendingとride取り違えの固定回帰は成功 |
+| matcherの地域間割当を除外 | 地域ごとにride / chairを最大64件取得し、距離200以下だけへ最大64件割当。通常3走137,801–143,887点、中央値140,426点、全run `pass=true`・`CODE=32` 0件。境界付き診断は150,696点、2,738割当の距離200超0件、最古待ち5.034秒、`CODE=26` 92件。通常3走の`CODE=26`は118 / 136 / 120件 |
 
 初回の初期60秒走行ではMySQLのqueryが十数秒以上へ遅延し、ベンチマーカーの期限を
 超えました。同じ初期revisionを外部コンテナの大きな共有負荷がない条件で再計測

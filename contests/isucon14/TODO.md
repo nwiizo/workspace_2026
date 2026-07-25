@@ -296,15 +296,20 @@
   - hidden pendingとride取り違えを防ぐ変更は保持し、全体の正当性gateは未通過として
     `CODE=32`を次の最優先へ移す
   - 詳細: [`tuning/36-chair-notification-delivery-state.md`](./tuning/36-chair-notification-delivery-state.md)
-- [ ] `CODE=32` の長時間MATCHINGを再現し、rideとmatcher候補を同じtickで追う
+- [x] `CODE=32` の再発要因を診断し、地域間割当と片地域による候補取得枠の占有を抑える
   - Benchmark 36最終3走のrun 2 / 3で各1件発生し、両方`pass=false`
-  - pending ride ID、作成時刻、地域、空きchair数、matcherが選んだbatchとUPDATE件数を採取する
-  - `internal_get_matching`の64件batch、地域間距離、500ms pollのどこでstarvationしたか分ける
-  - critical errorなので、通常3走がすべて`pass=true`になるまで次の性能施策を重ねない
-- [ ] `CODE=8` の未依頼userへ状態通知される経路を再現する
-  - Benchmark 36最終run 2だけ24件、run 1 / 3は0件
-  - app通知のride ID / user ID、ベンチ側current request、DBのuser_idとapp cursorを相関する
-  - chair側の配送状態修正とはendpointが異なるため、同じ根本原因と決めつけず分離する
+  - matcher全呼出しでpool、phase latency、候補数、UPDATE件数、最古pending、割当距離を採取
+  - 変更前診断では`CODE=32`自体は再現せず、終了境界も未固定。2,149割当中212件が
+    距離200超、最大715だった値は原因証明ではなく仮説形成の参考値として扱う
+  - 公式2地域は同一地域最大距離200、地域間最小距離400のため、200以下へ候補を制限
+  - 地域ごとにpending / availableを最大64件取得し、最大128候補を作成時刻順にmerge。
+    一方の地域の割当不能ride 64件が他方を隠す飢餓を固定回帰で防ぐ
+  - 終了境界付き診断は距離200超0件、割当2,738件、最古待ち5.034秒、
+    UPDATE競合0件、150,696点`pass=true`、`CODE=26` 92件
+  - 通常3走は143,887 / 140,426 / 137,801点、中央値140,426点。
+    全走`pass=true`・`CODE=32` 0件、`CODE=26`は118 / 136 / 120件
+  - 固定2地域への依存と、旧実装で地域間へ移動済みのchairは残余riskとして継続
+  - 詳細: [`tuning/37-matcher-region-boundary.md`](./tuning/37-matcher-region-boundary.md)
 - [ ] `CODE=26` のowner累積距離が座標responseの受信境界より先へ進む競合を検証する
   - 期待値より実値が4–40程度大きく、直近1回の移動距離に近い例を確認
   - ベンチマーカーのcoordinate POST、world更新、owner検証の順序を同じchairで追う
@@ -315,8 +320,13 @@
   - Benchmark 30診断runもerror map空。再現待ちだけで他のP0計測を止めない
   - Benchmark 36レビュー前は診断153件、通常130 / 136 / 151件。
     最終実装でも144 / 85 / 80件と毎回再現したため、`CODE=32`の次に調べる
+  - Benchmark 37最終3走でも118 / 136 / 120件と全走で再現。現在の最優先項目とする
   - `got`が`want`を大きく上回る例もあり、直近1移動分という仮説に限定せず、
     location IDの採用範囲とowner requestのsnapshot境界から再確認する
+- [ ] `CODE=8` の未依頼userへ状態通知される経路を再現する
+  - Benchmark 36最終run 2だけ24件、run 1 / 3は0件
+  - app通知のride ID / user ID、ベンチ側current request、DBのuser_idとapp cursorを相関する
+  - chair側の配送状態修正とはendpointが異なるため、同じ根本原因と決めつけず分離する
 - [ ] `CODE=27` のnearby椅子が最新の指定範囲から外れる競合を検証する
   - Benchmark 36レビュー前は診断4件、通常10 / 0 / 49件。最終実装は3 / 0 / 0件
   - DBの`chair_current_locations`、process cache revision、
@@ -329,7 +339,7 @@
 
 | 優先度 | 対象 | 現在の処理 | 主な問題 |
 |---|---|---|---|
-| P0 | `internal_get_matching` | 64件batch + 近傍優先、外部pollは500ms | 空き定義の集約、500msの最小待ち |
+| P0 | `internal_get_matching` | 地域ごとに最大64候補、全体最大64割当、距離200以下の同一地域近傍優先、外部pollは500ms | speedを含むpickup予測tick、空き定義の集約、地域ID + INDEXとの比較 |
 | P0 | `app_get_nearby_chairs` | 最新座標はcurrent-state表 + process cache、active / 割当可否はDB、評価はsnapshot + revision + delivery leaseで除外 | 最終run例8.079ms。ride antijoinとtracker確認の内訳を測る |
 | P0 | 通知2経路 | recipient + chair stats dependency revision付きpayload cache。chairは配送状態機械でcurrent rideを維持。未送信statusは30ms、定常cacheは100ms | connection再利用、response ACKなしの配送loss、long pollingを順に検証 |
 | P0 | `get_chair_stats` | 評価時差分更新 + 主キーreadへ変更 | SQL累積は約89%減、スコア中央値は約3.5%低下したため次の通知施策と合わせて再評価 |
@@ -679,7 +689,7 @@
 
 ### Microbenchmark: Criterion、`hyperfine`、`vegeta`
 
-- [ ] Criterion用bench targetを追加し、64×64 matcher候補生成、貪欲法、二部マッチングを同じfixtureで比較する
+- [ ] Criterion用bench targetを追加し、最大128×128候補・64割当の貪欲法と二部マッチングを同じfixtureで比較する
 - [ ] 距離 / speed cost、地域bucket、通知payload生成、chair stats集計の純粋処理をmicrobenchmark化する
 - [ ] microbenchmarkはDB・network・lock待ちを含まないため、公式benchmarkの採否を置き換えない
 - [ ] `hyperfine`でclean / warm build、initialize、container起動時間をprepare / cleanup付きで比較する
@@ -1075,7 +1085,7 @@
 - [ ] matcherのcurl → nginx → Axum往復をTokio background taskまたはride作成時のenqueueへ置き換える
 - [x] pending rideと空き椅子をそれぞれ一度だけ取得する
 - [x] rideとchairを同じtransactionで `FOR UPDATE SKIP LOCKED` する
-- [ ] `UPDATE ... WHERE chair_id IS NULL` のaffected rowsで競合負けを検出する
+- [x] `UPDATE ... WHERE chair_id IS NULL` のaffected rowsで競合負けを検出する
 - [ ] chair側もcurrent rideがNULLの場合だけclaimする
 - [ ] `COUNT(chair_sent_at) = 6` を「最新rideの `COMPLETED` が椅子へ送達済み」という明示状態へ置き換える
 - [x] 1回のbatchで同じchairを2件へ割り当てない
@@ -1086,20 +1096,36 @@
   - 100ms: 54,172 / 53,715点、実測n=2の記述上の中央値53,943.5点（推定代表値には不使用）
   - 30ms: 41,016点、matching不満足度0.2%だが最終評価数560へ低下
   - 局所的な割当待ちは短縮しても総得点が下がるため、500msを維持
-- [ ] CODE=32または未マッチ滞留が悪化したら、他のP1施策よりmatcherを繰り上げる
+- [x] CODE=32の再発を他のP1施策より優先し、phase・候補・待ち時間・距離を診断する
 - [x] 乗車地点に近い椅子を優先するthroughput重視policyを計測する
-- [ ] 2地域をまたぐ遠距離割当を避ける距離上限を設け、近隣椅子がないrideは次batchへ保留する
-- [ ] 距離上限を100 / 200 / 400で比較し、地域ごとの未マッチ滞留と枯渇を監視する
+- [x] 2地域をまたぐ遠距離割当を避ける距離上限を設け、近隣椅子がないrideは次batchへ保留する
+  - 同一地域最大200、地域間最小400から200以下を採用
+  - 診断runで距離200超212→0件、通常3走で`CODE=32` 0件を確認
+- [x] 距離上限100 / 200 / 400を公式geometryに照らし、正しい地域境界となる200を選ぶ
+  - 100は同一地域の正しい候補を除外し、400は地域間最短を許すため、性能比較の前に棄却
+  - 地域別未マッチ滞留は最古待ち5.034秒、30秒以上0件で確認
+- [x] pending rideと空き椅子を地域ごとに最大64件取得し、一方の地域による候補占有を防ぐ
+  - 地域0の累計候補はpending 4,044 / available 2,064、地域1は3,192 / 1,396
+  - matcher 104回でpendingあり・割当0の回0、UPDATE競合0
+- [ ] MySQL fixtureで地域0の割当不能ride 64件と地域1の65件目を作り、handlerのSQL取得から
+  地域1へ割り当てるintegration testを追加する
+- [ ] 地域0のmatch可能な古いride 64件 + 地域1のride 1件を固定し、全体64割当と
+  地域別round-robin / 最低枠の待ち時間・完了数・scoreを比較する
+- [ ] 地域filter付き`FOR UPDATE SKIP LOCKED`のrows examined / rows locked / lock waitを計測し、
+  pending用 `(chair_id, region_id, created_at, id)` と現在位置用 `(region_id, chair_id)` で
+  返却64件より広い走査を減らせるか比較する
 - [ ] pickup座標とchair座標を地域bucketへ分類し、同一地域内だけを候補にする方式と単純な距離上限を比較する
 - [ ] chair modelのspeedを候補取得時にJOINし、距離ではなく `ceil(distance / speed)` のpickup予測tickを最小化する
 - [ ] matcherの目的関数を「割当件数最大化 → 期限超過ride最小化 → pickup予測tick最小化」の辞書順で定義する
 - [ ] 64件batch内の貪欲法と最小費用二部マッチングを、計算時間・空車移動距離・完了数で比較する
 - [ ] 二部マッチングではride待ち時間をcostへ加え、近い新規rideだけが選ばれて古いrideがstarvationしないようにする
-- [ ] matcher自身の計算を30ms以内に収め、64×64の候補生成・最適化時間を独立計測する
+- [ ] matcher自身の計算を30ms以内に収め、最大128×128候補・64割当の計算時間を独立計測する
 - [ ] 走行中の椅子について「現在rideの完了予測時間 + 次の乗車地点までの時間」が空き椅子より短い場合の先行予約を高リスク実験として評価する
 - [ ] dispatch評価を落とさない範囲で距離スコアを増やすpolicyを別ベンチで比較する
 - [x] ID順と近傍優先について完了数、不満率、最終スコアを記録する
-- [ ] 同一revisionを3回以上実行し、中央値・最小・最大を比較する
+- [x] 同一revisionを3回以上実行し、中央値・最小・最大を比較する
+  - 143,887 / 140,426 / 137,801点、中央値140,426点、範囲137,801–143,887点
+  - 全走`pass=true`・`CODE=32` 0件、`CODE=26`は118 / 136 / 120件
 
 ## Phase 5: Rust・DB・nginxの上限調整
 
@@ -1209,7 +1235,10 @@
 - [ ] 完了ride数を独立して記録する
 - [ ] 空車移動距離×0.1、乗車中移動距離、完了ride数×5の各スコア寄与を記録する
 - [ ] 全APIの30ms超過率とmatching / pickup / driveのtick遅延を記録する
-- [ ] matcherは地域別pending数、available chair数、starvationした最古rideの待ち時間を記録する
+- [x] matcherは地域別pending数、available chair数、starvationした最古rideの待ち時間を記録する
+  - [x] 全体pending / available / matched数、最古ride ID・待ち時間、割当距離を記録
+  - [x] 地域別候補quotaとpending / availableの地域別件数を同じsampleへ記録
+  - [x] 開始・initialize・終了境界を固定し、負荷後も動くmatcher sampleを除外
 - [ ] 通知はcache hit率、wake latency、recipientあたりSQL数、再接続時replay件数を記録する
   - [x] 1/64 samplingでcache hit率、path別total、pool acquire、SQL、connection所有を記録
   - [ ] long polling実装時にwake latencyと再接続時replay件数を記録
@@ -1221,8 +1250,9 @@
 
 ## 推奨する直近の実行順
 
-1. `CODE=32`を再現し、pending ride、地域、空きchair、matcher batchとUPDATE結果を
-   同じtickで採取する。critical errorが0件の通常3走へ戻す
+1. `CODE=32`のmatcher phase・候補数・最古待ち・割当距離の診断は完了。
+   地域別quotaと距離200以下を実装し、通常3走143,887 / 140,426 / 137,801点、
+   全走`pass=true`・`CODE=32` 0件
 2. `CODE=26` を再現し、ベンチマーカーがresponseを受信済みの座標と
    `owner_get_chairs` が集計する座標のwatermark差を同じchairで特定する。
    再現しない間も以下のP0計測は止めない
@@ -1235,7 +1265,7 @@
    同じrequestの2回のacquire平均合計がapp 77.839ms、chair 82.513msだった
 7. pool上限50 / 75 / 100の比較は完了し、通常3走中央値が最も高い50を維持した
 8. chair通知のride選択は配送状態機械へ変更済み。hidden pendingとdelivery gapの
-   固定回帰、通常3走の`CODE=12/29` 0件を確認したが、全体gateは未通過
+   固定回帰、Benchmark 37通常3走の`CODE=12/29/32` 0件を確認。`CODE=26`は別途継続
 9. owner request開始時に既知の座標までを集計する方法を設計し、決定的な赤・緑テストと
    通常3走で`CODE=26`のerror予算・scoreを比較する
 10. `CODE=27`を同じchairのDB current row、process cache、nearby応答で追跡する
@@ -1244,7 +1274,8 @@
 12. latest-coordinate cacheの `RwLock` とmaintenance gateの待機・保持時間を計測し、
    2秒再同期時のglobal stallを定量化する
 13. 最新statusをcurrent-state化し、未送信statusがない通知pollの履歴lookupとpayload再構築をなくす
-14. matcherへ地域間の距離上限を追加し、500 / 100 / 30msの実行間隔と組み合わせて比較する
+14. matcherの地域間距離上限と地域別候補quotaは追加済み。次はspeedを含むpickup予測tickと
+    地域ID + 複合INDEXを個別に比較する
 15. app history、owner sales、ride作成のN+1を順に除去する
 16. current-state別表で最新statusをO(1)化する
 17. JSON long pollingで不足する場合だけSSEへ移し、状態変更時の即時pushまで実装する

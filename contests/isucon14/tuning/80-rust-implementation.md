@@ -1914,6 +1914,71 @@ SQLの`NULL`は値が空というだけでなく、LEFT JOIN先の行が存在�
 型安全性は業務上の正しい行選択を自動では保証しません。SQLを変更するときは、
 返された型だけでなく「どの行であるべきか」をfixtureへ固定します。
 
+## iteratorで候補集合を狭めてから最小値を選ぶ
+
+Benchmark 37では、全空き椅子から最近傍を選ぶ処理を、同一地域と判断できる
+距離200以下の候補へ限定しました。
+
+```rust
+available_chairs
+    .iter()
+    .enumerate()
+    .filter_map(|(chair_index, chair)| {
+        let distance = calculate_distance(/* pickup, chair */);
+        (distance <= MAX_SAME_REGION_PICKUP_DISTANCE)
+            .then_some((chair_index, distance))
+    })
+    .min_by_key(|(_, distance)| *distance)
+```
+
+`filter_map`は「候補外なら`None`、候補ならindexと計算済み距離を返す」という
+filterと変換を1回の走査で表します。後段の`min_by_key`で距離を再計算しないため、
+判定と比較が同じ値を使います。最終実装は2地域から最大64件ずつ、rideとchairを
+取得するため候補生成の上限は128 × 128です。ただし確定する割当は最大64件で、
+候補用の別`Vec`は作りません。地域数やbatchを増やす場合は、この定数倍を無視せず
+計算phaseを独立計測します。
+
+ここでの性能上の本質はiterator構文そのものではなく、遠距離chairをride lifecycleへ
+入れないpolicyです。loopへ手書きしても同じ候補集合なら計算量は同じです。
+iteratorへ分けた理由は、候補条件、返すindex、tieの決まり方を小さい純粋関数として
+テストできるためです。
+
+候補なしの場合はmatcher全体を`break`せず、そのrideだけ`continue`します。
+
+```rust
+let Some((chair_index, distance)) = nearest_chair_within_region(/* ... */) else {
+    continue;
+};
+```
+
+`break`は「これ以降のrideにも割当可能な椅子がない」と分かる場合だけ使えます。
+候補vectorに別地域の椅子が残っている場合、後続の別地域rideには割当可能です。
+制御フローの1語でも、複数地域のthroughputとstarvationが変わります。
+
+ただし `continue` だけでは、SQLの全体 `LIMIT 64` より後ろにある別地域rideを
+見られません。最終実装は地域ごとに最大64件を取得してmergeし、最古順を保ったまま
+最大128件を走査します。「Rustのloopが公平」だけでなく「DBから候補が届く」ことまで
+揃えて初めて、64件の割当不能rideに隠れた65件目を処理できます。この反例は
+純粋な `plan_matches` のテストへ固定しています。
+
+距離は先にi32からi64へ拡張して差を取り、`unsigned_abs()` でu64へ変換します。
+
+```rust
+(i64::from(a_latitude) - i64::from(b_latitude)).unsigned_abs()
+    + (i64::from(a_longitude) - i64::from(b_longitude)).unsigned_abs()
+```
+
+`i32::MIN - i32::MAX` をi32のまま計算すると表現範囲を超えます。通常データが小さい
+ことに依存せず、全i32座標でpanicや符号反転を起こさない型を選ぶことで、距離上限の
+比較も常に正の値として意味を保ちます。
+
+距離200はRustの都合で選んだ値ではありません。公式worldの各地域は幅・高さ100で、
+同一地域内のマンハッタン距離は最大200、地域間は最小400です。回帰テストでは
+200を採用し201を除外する境界を固定しています。geometryが変更可能なserviceへ
+一般化する場合は、定数を増やすのではなく地域IDと設定をmodelへ入れます。
+計測と通常3走の詳細は
+[Benchmark 37](./37-matcher-region-boundary.md)に記録しています。
+
 ### INDEXでCASE sortが自動的に消えるとは限らない
 
 `rides(chair_id, created_at)`は1 chairの候補へ絞り、

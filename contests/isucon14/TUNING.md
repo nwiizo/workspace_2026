@@ -77,8 +77,8 @@
 | owner椅子一覧をownerで先に絞る | 実装・単独ベンチ済み | 最新位置と累積距離のcurrent-state化 |
 | owner売上の評価境界 | 完了時刻を最終SQLで保存し、owner requestと重なる評価ride IDだけをrevision trackerで除外 | body drop後のclient計上差はprotocol ACKなしでは残る。複数process前に共有化 |
 | 最新位置をcurrent-state表で管理 | 履歴INSERTと同じtransactionで更新し、cacheを2秒ごとに再同期 | current UPDATEのrow-lock待ちとwrite amplificationを削減 |
-| pending rideと空き椅子のbatch matching | 最大64件、近傍優先まで実装済み | 地域間の距離上限、実行間隔、二部マッチングを比較 |
-| JSON通知のcache | recipient revisionとchair stats dependency revision付きprocess cacheを実装。chairは配送状態機械でcurrent rideを維持。未送信status中は30ms、定常cacheは100ms | `CODE=32/26/8/27`を解消して通常3走を安定させた後、connection再利用、response ACKなしの配送loss、DB connectionを保持しないlong pollingを比較 |
+| pending rideと空き椅子のbatch matching | 地域ごとに最大64候補、全体最大64割当、近傍優先、同一地域の距離200以下まで実装済み | speedを含むpickup予測tick、地域ID + INDEX、二部マッチングを比較 |
+| JSON通知のcache | recipient revisionとchair stats dependency revision付きprocess cacheを実装。chairは配送状態機械でcurrent rideを維持。未送信status中は30ms、定常cacheは100ms | `CODE=26/8/27`を解消して通常3走を安定させた後、connection再利用、response ACKなしの配送loss、DB connectionを保持しないlong pollingを比較 |
 | 座標更新の非同期・bulk INSERT | 通常経路を4 SQLから2 SQLへ削減。pickup / destination候補だけlockし、statusをcurrent readする | per-chair順序付きqueueと3秒以内のbulk反映を実験 |
 | 決済HTTP client | process内で1個を共有し、冪等なPOST / retryでconnection poolを再利用済み。診断203 sampleは608 attempts、途中5xx 405回、最終204 | TCP connect回数とconnection再利用率を採取 |
 | 決済の `Idempotency-Key` | ride IDを全POSTへ設定し、確認GETとuser全ride取得を削除済み | 準備transactionと完了transactionの間に決済を置く構成まで実装。TCP connect回数と再利用率を採取する |
@@ -908,6 +908,7 @@ amountを記録するため、ride IDを同じkeyとして再利用すれば、�
 | [34-notification-phase-diagnostics.md](./tuning/34-notification-phase-diagnostics.md) | app / chair通知をpath別に1/64 samplingし、2回のpool acquire、SQL、connection所有へ分解 | rideありのacquire平均合計はapp 77.839ms、chair 82.513ms。同じ母数のconnection所有合計は10.540 / 10.021ms | 診断instrumentation付き実測n=1・未推定。score 131,491、`pass=true`・error map空。rideありで最初のconnectionをtransactionへ再利用する仮説を支持 |
 | [35-notification-connection-reuse.md](./tuning/35-notification-connection-reuse.md) | 通知の存在確認connectionをtransactionへ引き継ぐ候補を診断し、不採用に戻す | 2回目のacquireはrideありsampleで0回になったが、52,564点、`pass=false`、`CODE=26` 60件、`CODE=29` 142件 | 失敗した実測n=1・未推定。error上限202件。hidden pending rideを25 chairで確認し、候補ソースはBenchmark 34へ復元 |
 | [36-chair-notification-delivery-state.md](./tuning/36-chair-notification-delivery-state.md) | chair通知のride選択を`updated_at`から配送状態機械へ変更 | レビュー修正後は86,532点`pass=true`、43,980 / 44,825点`pass=false`。`CODE=12/29`は0件、`CODE=32`が2走 | 最終実測n=3だが失敗scoreを混ぜず推定値なし。合格実測n=1・未推定。固定回帰の取り違え修正は保持し、全体gateは未通過 |
+| [37-matcher-region-boundary.md](./tuning/37-matcher-region-boundary.md) | matcherを地域別最大64候補 + 距離200以下へ制限し、phase・候補取得の公平性・待ち時間・割当距離を診断 | 通常3走137,801–143,887点、中央値140,426点、全run `pass=true`・`CODE=32` 0件。`CODE=26`は118 / 136 / 120件。境界付き診断は150,696点、2,738割当の距離200超0件、最古待ち5.034秒、`CODE=26` 92件 | 通常実測n=3、中央値を推定代表値に使用。変更前診断は終了境界未固定のため差分を推定改善率にしない。全体64割当の地域別最低枠は未保証 |
 | [80-rust-implementation.md](./tuning/80-rust-implementation.md) | Rust / sqlxとrelease buildの知識 | 再build 30分52秒→11.02秒 | build時間の実測。スコア推定対象外 |
 | [81-evaluation-authorization.md](./tuning/81-evaluation-authorization.md) | 評価rideを認証ユーザー所有へ制限 | 公式prevalidation `pass=true`、別ユーザーHTTP回帰成功 | 正当性修正。60秒スコアはBenchmark 20から更新しない |
 | [90-local-environment.md](./tuning/90-local-environment.md) | build context、BuildKit、固定Colima資源 | context 467MB→32.5KB | sizeの実測。スコア推定対象外 |
