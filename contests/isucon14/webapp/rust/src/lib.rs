@@ -932,6 +932,10 @@ impl LatestChairLocationCache {
             })
             .collect()
     }
+
+    pub(crate) async fn contains(&self, chair_id: &str) -> bool {
+        self.inner.read().await.contains_key(chair_id)
+    }
 }
 
 impl LatestChairLocation {
@@ -1124,63 +1128,6 @@ ON DUPLICATE KEY UPDATE
     chair_current_locations.location_id
   ),
   created_at = GREATEST(VALUES(created_at), chair_current_locations.created_at)
-        "#,
-    )
-    .execute(pool)
-    .await?;
-
-    // Keep history and its current-state projection in the same statement and
-    // transaction. IF NOT EXISTS repairs an existing Docker volume at startup;
-    // initialization drops the source table (and therefore this trigger) and
-    // recreates it after the bulk history import.
-    sqlx::raw_sql(
-        r#"
-CREATE TRIGGER IF NOT EXISTS chair_locations_after_insert_current
-AFTER INSERT ON chair_locations
-FOR EACH ROW
-INSERT INTO chair_current_locations (
-  chair_id,
-  location_id,
-  latitude,
-  longitude,
-  created_at
-)
-VALUES (
-  NEW.chair_id,
-  NEW.id,
-  NEW.latitude,
-  NEW.longitude,
-  NEW.created_at
-) AS incoming
-ON DUPLICATE KEY UPDATE
-  latitude = IF(
-    incoming.created_at > chair_current_locations.created_at
-      OR (
-        incoming.created_at = chair_current_locations.created_at
-        AND incoming.location_id > chair_current_locations.location_id
-      ),
-    incoming.latitude,
-    chair_current_locations.latitude
-  ),
-  longitude = IF(
-    incoming.created_at > chair_current_locations.created_at
-      OR (
-        incoming.created_at = chair_current_locations.created_at
-        AND incoming.location_id > chair_current_locations.location_id
-      ),
-    incoming.longitude,
-    chair_current_locations.longitude
-  ),
-  location_id = IF(
-    incoming.created_at > chair_current_locations.created_at
-      OR (
-        incoming.created_at = chair_current_locations.created_at
-        AND incoming.location_id > chair_current_locations.location_id
-      ),
-    incoming.location_id,
-    chair_current_locations.location_id
-  ),
-  created_at = GREATEST(incoming.created_at, chair_current_locations.created_at)
         "#,
     )
     .execute(pool)

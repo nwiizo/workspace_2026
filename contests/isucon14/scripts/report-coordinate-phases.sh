@@ -354,31 +354,3 @@ WHERE SQL_TEXT LIKE '%chair_current_locations%'
     OR SQL_TEXT LIKE '%INSERT INTO chair_current_locations%'
   )
 "
-
-printf '\ntrigger: chair current projection\n\n'
-ISUCON_DIAGNOSTIC=1 "$compose" exec -T \
-  -e MYSQL_PWD=isucon \
-  db \
-  mysql \
-  --batch \
-  --table \
-  -uroot \
-  performance_schema \
-  -e "
-SELECT
-  OBJECT_NAME AS trigger_name,
-  COUNT_STAR AS activations,
-  COUNT_STATEMENTS AS statements,
-  ROUND(SUM_TIMER_WAIT / 1e12, 3) AS total_seconds,
-  ROUND(AVG_TIMER_WAIT / 1e9, 3) AS avg_ms,
-  ROUND(MAX_TIMER_WAIT / 1e9, 3) AS max_ms,
-  ROUND(SUM_STATEMENTS_WAIT / 1e12, 3) AS statement_seconds,
-  ROUND(SUM_LOCK_TIME / 1e12, 3) AS lock_seconds,
-  SUM_ROWS_AFFECTED AS rows_affected,
-  SUM_ERRORS AS errors,
-  SUM_WARNINGS AS warnings
-FROM events_statements_summary_by_program
-WHERE OBJECT_TYPE = 'TRIGGER'
-  AND OBJECT_SCHEMA = 'isuride'
-  AND OBJECT_NAME = 'chair_locations_after_insert_current'
-"

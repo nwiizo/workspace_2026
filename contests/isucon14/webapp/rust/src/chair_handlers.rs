@@ -302,6 +302,64 @@ impl Drop for CoordinateDiagnostic {
     }
 }
 
+async fn upsert_chair_current_location(
+    tx: &mut sqlx::MySqlConnection,
+    chair_id: &str,
+    location_id: &str,
+    coordinate: &Coordinate,
+    recorded_at: chrono::NaiveDateTime,
+) -> sqlx::Result<()> {
+    sqlx::query(
+        r#"
+INSERT INTO chair_current_locations (
+    chair_id,
+    location_id,
+    latitude,
+    longitude,
+    created_at
+)
+VALUES (?, ?, ?, ?, ?) AS new
+ON DUPLICATE KEY UPDATE
+    latitude = IF(
+        new.created_at > chair_current_locations.created_at
+            OR (
+                new.created_at = chair_current_locations.created_at
+                AND new.location_id > chair_current_locations.location_id
+            ),
+        new.latitude,
+        chair_current_locations.latitude
+    ),
+    longitude = IF(
+        new.created_at > chair_current_locations.created_at
+            OR (
+                new.created_at = chair_current_locations.created_at
+                AND new.location_id > chair_current_locations.location_id
+            ),
+        new.longitude,
+        chair_current_locations.longitude
+    ),
+    location_id = IF(
+        new.created_at > chair_current_locations.created_at
+            OR (
+                new.created_at = chair_current_locations.created_at
+                AND new.location_id > chair_current_locations.location_id
+            ),
+        new.location_id,
+        chair_current_locations.location_id
+    ),
+    created_at = GREATEST(new.created_at, chair_current_locations.created_at)
+        "#,
+    )
+    .bind(chair_id)
+    .bind(location_id)
+    .bind(coordinate.latitude)
+    .bind(coordinate.longitude)
+    .bind(recorded_at)
+    .execute(tx)
+    .await?;
+    Ok(())
+}
+
 async fn chair_post_coordinate(
     State(AppState {
         coordinate_pool: pool,
@@ -329,6 +387,7 @@ async fn chair_post_coordinate(
         diagnostic.sample.latitude = Some(req.latitude);
         diagnostic.sample.longitude = Some(req.longitude);
     }
+    let current_location_exists = latest_chair_locations.contains(&chair.id).await;
     if let Some(diagnostic) = &mut diagnostic {
         let elapsed_us = diagnostic.elapsed_since_checkpoint_us();
         diagnostic.sample.cache_lookup_us = elapsed_us;
@@ -388,9 +447,66 @@ async fn chair_post_coordinate(
     if let Some(diagnostic) = &mut diagnostic {
         let elapsed_us = diagnostic.elapsed_since_checkpoint_us();
         diagnostic.sample.history_insert_us = elapsed_us;
-        // The AFTER INSERT trigger updated chair_current_locations inside the
-        // measured INSERT statement, so there is no second client round trip.
-        diagnostic.sample.current_write_path = "history_insert_trigger";
+        diagnostic.sample.terminal_phase = "current_write";
+    }
+
+    if current_location_exists {
+        if let Some(diagnostic) = &mut diagnostic {
+            diagnostic.sample.current_write_path = "update";
+        }
+        let current_location_update = sqlx::query(
+            r#"
+UPDATE chair_current_locations
+SET location_id = ?,
+    latitude = ?,
+    longitude = ?,
+    created_at = ?
+WHERE chair_id = ?
+  AND (
+      created_at < ?
+      OR (created_at = ? AND location_id < ?)
+  )
+        "#,
+        )
+        .bind(&chair_location_id)
+        .bind(req.latitude)
+        .bind(req.longitude)
+        .bind(recorded_at)
+        .bind(&chair.id)
+        .bind(recorded_at)
+        .bind(recorded_at)
+        .bind(&chair_location_id)
+        .execute(&mut *tx)
+        .await?;
+
+        if current_location_update.rows_affected() == 0 {
+            if let Some(diagnostic) = &mut diagnostic {
+                diagnostic.sample.current_write_path = "update_fallback";
+            }
+            // A stale cache or a concurrent newer update can make the guarded
+            // UPDATE affect zero rows. The atomic fallback repairs both cases.
+            upsert_chair_current_location(
+                &mut tx,
+                &chair.id,
+                &chair_location_id,
+                &req,
+                recorded_at,
+            )
+            .await?;
+        }
+    } else {
+        if let Some(diagnostic) = &mut diagnostic {
+            diagnostic.sample.current_write_path = "upsert_missing";
+        }
+        // Updating a missing row under REPEATABLE READ acquires a gap lock. Many
+        // first-coordinate transactions can then deadlock when they all insert.
+        // Start with one atomic upsert when the cache says no current row exists.
+        upsert_chair_current_location(&mut tx, &chair.id, &chair_location_id, &req, recorded_at)
+            .await?;
+    }
+    if let Some(diagnostic) = &mut diagnostic {
+        let elapsed_us = diagnostic.elapsed_since_checkpoint_us();
+        diagnostic.sample.current_write_us = elapsed_us;
         diagnostic.sample.terminal_phase = "ride_lookup";
     }
 
