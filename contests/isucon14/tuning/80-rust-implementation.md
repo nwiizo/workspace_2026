@@ -2662,6 +2662,212 @@ run間分散より小さいため高速化の因果は未確定です。一方�
 詳しい仮説、INDEX、代替案は
 [Benchmark 48](./48-owner-distance-monotonic-time.md)に記録しています。
 
+## Tokioのbounded queueをDB write pathへ置くときの設計
+
+Benchmark 51では `tokio::sync::mpsc` を使い、coordinateのDB transactionをHTTP handlerの
+後ろへ移す実験を行いました。最終ソースでは棄却していますが、Rustで非同期queueを
+設計するときに区別すべき境界が明確になりました。
+
+### boundedはmemoryだけでなく未完了仕事の上限
+
+unbounded channelは送信側が受理し続けるため、下流DBが遅いとjobとjobが所有する
+`String`、座標、診断objectがmemoryへ増え続けます。bounded channelは容量を超えた投入を
+待たせるか拒否できます。
+
+ただし、容量64のchannelを128個作ると全体上限は64ではありません。
+
+```text
+全channel内の最大job = shard数 × shardあたり容量
+                     = 128 × 64
+                     = 8,192
+```
+
+さらにworkerがreceiverから取り出してDB待ちしているjobはchannel depthに含まれません。
+queueの上限を説明するときは、channel内、worker処理中、DB pool待ちを分けます。
+
+### shard数とDB同時実行数は別の変数
+
+同じchairの順序を守るには、chair IDを1つのFIFO receiverへ固定できます。しかし
+128 shardを作ったからといって、128 transactionを同時にMySQLへ入れる必要はありません。
+
+実験では全workerで1つの `Arc<Semaphore>` を共有しました。
+
+```rust
+let admission = Arc::new(tokio::sync::Semaphore::new(max_in_flight));
+
+let _permit = admission
+    .acquire()
+    .await
+    .expect("semaphore remains open");
+
+persist(job).await?;
+```
+
+`_permit` がscope末尾でdropされるとpermitが戻ります。重要なのは、このscopeがDB
+transactionのどこまでを覆うかです。取得直後にdropすると制限にならず、cache更新まで
+持つとDB connectionを返した後の処理まで不必要に直列化します。
+
+```text
+shard数:
+  同じkeyの順序、hash衝突時のhead-of-line blockingを制御
+
+DB in-flight:
+  同時にpool取得・transactionへ進むworker数を制御
+
+pool max_connections:
+  SQLxが同時に所有できるconnection数を制御
+
+MySQL Threads_running:
+  DB内部で同時に実行中のthread数を観測
+```
+
+これらはすべて「並行数」に見えますが、同じ境界ではありません。
+
+### `send().await` と `try_send()` の選択
+
+`Sender::send().await` はcapacityが空くまでfutureを待機させます。通常のproducer /
+consumerでは自然なbackpressureです。しかしhandlerが別のlockを持ったまま待つと、
+consumerがそのlockを必要とする循環待ちを作れます。
+
+実験の初版は次の順序になりました。
+
+```text
+HTTP handler:
+  maintenance read lockを保持
+  → queue capacity待ち
+
+initialize:
+  maintenance write lock待ち
+
+queue worker:
+  initializeのwrite lock後ろでread lock待ち
+```
+
+workerがqueueを減らせないためhandlerのsendも完了しません。boundedであること自体が
+deadlockを防ぐわけではなく、「await中に何を所有しているか」をlock graphへ含める必要が
+あります。
+
+候補では `try_send()` へ変え、満杯ならHTTP成功にせず失敗を返しました。
+
+```rust
+match sender.try_send(job) {
+    Ok(()) => { /* accepted */ }
+    Err(TrySendError::Full(job)) => { /* not accepted */ }
+    Err(TrySendError::Closed(job)) => { /* worker stopped */ }
+}
+```
+
+`Full` が返すjobを捨てる場合も、座標を受理済みと応答してはいけません。
+`Closed` はreceiver taskのpanicや終了を示すため、通常の満杯とは分けてlogします。
+
+### enqueue成功と永続化成功は異なる型の結果
+
+`try_send(job) == Ok(())` が保証するのはchannelがjobを受け取ったことだけです。
+MySQL commit成功ではありません。
+
+```text
+Result<(), EnqueueError>
+```
+
+だけをHTTP handlerが受け取る設計では、workerの
+
+```text
+Result<(), sqlx::Error>
+```
+
+を同じresponseへ戻せません。commit結果が必要ならjobへoneshot senderを持たせ、
+handlerがreceiverをawaitする設計が必要です。
+
+```rust
+let (completion_tx, completion_rx) = tokio::sync::oneshot::channel();
+sender.send(Job { completion_tx, /* ... */ }).await?;
+completion_rx.await??;
+```
+
+これはdurability境界を明確にしますが、HTTP応答は再びDB commitを待ちます。
+「async channelを使った」ことと「HTTPから永続化待ちを外した」ことは同じではありません。
+
+### process内queueはdurableではない
+
+`tokio::spawn` されたworkerとmpsc channelはprocess memoryです。HTTP 200後、commit前に
+processが停止するとjobは復元できません。`Drop`、graceful shutdown、channel drainを
+実装しても、`SIGKILL`、OOM、host停止では実行されません。
+
+durableにするには、HTTP 200前にDB outboxやmessage brokerへjobを永続化し、再実行時の
+idempotency keyと重複排除を設計します。Rustのownershipはmemory上の所有者を明確にしますが、
+process crashを越えた所有権までは保証しません。
+
+### `AtomicU64` counterは状態機械の代替ではない
+
+診断用のaccepted / completed / failed / stale / fullは `AtomicU64` で数えました。
+これらは最終判断の観測値であり、個々のjob状態を復元するledgerではありません。
+
+```rust
+counter.fetch_add(1, Ordering::Relaxed);
+```
+
+単独counterの統計だけなら `Relaxed` で十分です。一方、initialize generationは、
+新しい世代値をworkerへ公開し、workerがloadして古いjobを判定するため
+`AcqRel` / `Acquire` を使いました。
+
+memory orderingを強くしても、DB commitとの原子性は生まれません。atomic generation更新と
+MySQL初期化の順序はmaintenance lockで作ります。
+
+### queue depthは取得時点のsnapshot
+
+Tokio mpscでは次のように使用中capacityを求められます。
+
+```rust
+let depth = sender.max_capacity().saturating_sub(sender.capacity());
+```
+
+これは別taskが同時にsend / receiveするため、厳密な全job数ではなく観測時点のsnapshotです。
+admission待ちでreceiverがすでにjobを取り出した場合、そのjobもdepthから消えます。
+
+そのためdepthだけで可視性時間を推定せず、次を別々に `Instant` で測ります。
+
+- enqueue操作時間
+- enqueueからworker開始まで
+- DB admission待ち
+- pool acquire
+- transaction各phase
+- `recorded_at`予約からcommitまで
+
+### 経過時間は `Instant`、外部相関はwall clock
+
+HTTP ACKのUnix timestampとcommitのUnix timestampを引くと、NTP補正や仮想環境の時計調整で
+負値や不自然な差が出る可能性があります。process内のlatencyとtimeout判定には単調時計の
+`Instant`を使います。
+
+wall clockはbenchmark log、nginx log、MySQL logをUTCで相関する用途に使います。
+
+```text
+Instant:
+  queue wait、DB phase、3秒以内の経過時間
+
+UTC / Unix timestamp:
+  別processのeventを同じ時間軸で探す
+```
+
+目的を混ぜると、時計が進んだのか処理が遅れたのかを区別できません。
+
+### worker数を増やしても仕事量は減らない
+
+128 worker候補はcoordinate HTTPを平均2ms、p95 7msへ短縮しました。しかし履歴INSERT、
+current UPDATE、ride SELECT、COMMITは同じ回数だけ残りました。closed-loop clientが次の
+requestを早く開始し、一般APIも増えたため、通常3走中央値は同期対照より4.22%低下しました。
+
+async taskは待ちを重ねられますが、SQL数、row lock、COMMIT、network round tripを削除しません。
+worker数を増やす前に、次を確認します。
+
+1. 下流1件あたりの仕事が減るか
+2. response短縮で到着率がどれだけ上がるか
+3. poolとMySQLが増加分を処理できるか
+4. HTTP以外の目的指標が改善するか
+
+正当性fixture、診断値、通常A/B、24 / 40 in-flightの比較は
+[Benchmark 51](./51-coordinate-async-queue.md)に記録しています。
+
 ## 避けるショートカット
 
 - N+1を無制限の `tokio::spawn` で隠す
@@ -2672,6 +2878,9 @@ run間分散より小さいため高速化の因果は未確定です。一方�
 - LTO、`target-cpu=native`、ログlevel、SQL変更を1回のベンチへまとめる
 - multi-stage化によるimage縮小を、アプリruntimeのスコア改善として数える
 - cache mount内にだけ完成binaryを置き、次stageへ残ると思い込む
+- bounded channelを置いただけでdeadlockとmemory上限を解決したと考える
+- enqueue成功をDB commit成功としてHTTP 200に対応付ける
+- shard数、worker数、DB connection数を同じ「並行度」として一緒に増やす
 
 高速化は「速そうな構文」へ書き換える作業ではありません。待っている資源を観測し、その待ちを生む仕事量または保持時間を1つずつ減らし、同じ条件で正しさとスコアを再計測する作業です。
 

@@ -77,11 +77,11 @@
 | owner椅子一覧をownerで先に絞る | 実装・単独ベンチ済み | 最新位置と累積距離のcurrent-state化 |
 | owner累積距離の公開境界 | request開始1秒前の安定snapshotを使用。同一chairの`recorded_at`をDBと同じµs精度へ正規化し、process内high-water markで単調増加。window順序を`(created_at, id)`で決定。最終診断の87,005区間はspeed超過0、通常3走も`CODE=26` 0 | 1秒公開境界を維持したcurrent-state差分集約を比較。複数process化前にDB sequenceまたはatomic current rowへ置き換える |
 | owner売上の評価境界 | 完了時刻を最終SQLで保存し、owner requestと重なる評価ride IDだけをrevision trackerで除外 | body drop後のclient計上差はprotocol ACKなしでは残る。複数process前に共有化 |
-| 最新位置をcurrent-state表で管理 | 履歴INSERTと同じtransactionで更新し、cacheを2秒ごとに再同期。`AFTER INSERT`トリガー統合は通常3走中央値121,185点、同時間帯の単発対照132,970点。因果未確定だが採用を支持するscore evidenceがなく保守的に棄却 | current UPDATEのrow-lock待ちとwrite amplificationを、per-chair queueで正当性を保って削減 |
+| 最新位置をcurrent-state表で管理 | 履歴INSERTと同じtransactionで更新し、cacheを2秒ごとに再同期。`AFTER INSERT`トリガー統合は通常3走中央値121,185点、同時間帯の単発対照132,970点。因果未確定だが採用を支持するscore evidenceがなく保守的に棄却 | 非同期queueも対照比-4.22%で棄却。同期commit境界を保ち、current UPDATEの仕事量そのものを減らす |
 | pending rideと空き椅子のbatch matching | 地域ごとに最大64候補、全体最大64割当、近傍優先、同一地域の距離200以下まで実装済み。speedだけを使う局所greedyは中央値-0.9%で不採用 | 地域ID + INDEX、期限とpickup予測を含む二部matchingを比較 |
 | JSON通知のcache | recipient revisionとchair stats dependency revision付きprocess cache。chairは配送状態機械でcurrent rideを維持。rideありは存在確認connectionをtransactionへ再利用し、2回目のpool取得を診断878 / 878 sampleで削除。通常3走中央値139,198点 | owner `CODE=26`を再修正後、response ACKなしの配送loss、DB connectionを保持しないlong pollingを比較 |
-| 座標更新のpool待ち | 総接続50のshared pool + general permit 26を採用。static / shared近接3組の中央値126,104→135,410点（+7.38%）。coordinateはpermit対象外、general通知の二重取得も削減済み | coordinate current write / COMMIT / row-lockを減らし、必要ならper-chair queueを比較 |
-| 座標更新の非同期・bulk INSERT | pickup / destination候補だけlockし、statusをcurrent readする。全位置履歴とcurrent rowは同じtransaction | 接続隔離後も30msを超える場合に、per-chair順序・全履歴・3秒反映を守るqueueを実験 |
+| 座標更新のpool待ち | 総接続50のshared pool + general permit 26を採用。static / shared近接3組の中央値126,104→135,410点（+7.38%）。coordinateはpermit対象外、general通知の二重取得も削減済み | 非同期queueで待ちを隠さず、coordinate current write / COMMIT / row-lockを直接減らす |
+| 座標更新の非同期・bulk INSERT | per-chair FIFO、全履歴、status遷移、initialize世代を守るmemory queueを実験。HTTP平均2ms・drive不満-7.3ptだが、matching不満+8.8pt、通常中央値122,125点で対照比-4.22% | post-ACK durabilityとclosed-loop負荷のため棄却。最終ソースは同期transaction |
 | 決済HTTP client | process内で1個を共有し、冪等なPOST / retryでconnection poolを再利用済み。診断203 sampleは608 attempts、途中5xx 405回、最終204 | TCP connect回数とconnection再利用率を採取 |
 | 決済の `Idempotency-Key` | ride IDを全POSTへ設定し、確認GETとuser全ride取得を削除済み | 準備transactionと完了transactionの間に決済を置く構成まで実装。TCP connect回数と再利用率を採取する |
 | 招待登録 | 招待者のUNIQUE行を `FOR UPDATE` して同一コードだけを直列化。couponは `COUNT(*)`、reward codeは新規user IDで一意化 | 上限が増えてCOUNTが支配的になった場合だけ、条件付きcounter UPDATEを比較 |
@@ -141,6 +141,18 @@ Benchmark 50では、履歴INSERT後のcurrent UPDATEをMySQL `AFTER INSERT`ト�
 確定できませんが、候補3走が過去分布をすべて下回り、採用を支持するscore evidenceが
 ないため保守的に棄却しています。INDEX lookupとrow更新がトリガー内にも残ることを
 [Benchmark 50](./tuning/50-coordinate-current-trigger.md)へ記録しました。
+
+Benchmark 51では、座標のDB transactionを128 shardのper-chair FIFOへ移し、
+HTTP平均2ms、p95 7msまで短縮しました。通常3走のdrive不満率中央値は58.7%から
+51.4%へ改善した一方、matching不満率は64.2%から73.0%へ悪化しました。候補中央値
+122,125点は同期対照127,499点より4.22%低く、3組中2組で候補が下回っています。
+
+DB同時実行を24 / 40へ制限した構成とstatic 26 / 24 poolも診断しましたが、
+`CODE=26`、1秒超の可視性、general admission待ちのいずれかが残りました。
+HTTPからDB待ちを外してもDB仕事量は減らず、closed-loop clientが次の処理を早く投入して
+全体のsaturationを強めたためです。post-ACKのmemory queueはprocess停止時の未commit
+データも復元できません。得点とdurabilityの両方で採用根拠がないため同期経路へ戻しました。
+詳細は[Benchmark 51](./tuning/51-coordinate-async-queue.md)に記録しています。
 
 通知cacheはDB上の配信cursorの代替にはしません。recipientごとにpayloadとrevisionを保持し、
 app payloadが参照するchair statsにもdependency revisionを持たせます。ride割当・status追加・
@@ -323,6 +335,27 @@ CPU 60%でも、単一lockやconnection上限でsaturationすることがあり�
 backpressureは、下流が処理できないときに上流の投入速度を抑える仕組みです。無制限に
 taskを生成するより安全ですが、待ちがどこへ移ったかを隠さないよう、queue長、最古待ち
 時間、timeout、drop数を記録します。
+
+#### closed-loop loadと応答による到着率
+
+closed-loop loadは、clientが前の応答を受けてから次のrequestを始める負荷モデルです。
+serverが1 requestを速く返すと、同じclient数でも次のrequestが早く到着します。そのため、
+endpointのlatency短縮とservice全体の負荷低下は同じ意味ではありません。
+
+Benchmark 51の非同期coordinate queueでは、HTTP平均を2msまで短縮しdrive不満率も
+7.3ポイント改善しました。しかし、永続化するDB処理は減っておらず、次のcoordinateと
+一般APIが早く投入されました。結果としてmatching不満率は8.8ポイント悪化し、
+通常3走中央値は同期対照より4.22%低下しました。
+
+このモデルでは、次を一緒に確認します。
+
+- request数 / 秒が増えたか
+- 下流のDB query数とcommit数が減ったか、それとも前倒しされただけか
+- pool、Semaphore、MySQLのどこがsaturationしたか
+- 局所endpointではなく、完了数、不満率、最終scoreが改善したか
+
+応答を遅くして負荷を隠すことが目的ではありません。応答を速くするなら、次の到着増加を
+処理できるだけの仕事量削減、または明示的なbackpressureも必要だという意味です。
 
 ### SQLとMySQL
 
@@ -953,6 +986,7 @@ amountを記録するため、ride IDを同じkeyとして再利用すれば、�
 | [48-owner-distance-monotonic-time.md](./tuning/48-owner-distance-monotonic-time.md) | DBと同じµs精度へ正規化後、chairごとのprocess内high-water markで`recorded_at`を単調増加。同時刻を`id`で決定し、距離不一致と3秒超stalenessを別reasonで診断 | 通常3走139,218–146,999点、中央値141,228点、全走`pass=true`・error map空。診断158,260点、87,005区間のspeed超過0、commit最大197.062ms | 実測n=3。Benchmark 46中央値比+1.46%だがrun間分散より小さく高速化の因果は未確定。実測した時刻逆行を追加SQLなしで防ぐ正当性修正として採用。複数process保証は未対応 |
 | [49-db-shared-pool-admission.md](./tuning/49-db-shared-pool-admission.md) | static 26 / 24と、shared pool 50 + general DB phase permit 26を実行順反転込みで比較 | static中央値126,104点、shared中央値135,410点、差+9,306点（+7.38%）。全6走`pass=true`・error map空。30秒診断はMySQL statusを1秒採取 | 各構成実測n=3、3組すべてsharedが上回ったため既定へ採用。request-wide permitはDB外待ちも枠を塞ぐため棄却し、phase scopeだけを採用 |
 | [50-coordinate-current-trigger.md](./tuning/50-coordinate-current-trigger.md) | MySQL `AFTER INSERT`トリガーでアプリ発行DMLとDB往復を2回から1回へ削減 | 書込みphase平均3.510→2.563ms（-27.0%）だが、通常3走117,326–121,580点、中央値121,185点。同時間帯の2クエリ単発対照132,970点 | 実測n=3。単発対照では因果未確定だが、直前中央値比-10.51%で採用を支持するscore evidenceがなく保守的に棄却。最終ソースは2クエリ構成 |
+| [51-coordinate-async-queue.md](./tuning/51-coordinate-async-queue.md) | per-chair FIFO、bounded channel、initialize世代、DB in-flight制限付きでcoordinate永続化をHTTP応答後へ移す実験 | 通常候補3走110,353–126,964点、中央値122,125点。同期対照3走124,230–128,061点、中央値127,499点。差-5,374点（-4.22%）。候補HTTP平均2ms、p95 7ms。revert後の最終確認120,343点 | 各構成実測n=3。全6走`pass=true`・error map空だが、候補はmatching不満+8.8pt、drive不満-7.3pt。24 / 40 in-flightとstatic pool診断も可視性またはgeneral待ちを悪化させ、post-ACK durabilityも弱いため棄却。最終確認n=1は中央値へ混ぜない |
 | [80-rust-implementation.md](./tuning/80-rust-implementation.md) | Rust / sqlxとrelease buildの知識 | 再build 30分52秒→11.02秒 | build時間の実測。スコア推定対象外 |
 | [81-evaluation-authorization.md](./tuning/81-evaluation-authorization.md) | 評価rideを認証ユーザー所有へ制限 | 公式prevalidation `pass=true`、別ユーザーHTTP回帰成功 | 正当性修正。60秒スコアはBenchmark 20から更新しない |
 | [90-local-environment.md](./tuning/90-local-environment.md) | build context、BuildKit、固定Colima資源 | context 467MB→32.5KB | sizeの実測。スコア推定対象外 |

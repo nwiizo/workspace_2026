@@ -364,7 +364,7 @@
 | P0 | 通知2経路 | recipient + chair stats dependency revision付きpayload cache。chairは配送状態機械でcurrent rideを維持。未送信statusは30ms、定常cacheは100ms | connection再利用、response ACKなしの配送loss、long pollingを順に検証 |
 | P0 | `get_chair_stats` | 評価時差分更新 + 主キーreadへ変更 | SQL累積は約89%減、スコア中央値は約3.5%低下したため次の通知施策と合わせて再評価 |
 | P0 | `app_post_ride_evaluation` | 準備transaction、transaction外の冪等決済、ride再lock付き完了transactionへ分割済み | connection所有平均は94.0%短縮。完了時の追加acquireとprocess crash後の自動回収を検討する |
-| P0 | `chair_post_coordinate` | 履歴INSERT + current UPDATE、遷移候補だけride lock + 最新status再読。shared pool 50 + general DB phase permit 26を近接3組で採用。`AFTER INSERT`トリガー統合は採用を支持するscore evidenceがなく保守的に棄却 | per-chair queueで全履歴・順序・status遷移・3秒可視性を守りながら、HTTP経路のtransaction保持を減らせるか比較する |
+| P0 | `chair_post_coordinate` | 履歴INSERT + current UPDATE、遷移候補だけride lock + 最新status再読。shared pool 50 + general DB phase permit 26を近接3組で採用。`AFTER INSERT`とper-chair非同期queueは通常中央値を悪化させ棄却 | 同期commit境界を維持し、current投影・ride lookup・COMMITの仕事量そのものを減らす |
 | P1 | `app_get_rides` | rideごとにstatus、coupon、chair、ownerを取得 | 履歴増加に比例するN+1 |
 | P1 | `owner_get_sales` | ownerのchairごとに完了rideを取得し、評価responseと重なったride IDを除外 | N+1、read transactionが暗黙ROLLBACK。複数processではtracker共有が必要 |
 | P1 | `app_post_rides` | userの全rideとride別最新statusを取得 | ライド作成ごとに履歴全体を再走査 |
@@ -843,7 +843,10 @@
   - current write平均1.633ms / p95 4.185ms / p99 23.184ms
   - coordinate handler内total平均40.089ms / p95 105.296ms / p99 138.956ms
   - `pool.begin()` p95 93.651msが最大であり、acquireとSQL `BEGIN`の分離を継続
-- [ ] current row更新のcoalescing / queue化で3秒収束と履歴完全性を維持できるか比較する
+- [x] current row更新のcoalescing / queue化で3秒収束と履歴完全性を維持できるか比較する
+  - 中間履歴をcoalesceしないper-chair FIFOで比較し、fixtureは3秒以内・履歴欠落0
+  - 通常中央値は同期対照比-4.22%で、post-ACK durabilityも弱いため棄却
+  - 詳細: [`tuning/51-coordinate-async-queue.md`](./tuning/51-coordinate-async-queue.md)
 
 ### JSON通知の短期改善
 
@@ -970,15 +973,25 @@
   - 同時間帯対照は1走なので因果未確定。採用を支持するscore evidenceがなく保守的に棄却し、
     トリガー、権限設定、専用testを最終ソースへ残さない
   - 詳細: [`tuning/50-coordinate-current-trigger.md`](./tuning/50-coordinate-current-trigger.md)
-- [ ] 座標更新をper-chair順序付きのbounded queueへ投入し、HTTP応答と永続化・status判定を分離する実験を行う
+- [x] 座標更新をper-chair順序付きのbounded queueへ投入し、HTTP応答と永続化・status判定を分離する実験を行う
+  - 通常候補中央値122,125点、同期対照127,499点で-4.22%のため棄却
+  - 詳細: [`tuning/51-coordinate-async-queue.md`](./tuning/51-coordinate-async-queue.md)
 - [ ] 最新座標をメモリ上では即時更新し、`chair_locations` を30 / 50 / 100ms単位でbulk INSERTする
-- [ ] queue内の中間座標は累積距離と乗車地点・目的地への到達判定に必要なので、最新1件へ無条件にcoalesceしない
+- [x] queue内の中間座標は累積距離と乗車地点・目的地への到達判定に必要なので、最新1件へ無条件にcoalesceしない
+  - 実験は全座標をbounded FIFOへ保持し、24件の履歴数と順序を固定fixtureで確認
 - [ ] nearby向けlatest-coordinate cacheだけを上書きし、永続化対象の全座標列とは分離する
+  - queue候補はcommit後だけcacheを更新した。即時cache更新 + bulk永続化は未検証
 - [ ] queue full時のbackpressure、DB失敗時の再試行、initialize / shutdown時のflushを定義する
-- [ ] HTTP 200をqueue投入時とDB commit後のどちらで返すか比較し、応答p99と再起動時の座標欠落リスクを記録する
-- [ ] 非同期化後も座標は3秒以内、割当可否と到着statusは通知評価を落とさない時間内に反映する
-- [ ] 同じ椅子の座標順序、累積距離、`PICKUP` / `ARRIVED` の一度だけの遷移を並行負荷で検証する
-- [ ] 今回の手動再現（同一pickup / destination、ride lock後ろの並行座標2本）を自動integration testへ移す
+  - [x] queue fullは`try_send`で未受理の500、initializeはgenerationで旧jobを破棄
+  - [ ] post-ACK DB失敗のretryとprocess crash / shutdown後のdurable recovery
+- [x] HTTP 200をqueue投入時とDB commit後のどちらで返すか比較し、応答p99と再起動時の座標欠落リスクを記録する
+  - queue投入時はp99 10ms。同期対照より通常中央値-4.22%で、post-ACK jobは再起動時に復元不能
+- [x] 非同期化後も座標は3秒以内、割当可否と到着statusは通知評価を落とさない時間内に反映する
+  - fixtureは3秒以内。診断4構成の最大可視性は354ms–2.059秒だが、
+    shared 24と24 shardは`CODE=26`を生じたため採用条件を満たさない
+- [x] 同じ椅子の座標順序、累積距離、`PICKUP` / `ARRIVED` の一度だけの遷移を並行負荷で検証する
+- [x] 今回の手動再現（同一pickup / destination、ride lock後ろの並行座標2本）を自動integration testへ移す
+  - 実験revisionの`test-coordinate-write-queue.sh`で自動化し、候補棄却と一緒にrevert
 - [ ] `PICKUP` 後にpickupへ滞在中、`ARRIVED` 後から評価前にdestinationへ滞在中のlocking read回数と待機時間を分離計測する
 
 ### 招待couponのINDEX
@@ -1275,8 +1288,26 @@
   - 候補を戻した同時間帯の単発対照は132,970点。因果未確定だが採用を支持する
     score evidenceがないため保守的に棄却
   - 詳細: [`tuning/50-coordinate-current-trigger.md`](./tuning/50-coordinate-current-trigger.md)
-- [ ] 接続隔離後もcoordinateが30msを超える場合は、per-chair順序、全履歴、status遷移、
+- [x] 接続隔離後もcoordinateが30msを超える場合は、per-chair順序、全履歴、status遷移、
   3秒可視性を維持する非同期queueを別施策として比較する
+  - 128 shardのbounded channel、chair IDの安定hashによるFIFO、initialize世代、
+    queue full時の未受理、24 / 40 DB in-flight制限を実装
+  - 24座標の全履歴と順序、duplicate pickup / destinationのstatus各1行、
+    48座標burst直後のinitializeで旧世代0行をHTTP/DB fixtureで確認
+  - 128相当の30秒診断は62,147点、`pass=true`・error map空。
+    coordinate 29,798件は平均2ms、p95 7ms、全件2xx
+  - 通常候補3走110,353 / 122,125 / 126,964点、中央値122,125点。
+    同期対照3走124,230 / 127,499 / 128,061点、中央値127,499点
+  - 候補は対照比-5,374点、-4.22%。drive不満中央値は-7.3pt改善したが、
+    matching不満中央値が+8.8pt悪化
+  - shared 24 / 40 in-flight、static 26 / 24 poolも診断したが、
+    `CODE=26`または1秒超可視性、general admission待ちが残った
+  - HTTP応答短縮がclosed-loopの次負荷を前倒しし、DB仕事量自体は減らない。
+    post-ACK memory queueはprocess停止時の未commit jobも復元できないため棄却
+  - 実験 `43f3bf3238d4` を `8e2ec1278e65` でrevertし、最終ソースは同期経路
+  - revert後の最終ソースを再buildした60秒確認は120,343点、
+    `pass=true`・error map空。単発なので対照中央値へ混ぜない
+  - 詳細: [`tuning/51-coordinate-async-queue.md`](./tuning/51-coordinate-async-queue.md)
 - [ ] matcherの目的関数を「割当件数最大化 → 期限超過ride最小化 → pickup予測tick最小化」の辞書順で定義する
 - [ ] 64件batch内の貪欲法と最小費用二部マッチングを、計算時間・空車移動距離・完了数で比較する
 - [ ] 二部マッチングではride待ち時間をcostへ加え、近い新規rideだけが選ばれて古いrideがstarvationしないようにする
@@ -1403,30 +1434,39 @@
 - [ ] 通知はcache hit率、wake latency、recipientあたりSQL数、再接続時replay件数を記録する
   - [x] 1/64 samplingでcache hit率、path別total、pool acquire、SQL、connection所有を記録
   - [ ] long polling実装時にwake latencyと再接続時replay件数を記録
-- [ ] 座標queueはdepth、最古未flush時間、batch件数、drop / retry数、status反映遅延を記録する
+- [x] 座標queueはdepth、最古未flush時間、batch件数、drop / retry数、status反映遅延を記録する
+  - 1 jobずつ永続化する候補でshard別depth、queue wait、ACK→commit、
+    full / closed / failed / stale counterを採取。128相当のsample最大depthは21 / 64
+  - bulk batchとretryは実装せず、1 job / transaction、retry 0として比較
 - [ ] エンドポイント件数とp50 / p95 / p99を記録する
 - [x] SQL回数、累積時間、走査行数を記録する
 - [ ] pool待ち、MySQL CPU、webapp CPU、block I/Oを記録する
-- [ ] 改善しなければ変更を重ねずrevert候補として記録する
+- [x] 改善しなければ変更を重ねずrevert候補として記録する
+  - Benchmark 50はトリガー、Benchmark 51は非同期queueを実験commitとrevertへ分離
+  - 候補を既定へ残さず、通常比較と棄却理由を個別のtuning文書へ保存
 
 ## 推奨する直近の実行順
 
 完了済みのmatcher `CODE=32`、owner `CODE=26`、評価phase、pool上限50 / 75 / 100、
 drive phaseの診断は上の各項目へ結果を残しています。現在の未完了項目は次の順です。
 
-1. current更新のトリガー統合は通常中央値-10.51%で棄却済み。次はper-chair bounded
-   queueについて、全履歴・順序・status遷移・3秒可視性を維持した最小構成を診断する
-2. owner距離のwindow集計を、1秒公開watermarkを維持したcurrent-state差分集約と
+1. `app_get_rides`のride別status / coupon / chair / owner N+1をphase分解し、
+   endpointのquery回数と累積時間を固定してからbatch化する
+2. `app_post_rides`のuser全履歴とride別最新status走査を、現在rideのcurrent-stateへ
+   置き換えられるか正当性fixture付きで比較する
+3. nearbyのride antijoinとevaluation tracker確認を分け、どちらが高頻度pollの
+   DB時間を支配するか計測する
+4. owner距離のwindow集計を、1秒公開watermarkを維持したcurrent-state差分集約と
    短時間cacheで比較する
-3. `CODE=27`を同じchairのDB current row、process cache、nearby応答で追跡する
-4. latest-coordinate cacheの `RwLock` とmaintenance gateの待機・保持時間を計測し、
+5. `CODE=27`を同じchairのDB current row、process cache、nearby応答で追跡する
+6. latest-coordinate cacheの `RwLock` とmaintenance gateの待機・保持時間を計測し、
    2秒再同期時のglobal stallを定量化する
-5. 最新statusをcurrent-state化し、未送信statusがない通知pollの履歴lookupと
+7. 最新statusをcurrent-state化し、未送信statusがない通知pollの履歴lookupと
    payload再構築をなくす
-6. app history、owner sales、ride作成のN+1を1 endpointずつ除去する
-7. 貪欲matcherと、割当件数・期限超過・pickup予測tickを辞書順にした
+8. owner salesのN+1を独立して除去する
+9. 貪欲matcherと、割当件数・期限超過・pickup予測tickを辞書順にした
    最小費用二部マッチングを比較する
-8. DB待ちとlock待ちを減らした後にMySQL、nginx、Rust compiler設定をprofileで比較する
+10. DB待ちとlock待ちを減らした後にMySQL、nginx、Rust compiler設定をprofileで比較する
 
 `CODE=8`が再発した場合は、優先順に割り込ませてapp通知のride / user / cursorを
 同一requestで保存します。正当性エラーは得点改善より先に原因を分離します。

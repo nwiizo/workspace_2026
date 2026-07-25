@@ -450,6 +450,16 @@ coordinate / sharedを確認できます。総数75 / 100は過去の通常3走�
 [`tuning/49-db-shared-pool-admission.md`](./tuning/49-db-shared-pool-admission.md)
 に記録しています。
 
+座標をprocess内のper-chair queueへ移す構成も、実験revisionで比較済みです。
+coordinate HTTPは平均2ms、p95 7msへ短縮しましたが、通常3走中央値は同期対照より
+4.22%低下しました。DB処理を削減せず応答だけを早めたため、closed-loopの次requestが
+前倒しされ、matching不満率と一般DB待ちが悪化しました。HTTP 200後・DB commit前の
+process停止で未処理jobを復元できない問題もあるため、ローカル既定へは入れていません。
+最終ソースにcoordinate queue用の環境変数はありません。実験revision、正当性fixture、
+24 / 40 in-flight、static poolを含む記録は
+[`tuning/51-coordinate-async-queue.md`](./tuning/51-coordinate-async-queue.md)を
+参照してください。
+
 ベンチマーカーは実行開始時に `POST /api/initialize` を呼ぶため、DB は初期データへ戻ります。フロントエンドの静的ファイル検証だけを省略したい場合は、公式オプションを次のように有効化できます。
 
 ```sh
