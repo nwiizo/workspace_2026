@@ -13,6 +13,7 @@ use tokio::sync::{Mutex, RwLock};
 
 use crate::models::{Chair, Owner, User};
 
+pub(crate) mod matcher_diagnostic;
 pub(crate) mod notification_diagnostic;
 
 pub(crate) const NOTIFICATION_RETRY_AFTER_MS: i32 = 30;
