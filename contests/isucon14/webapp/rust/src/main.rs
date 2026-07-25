@@ -3,7 +3,7 @@ use axum::extract::{Request, State};
 use axum::middleware::Next;
 use axum::response::Response;
 use isuride::{
-    ensure_chair_stats, ActiveRideEvaluationTracker, AppState, AuthCache, Error,
+    ensure_chair_stats, ActiveRideEvaluationTracker, AppState, AuthCache, DbAdmission, Error,
     LatestChairLocationCache, NotificationCache,
 };
 use std::net::SocketAddr;
@@ -20,6 +20,7 @@ struct DbPoolLimits {
     total: u32,
     general: u32,
     coordinate: u32,
+    shared: bool,
 }
 
 fn parse_positive_connection_limit(
@@ -40,35 +41,64 @@ fn parse_positive_connection_limit(
 fn parse_db_pool_limits(
     total: Option<&str>,
     coordinate: Option<&str>,
+    general_permits: Option<&str>,
 ) -> anyhow::Result<DbPoolLimits> {
     let total = parse_positive_connection_limit(
         "ISUCON_DB_MAX_CONNECTIONS",
         total,
         DEFAULT_DB_MAX_CONNECTIONS,
     )?;
+    if let Some(general_permits) = general_permits {
+        anyhow::ensure!(
+            coordinate.is_none(),
+            "ISUCON_DB_COORDINATE_CONNECTIONS and ISUCON_DB_GENERAL_PERMITS cannot be set together"
+        );
+        let general =
+            parse_positive_connection_limit("ISUCON_DB_GENERAL_PERMITS", Some(general_permits), 1)?;
+        anyhow::ensure!(
+            general < total,
+            "ISUCON_DB_GENERAL_PERMITS ({general}) must be smaller than ISUCON_DB_MAX_CONNECTIONS ({total})"
+        );
+        return Ok(DbPoolLimits {
+            total,
+            general,
+            coordinate: total - general,
+            shared: true,
+        });
+    }
+
     let coordinate = match coordinate {
-        Some(value) => parse_positive_connection_limit(
-            "ISUCON_DB_COORDINATE_CONNECTIONS",
-            Some(value),
-            DEFAULT_DB_COORDINATE_CONNECTIONS,
-        )?,
+        Some(value) => {
+            let coordinate = parse_positive_connection_limit(
+                "ISUCON_DB_COORDINATE_CONNECTIONS",
+                Some(value),
+                DEFAULT_DB_COORDINATE_CONNECTIONS,
+            )?;
+            anyhow::ensure!(
+                coordinate < total,
+                "ISUCON_DB_COORDINATE_CONNECTIONS ({coordinate}) must be smaller than ISUCON_DB_MAX_CONNECTIONS ({total})"
+            );
+            return Ok(DbPoolLimits {
+                total,
+                general: total - coordinate,
+                coordinate,
+                shared: false,
+            });
+        }
         None => {
             let derived = DEFAULT_DB_COORDINATE_CONNECTIONS.min(total / 2);
             anyhow::ensure!(
                 derived > 0,
-                "ISUCON_DB_MAX_CONNECTIONS ({total}) must be at least 2 when database pools are partitioned"
+                "ISUCON_DB_MAX_CONNECTIONS ({total}) must be at least 2 when database admission reserves coordinate headroom"
             );
             derived
         }
     };
-    anyhow::ensure!(
-        coordinate < total,
-        "ISUCON_DB_COORDINATE_CONNECTIONS ({coordinate}) must be smaller than ISUCON_DB_MAX_CONNECTIONS ({total})"
-    );
     Ok(DbPoolLimits {
         total,
         general: total - coordinate,
         coordinate,
+        shared: true,
     })
 }
 
@@ -102,9 +132,13 @@ async fn main() -> anyhow::Result<()> {
     let dbname = std::env::var("ISUCON_DB_NAME").unwrap_or_else(|_| "isuride".to_owned());
     let db_max_connections = optional_env("ISUCON_DB_MAX_CONNECTIONS")?;
     let db_coordinate_connections = optional_env("ISUCON_DB_COORDINATE_CONNECTIONS")?;
+    let db_general_permits = optional_env("ISUCON_DB_GENERAL_PERMITS")?;
     let db_pool_limits = parse_db_pool_limits(
         db_max_connections.as_deref(),
         db_coordinate_connections
+            .as_deref()
+            .filter(|value| !value.is_empty()),
+        db_general_permits
             .as_deref()
             .filter(|value| !value.is_empty()),
     )?;
@@ -116,17 +150,35 @@ async fn main() -> anyhow::Result<()> {
         .password(&password)
         .database(&dbname);
     let pool = sqlx::mysql::MySqlPoolOptions::new()
-        .max_connections(db_pool_limits.general)
+        .max_connections(if db_pool_limits.shared {
+            db_pool_limits.total
+        } else {
+            db_pool_limits.general
+        })
         .connect_with(connect_options.clone())
         .await?;
-    let coordinate_pool = sqlx::mysql::MySqlPoolOptions::new()
-        .max_connections(db_pool_limits.coordinate)
-        .connect_with(connect_options)
-        .await?;
+    let (coordinate_pool, general_db_admission) = if db_pool_limits.shared {
+        (
+            pool.clone(),
+            DbAdmission::limited(
+                usize::try_from(db_pool_limits.general)
+                    .context("general database permit count does not fit usize")?,
+            ),
+        )
+    } else {
+        (
+            sqlx::mysql::MySqlPoolOptions::new()
+                .max_connections(db_pool_limits.coordinate)
+                .connect_with(connect_options)
+                .await?,
+            DbAdmission::default(),
+        )
+    };
     tracing::info!(
         total = db_pool_limits.total,
         general = db_pool_limits.general,
         coordinate = db_pool_limits.coordinate,
+        shared = db_pool_limits.shared,
         "configured database connection pools"
     );
 
@@ -150,6 +202,7 @@ async fn main() -> anyhow::Result<()> {
         latest_chair_locations,
         active_ride_evaluations: ActiveRideEvaluationTracker::default(),
         maintenance_lock: Arc::new(RwLock::new(())),
+        general_db_admission,
     };
 
     spawn_latest_chair_location_reconciliation(&app_state);
@@ -185,13 +238,14 @@ mod tests {
     use super::{parse_db_pool_limits, DbPoolLimits};
 
     #[test]
-    fn db_pool_limits_default_to_a_fifty_connection_budget() {
+    fn db_pool_limits_default_to_shared_admission_with_coordinate_headroom() {
         assert_eq!(
-            parse_db_pool_limits(None, None).expect("default pool limits"),
+            parse_db_pool_limits(None, None, None).expect("default pool limits"),
             DbPoolLimits {
                 total: 50,
                 general: 26,
                 coordinate: 24,
+                shared: true,
             }
         );
     }
@@ -199,50 +253,72 @@ mod tests {
     #[test]
     fn db_pool_limits_split_the_configured_total() {
         assert_eq!(
-            parse_db_pool_limits(Some("50"), Some("16")).expect("configured pool limits"),
+            parse_db_pool_limits(Some("50"), Some("16"), None).expect("configured pool limits"),
             DbPoolLimits {
                 total: 50,
                 general: 34,
                 coordinate: 16,
+                shared: false,
             }
         );
     }
 
     #[test]
-    fn coordinate_default_scales_down_with_a_small_total() {
+    fn coordinate_headroom_scales_down_with_a_small_total() {
         assert_eq!(
-            parse_db_pool_limits(Some("16"), None).expect("derived pool limits"),
+            parse_db_pool_limits(Some("16"), None, None).expect("derived pool limits"),
             DbPoolLimits {
                 total: 16,
                 general: 8,
                 coordinate: 8,
+                shared: true,
             }
         );
         assert_eq!(
-            parse_db_pool_limits(Some("2"), None).expect("minimum split pool limits"),
+            parse_db_pool_limits(Some("2"), None, None).expect("minimum admission limits"),
             DbPoolLimits {
                 total: 2,
                 general: 1,
                 coordinate: 1,
+                shared: true,
             }
         );
-        assert!(parse_db_pool_limits(Some("1"), None).is_err());
+        assert!(parse_db_pool_limits(Some("1"), None, None).is_err());
     }
 
     #[test]
     fn db_pool_limits_reject_zero_and_non_numbers() {
-        assert!(parse_db_pool_limits(Some("0"), None).is_err());
-        assert!(parse_db_pool_limits(Some(""), None).is_err());
-        assert!(parse_db_pool_limits(Some("many"), None).is_err());
-        assert!(parse_db_pool_limits(None, Some("0")).is_err());
-        assert!(parse_db_pool_limits(None, Some("")).is_err());
-        assert!(parse_db_pool_limits(None, Some("many")).is_err());
+        assert!(parse_db_pool_limits(Some("0"), None, None).is_err());
+        assert!(parse_db_pool_limits(Some(""), None, None).is_err());
+        assert!(parse_db_pool_limits(Some("many"), None, None).is_err());
+        assert!(parse_db_pool_limits(None, Some("0"), None).is_err());
+        assert!(parse_db_pool_limits(None, Some(""), None).is_err());
+        assert!(parse_db_pool_limits(None, Some("many"), None).is_err());
+        assert!(parse_db_pool_limits(None, None, Some("0")).is_err());
+        assert!(parse_db_pool_limits(None, None, Some("")).is_err());
+        assert!(parse_db_pool_limits(None, None, Some("many")).is_err());
     }
 
     #[test]
     fn coordinate_pool_must_leave_at_least_one_general_connection() {
-        assert!(parse_db_pool_limits(Some("16"), Some("16")).is_err());
-        assert!(parse_db_pool_limits(Some("15"), Some("16")).is_err());
+        assert!(parse_db_pool_limits(Some("16"), Some("16"), None).is_err());
+        assert!(parse_db_pool_limits(Some("15"), Some("16"), None).is_err());
+    }
+
+    #[test]
+    fn shared_pool_uses_general_permits_with_coordinate_headroom() {
+        assert_eq!(
+            parse_db_pool_limits(Some("50"), None, Some("26"))
+                .expect("shared pool admission limits"),
+            DbPoolLimits {
+                total: 50,
+                general: 26,
+                coordinate: 24,
+                shared: true,
+            }
+        );
+        assert!(parse_db_pool_limits(Some("50"), None, Some("50")).is_err());
+        assert!(parse_db_pool_limits(Some("50"), Some("24"), Some("26")).is_err());
     }
 }
 
@@ -250,6 +326,7 @@ fn spawn_latest_chair_location_reconciliation(app_state: &AppState) {
     let pool = app_state.pool.clone();
     let latest_chair_locations = app_state.latest_chair_locations.clone();
     let maintenance_lock = app_state.maintenance_lock.clone();
+    let general_db_admission = app_state.general_db_admission.clone();
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(2));
         interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
@@ -258,6 +335,9 @@ fn spawn_latest_chair_location_reconciliation(app_state: &AppState) {
         loop {
             interval.tick().await;
             let _maintenance_guard = maintenance_lock.read().await;
+            let _admission_guard = general_db_admission
+                .acquire("latest_location_reconcile", &pool)
+                .await;
             if let Err(error) = latest_chair_locations.reconcile(&pool).await {
                 tracing::warn!(%error, "failed to reconcile latest chair locations");
             }
@@ -283,6 +363,7 @@ async fn post_initialize(
         latest_chair_locations,
         active_ride_evaluations,
         maintenance_lock,
+        general_db_admission,
         ..
     }): State<AppState>,
     axum::Json(req): axum::Json<PostInitializeRequest>,
@@ -308,6 +389,9 @@ async fn post_initialize(
         });
     }
 
+    let _admission_guard = general_db_admission
+        .acquire("initialize_refresh", &pool)
+        .await;
     sqlx::query("UPDATE settings SET value = ? WHERE name = 'payment_gateway_url'")
         .bind(req.payment_server)
         .execute(&pool)

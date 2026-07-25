@@ -6,10 +6,13 @@ use axum::{
 use http_body::{Body as HttpBody, Frame, SizeHint};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::pin::Pin;
-use std::sync::{Arc, Mutex as StdMutex, RwLock as StdRwLock};
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Arc, Mutex as StdMutex, RwLock as StdRwLock,
+};
 use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::{Mutex, OwnedSemaphorePermit, RwLock, Semaphore};
 
 use crate::models::{Chair, Owner, User};
 
@@ -19,6 +22,9 @@ pub(crate) mod notification_diagnostic;
 
 pub(crate) const NOTIFICATION_RETRY_AFTER_MS: i32 = 30;
 pub(crate) const CACHED_NOTIFICATION_RETRY_AFTER_MS: i32 = 100;
+const DB_ADMISSION_DIAGNOSTIC_SAMPLE_EVERY: u64 = 64;
+const DB_ADMISSION_FORCE_SAMPLE_MICROSECONDS: u64 = 30_000;
+static DB_ADMISSION_DIAGNOSTIC_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone)]
 pub struct AppState {
@@ -32,6 +38,83 @@ pub struct AppState {
     pub latest_chair_locations: LatestChairLocationCache,
     pub active_ride_evaluations: ActiveRideEvaluationTracker,
     pub maintenance_lock: Arc<RwLock<()>>,
+    pub general_db_admission: DbAdmission,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct DbAdmission {
+    semaphore: Option<Arc<Semaphore>>,
+}
+
+#[derive(serde::Serialize)]
+struct DbAdmissionDiagnosticSample {
+    sequence: u64,
+    periodic_sample: bool,
+    label: String,
+    wait_us: u64,
+    available_before: usize,
+    available_after: usize,
+    pool_size_before: u32,
+    pool_idle_before: usize,
+    pool_in_use_before: u64,
+    event_at_unix_us: u64,
+}
+
+impl DbAdmission {
+    pub fn limited(permits: usize) -> Self {
+        assert!(permits > 0, "database admission permits must be positive");
+        Self {
+            semaphore: Some(Arc::new(Semaphore::new(permits))),
+        }
+    }
+
+    pub fn is_limited(&self) -> bool {
+        self.semaphore.is_some()
+    }
+
+    pub async fn acquire(
+        &self,
+        label: &str,
+        pool: &sqlx::MySqlPool,
+    ) -> Option<OwnedSemaphorePermit> {
+        let semaphore = self.semaphore.as_ref()?;
+        let diagnostic_enabled = drive_diagnostic::enabled();
+        let sequence = diagnostic_enabled
+            .then(|| DB_ADMISSION_DIAGNOSTIC_SEQUENCE.fetch_add(1, Ordering::Relaxed));
+        let started_at = diagnostic_enabled.then(Instant::now);
+        let available_before = semaphore.available_permits();
+        let pool_size_before = pool.size();
+        let pool_idle_before = pool.num_idle();
+        let permit = Arc::clone(semaphore)
+            .acquire_owned()
+            .await
+            .expect("database admission semaphore is never closed");
+
+        if let (Some(sequence), Some(started_at)) = (sequence, started_at) {
+            let wait_us = drive_diagnostic::duration_us(started_at.elapsed());
+            let periodic_sample = sequence % DB_ADMISSION_DIAGNOSTIC_SAMPLE_EVERY == 0;
+            if periodic_sample || wait_us >= DB_ADMISSION_FORCE_SAMPLE_MICROSECONDS {
+                drive_diagnostic::emit(
+                    "DB_ADMISSION_DIAGNOSTIC",
+                    &DbAdmissionDiagnosticSample {
+                        sequence,
+                        periodic_sample,
+                        label: label.to_owned(),
+                        wait_us,
+                        available_before,
+                        available_after: semaphore.available_permits(),
+                        pool_size_before,
+                        pool_idle_before,
+                        pool_in_use_before: u64::from(pool_size_before)
+                            .saturating_sub(u64::try_from(pool_idle_before).unwrap_or(u64::MAX)),
+                        event_at_unix_us: drive_diagnostic::unix_time_us(),
+                    },
+                );
+            }
+        }
+
+        Some(permit)
+    }
 }
 
 #[derive(Clone, Default)]
@@ -1114,14 +1197,55 @@ GROUP BY chair_id
 mod tests {
     use super::{
         hold_active_evaluation_until_response_drop, insert_if_newer, merge_newer_locations,
-        merge_recorded_at_high_watermarks, ActiveRideEvaluationTracker, LatestChairLocation,
-        LatestChairLocationCache, NotificationCache, EVALUATION_RESPONSE_DELIVERY_GRACE,
+        merge_recorded_at_high_watermarks, ActiveRideEvaluationTracker, DbAdmission,
+        LatestChairLocation, LatestChairLocationCache, NotificationCache,
+        EVALUATION_RESPONSE_DELIVERY_GRACE,
     };
     use axum::body::Bytes;
     use axum::response::IntoResponse;
     use std::collections::HashMap;
     use std::sync::Arc;
-    use std::time::Instant;
+    use std::time::{Duration, Instant};
+
+    #[tokio::test]
+    async fn database_admission_limits_concurrent_general_work() {
+        let pool = sqlx::mysql::MySqlPoolOptions::new()
+            .connect_lazy("mysql://isucon:isucon@localhost/isuride")
+            .expect("lazy pool");
+        let admission = DbAdmission::limited(1);
+
+        let first = admission
+            .acquire("first", &pool)
+            .await
+            .expect("limited admission returns a guard");
+        assert!(tokio::time::timeout(
+            Duration::from_millis(10),
+            admission.acquire("second", &pool)
+        )
+        .await
+        .is_err());
+
+        drop(first);
+        assert!(tokio::time::timeout(
+            Duration::from_millis(100),
+            admission.acquire("second", &pool)
+        )
+        .await
+        .expect("second admission must wake")
+        .is_some());
+    }
+
+    #[tokio::test]
+    async fn disabled_database_admission_does_not_return_a_guard() {
+        let pool = sqlx::mysql::MySqlPoolOptions::new()
+            .connect_lazy("mysql://isucon:isucon@localhost/isuride")
+            .expect("lazy pool");
+
+        assert!(DbAdmission::default()
+            .acquire("disabled", &pool)
+            .await
+            .is_none());
+    }
 
     #[test]
     fn notification_cache_returns_a_current_payload() {

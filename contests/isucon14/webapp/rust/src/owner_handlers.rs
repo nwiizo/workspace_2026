@@ -40,7 +40,11 @@ struct OwnerPostOwnersResponse {
 }
 
 async fn owner_post_owners(
-    State(AppState { pool, .. }): State<AppState>,
+    State(AppState {
+        pool,
+        general_db_admission,
+        ..
+    }): State<AppState>,
     jar: CookieJar,
     axum::Json(req): axum::Json<OwnerPostOwnersRequest>,
 ) -> Result<(CookieJar, (StatusCode, axum::Json<OwnerPostOwnersResponse>)), Error> {
@@ -48,6 +52,9 @@ async fn owner_post_owners(
     let access_token = crate::secure_random_str(32);
     let chair_register_token = crate::secure_random_str(32);
 
+    let _admission_guard = general_db_admission
+        .acquire("owner_post_owners", &pool)
+        .await;
     sqlx::query(
         "INSERT INTO owners (id, name, access_token, chair_register_token) VALUES (?, ?, ?, ?)",
     )
@@ -102,6 +109,7 @@ async fn owner_get_sales(
     State(AppState {
         pool,
         active_ride_evaluations,
+        general_db_admission,
         ..
     }): State<AppState>,
     axum::Extension(owner): axum::Extension<Owner>,
@@ -130,6 +138,7 @@ async fn owner_get_sales(
     // time-based exclusion could hide a ride already included by the client's
     // lower-bound snapshot and make sales too small.
     let evaluation_snapshot = active_ride_evaluations.snapshot();
+    let _admission_guard = general_db_admission.acquire("owner_get_sales", &pool).await;
     let mut tx = pool.begin().await?;
 
     let chairs: Vec<Chair> = sqlx::query_as("SELECT * FROM chairs WHERE owner_id = ?")
@@ -431,7 +440,11 @@ fn should_suppress_owner_distance_timestamp(
 }
 
 async fn owner_get_chairs(
-    State(AppState { pool, .. }): State<AppState>,
+    State(AppState {
+        pool,
+        general_db_admission,
+        ..
+    }): State<AppState>,
     axum::Extension(owner): axum::Extension<Owner>,
 ) -> Result<axum::Json<OwnerGetChairResponse>, Error> {
     let started_at = Instant::now();
@@ -445,6 +458,9 @@ async fn owner_get_chairs(
         - chrono::Duration::milliseconds(OWNER_DISTANCE_VISIBILITY_LAG_MILLISECONDS);
     let freshness_boundary = request_started_at
         - chrono::Duration::milliseconds(OWNER_DISTANCE_MAX_STALENESS_MILLISECONDS);
+    let _admission_guard = general_db_admission
+        .acquire("owner_get_chairs", &pool)
+        .await;
     let chairs: Vec<ChairWithDetail> = sqlx::query_as(r#"SELECT chairs.id,
        chairs.name,
        chairs.model,

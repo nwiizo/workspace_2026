@@ -21,6 +21,23 @@ esac
 "$script_dir/up.sh"
 "$compose" --profile benchmark build benchmark
 
+mysql_status_sampler_pid=
+stop_mysql_status_sampler() {
+  if [ -n "$mysql_status_sampler_pid" ]; then
+    kill "$mysql_status_sampler_pid" >/dev/null 2>&1 || true
+    wait "$mysql_status_sampler_pid" 2>/dev/null || true
+    mysql_status_sampler_pid=
+  fi
+}
+trap 'stop_mysql_status_sampler; exit 129' HUP
+trap 'stop_mysql_status_sampler; exit 130' INT
+trap 'stop_mysql_status_sampler; exit 143' TERM
+
+if [ -n "${MYSQL_STATUS_OUTPUT_FILE:-}" ]; then
+  "$script_dir/sample-mysql-status.sh" "$MYSQL_STATUS_OUTPUT_FILE" &
+  mysql_status_sampler_pid=$!
+fi
+
 benchmark_name="isucon14-benchmark-$$"
 set -- run \
   --target http://nginx \
@@ -40,7 +57,20 @@ if [ -n "${BENCHMARK_OUTPUT_FILE:-}" ]; then
     benchmark "$@" >"$BENCHMARK_OUTPUT_FILE" 2>&1
   benchmark_status=$?
   set -e
+  stop_mysql_status_sampler
   cat "$BENCHMARK_OUTPUT_FILE"
+  exit "$benchmark_status"
+fi
+
+if [ -n "$mysql_status_sampler_pid" ]; then
+  set +e
+  "$compose" --profile benchmark run \
+    --rm \
+    --name "$benchmark_name" \
+    benchmark "$@"
+  benchmark_status=$?
+  set -e
+  stop_mysql_status_sampler
   exit "$benchmark_status"
 fi
 

@@ -60,10 +60,17 @@ struct ChairPostChairsResponse {
 }
 
 async fn chair_post_chairs(
-    State(AppState { pool, .. }): State<AppState>,
+    State(AppState {
+        pool,
+        general_db_admission,
+        ..
+    }): State<AppState>,
     jar: CookieJar,
     axum::Json(req): axum::Json<ChairPostChairsRequest>,
 ) -> Result<(CookieJar, (StatusCode, axum::Json<ChairPostChairsResponse>)), Error> {
+    let _admission_guard = general_db_admission
+        .acquire("chair_post_chairs", &pool)
+        .await;
     let Some(owner): Option<Owner> =
         sqlx::query_as("SELECT * FROM owners WHERE chair_register_token = ?")
             .bind(req.chair_register_token)
@@ -106,10 +113,17 @@ struct PostChairActivityRequest {
 }
 
 async fn chair_post_activity(
-    State(AppState { pool, .. }): State<AppState>,
+    State(AppState {
+        pool,
+        general_db_admission,
+        ..
+    }): State<AppState>,
     axum::Extension(chair): axum::Extension<Chair>,
     axum::Json(req): axum::Json<PostChairActivityRequest>,
 ) -> Result<StatusCode, Error> {
+    let _admission_guard = general_db_admission
+        .acquire("chair_post_activity", &pool)
+        .await;
     sqlx::query("UPDATE chairs SET is_active = ? WHERE id = ?")
         .bind(req.is_active)
         .bind(chair.id)
@@ -654,6 +668,7 @@ async fn chair_get_notification(
     State(AppState {
         pool,
         notification_cache,
+        general_db_admission,
         ..
     }): State<AppState>,
     axum::Extension(chair): axum::Extension<Chair>,
@@ -675,6 +690,9 @@ async fn chair_get_notification(
         return Ok(response);
     }
 
+    let admission_guard = general_db_admission
+        .acquire("chair_get_notification", &pool)
+        .await;
     if let Some(diagnostic) = &mut diagnostic {
         diagnostic.observe_pool(&pool, NotificationConnectionStage::InitialLookup);
         diagnostic.sample.terminal_phase = "initial_pool_acquire";
@@ -695,6 +713,7 @@ async fn chair_get_notification(
     }
     if ride_exists.is_none() {
         drop(initial_connection);
+        drop(admission_guard);
         if let Some(diagnostic) = &mut diagnostic {
             diagnostic.connection_released();
         }
@@ -819,6 +838,7 @@ LIMIT 1
         diagnostic.sample.commit_us = Some(diagnostic.elapsed_since_checkpoint_us());
     }
     drop(initial_connection);
+    drop(admission_guard);
     if let Some(diagnostic) = &mut diagnostic {
         diagnostic.connection_released();
         diagnostic.sample.terminal_phase = "response";
@@ -965,6 +985,7 @@ async fn chair_post_ride_status(
     State(AppState {
         pool,
         notification_cache,
+        general_db_admission,
         ..
     }): State<AppState>,
     axum::Extension(chair): axum::Extension<Chair>,
@@ -972,6 +993,9 @@ async fn chair_post_ride_status(
     axum::Json(req): axum::Json<PostChairRidesRideIDStatusRequest>,
 ) -> Result<StatusCode, Error> {
     let mut diagnostic = RideStatusDiagnostic::traced(&pool, &ride_id, &chair.id, &req.status);
+    let admission_guard = general_db_admission
+        .acquire("chair_post_ride_status", &pool)
+        .await;
     let mut connection = pool.acquire().await?;
     if let Some(diagnostic) = &mut diagnostic {
         diagnostic.sample.pool_acquire_us = diagnostic.elapsed_since_checkpoint_us();
@@ -1048,6 +1072,7 @@ async fn chair_post_ride_status(
         diagnostic.sample.terminal_phase = "cache_invalidation";
     }
     drop(connection);
+    drop(admission_guard);
     notification_cache.invalidate_app(&ride.user_id);
     notification_cache.invalidate_chair(&chair.id);
     if let Some(diagnostic) = diagnostic {

@@ -8,7 +8,10 @@ use crate::{AppState, Error};
 
 pub async fn app_auth_middleware(
     State(AppState {
-        pool, auth_cache, ..
+        pool,
+        auth_cache,
+        general_db_admission,
+        ..
     }): State<AppState>,
     jar: CookieJar,
     mut req: Request,
@@ -21,6 +24,9 @@ pub async fn app_auth_middleware(
     let user = if let Some(user) = auth_cache.user(access_token) {
         user
     } else {
+        let _admission_guard = general_db_admission
+            .acquire("app_auth_cache_miss", &pool)
+            .await;
         let Some(user): Option<User> = sqlx::query_as("SELECT * FROM users WHERE access_token = ?")
             .bind(access_token)
             .fetch_optional(&pool)
@@ -39,7 +45,10 @@ pub async fn app_auth_middleware(
 
 pub async fn owner_auth_middleware(
     State(AppState {
-        pool, auth_cache, ..
+        pool,
+        auth_cache,
+        general_db_admission,
+        ..
     }): State<AppState>,
     jar: CookieJar,
     mut req: Request,
@@ -52,6 +61,9 @@ pub async fn owner_auth_middleware(
     let owner = if let Some(owner) = auth_cache.owner(access_token) {
         owner
     } else {
+        let _admission_guard = general_db_admission
+            .acquire("owner_auth_cache_miss", &pool)
+            .await;
         let Some(owner): Option<Owner> =
             sqlx::query_as("SELECT * FROM owners WHERE access_token = ?")
                 .bind(access_token)
@@ -71,7 +83,10 @@ pub async fn owner_auth_middleware(
 
 pub async fn chair_auth_middleware(
     State(AppState {
-        pool, auth_cache, ..
+        pool,
+        auth_cache,
+        general_db_admission,
+        ..
     }): State<AppState>,
     jar: CookieJar,
     mut req: Request,
@@ -84,6 +99,9 @@ pub async fn chair_auth_middleware(
     let chair = if let Some(chair) = auth_cache.chair(access_token) {
         chair
     } else {
+        let _admission_guard = general_db_admission
+            .acquire("chair_auth_cache_miss", &pool)
+            .await;
         let Some(chair): Option<Chair> =
             sqlx::query_as("SELECT * FROM chairs WHERE access_token = ?")
                 .bind(access_token)

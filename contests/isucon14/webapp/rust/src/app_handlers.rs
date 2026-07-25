@@ -114,7 +114,11 @@ fn duplicate_username_fallback(user_id: &str) -> String {
 }
 
 async fn app_post_users(
-    State(AppState { pool, .. }): State<AppState>,
+    State(AppState {
+        pool,
+        general_db_admission,
+        ..
+    }): State<AppState>,
     jar: CookieJar,
     axum::Json(req): axum::Json<AppPostUsersRequest>,
 ) -> Result<(CookieJar, (StatusCode, axum::Json<AppPostUsersResponse>)), Error> {
@@ -122,6 +126,7 @@ async fn app_post_users(
     let access_token = crate::secure_random_str(32);
     let invitation_code = crate::secure_random_str(15);
 
+    let _admission_guard = general_db_admission.acquire("app_post_users", &pool).await;
     let mut tx = pool.begin().await?;
 
     if let Err(error) = insert_user(
@@ -265,10 +270,17 @@ struct AppPostPaymentMethodsRequest {
 }
 
 async fn app_post_payment_methods(
-    State(AppState { pool, .. }): State<AppState>,
+    State(AppState {
+        pool,
+        general_db_admission,
+        ..
+    }): State<AppState>,
     axum::Extension(user): axum::Extension<User>,
     axum::Json(req): axum::Json<AppPostPaymentMethodsRequest>,
 ) -> Result<StatusCode, Error> {
+    let _admission_guard = general_db_admission
+        .acquire("app_post_payment_methods", &pool)
+        .await;
     sqlx::query("INSERT INTO payment_tokens (user_id, token) VALUES (?, ?)")
         .bind(user.id)
         .bind(req.token)
@@ -304,9 +316,14 @@ struct GetAppRidesResponseItemChair {
 }
 
 async fn app_get_rides(
-    State(AppState { pool, .. }): State<AppState>,
+    State(AppState {
+        pool,
+        general_db_admission,
+        ..
+    }): State<AppState>,
     axum::Extension(user): axum::Extension<User>,
 ) -> Result<axum::Json<GetAppRidesResponse>, Error> {
+    let _admission_guard = general_db_admission.acquire("app_get_rides", &pool).await;
     let mut tx = pool.begin().await?;
 
     let rides: Vec<Ride> =
@@ -387,6 +404,7 @@ async fn app_post_rides(
     State(AppState {
         pool,
         notification_cache,
+        general_db_admission,
         ..
     }): State<AppState>,
     axum::Extension(user): axum::Extension<User>,
@@ -394,6 +412,7 @@ async fn app_post_rides(
 ) -> Result<(StatusCode, axum::Json<AppPostRidesResponse>), Error> {
     let ride_id = Ulid::new().to_string();
 
+    let _admission_guard = general_db_admission.acquire("app_post_rides", &pool).await;
     let mut tx = pool.begin().await?;
 
     let rides: Vec<Ride> = sqlx::query_as("SELECT * FROM rides WHERE user_id = ?")
@@ -516,10 +535,17 @@ struct AppPostRidesEstimatedFareResponse {
 }
 
 async fn app_post_rides_estimated_fare(
-    State(AppState { pool, .. }): State<AppState>,
+    State(AppState {
+        pool,
+        general_db_admission,
+        ..
+    }): State<AppState>,
     axum::Extension(user): axum::Extension<User>,
     axum::Json(req): axum::Json<AppPostRidesEstimatedFareRequest>,
 ) -> Result<axum::Json<AppPostRidesEstimatedFareResponse>, Error> {
+    let _admission_guard = general_db_admission
+        .acquire("app_post_rides_estimated_fare", &pool)
+        .await;
     let mut tx = pool.begin().await?;
 
     let discounted = calculate_discounted_fare(
@@ -781,6 +807,7 @@ async fn app_post_ride_evaluation(
         payment_client,
         active_ride_evaluations,
         notification_cache,
+        general_db_admission,
         ..
     }): State<AppState>,
     axum::Extension(user): axum::Extension<User>,
@@ -794,6 +821,12 @@ async fn app_post_ride_evaluation(
 
     if let Some(diagnostic) = &mut diagnostic {
         diagnostic.sample.validation_us = diagnostic.elapsed_since_checkpoint_us();
+    }
+    let preparation_admission_guard = general_db_admission
+        .acquire("app_post_ride_evaluation_prepare", &pool)
+        .await;
+    if let Some(diagnostic) = &mut diagnostic {
+        let _admission_wait_us = diagnostic.elapsed_since_checkpoint_us();
         let pool_size = u64::from(pool.size());
         let pool_idle = u64::try_from(pool.num_idle()).unwrap_or(u64::MAX);
         diagnostic.sample.pool_size_before = Some(pool_size);
@@ -890,6 +923,7 @@ async fn app_post_ride_evaluation(
         diagnostic.sample.preparation_commit_us = diagnostic.elapsed_since_checkpoint_us();
     }
     drop(connection);
+    drop(preparation_admission_guard);
     if let Some(diagnostic) = &mut diagnostic {
         diagnostic.connection_released();
         diagnostic.sample.terminal_phase = "payment";
@@ -912,7 +946,11 @@ async fn app_post_ride_evaluation(
         diagnostic.sync_payment_sample();
     }
     payment_result?;
+    let completion_admission_guard = general_db_admission
+        .acquire("app_post_ride_evaluation_complete", &pool)
+        .await;
     if let Some(diagnostic) = &mut diagnostic {
+        let _admission_wait_us = diagnostic.elapsed_since_checkpoint_us();
         let pool_size = u64::from(pool.size());
         let pool_idle = u64::try_from(pool.num_idle()).unwrap_or(u64::MAX);
         diagnostic.sample.completion_pool_size_before = Some(pool_size);
@@ -1012,6 +1050,7 @@ ON DUPLICATE KEY UPDATE
         diagnostic.sample.commit_us = diagnostic.elapsed_since_checkpoint_us();
     }
     drop(connection);
+    drop(completion_admission_guard);
     if let Some(diagnostic) = &mut diagnostic {
         diagnostic.connection_released();
         diagnostic.sample.terminal_phase = "cache_response";
@@ -1073,6 +1112,7 @@ async fn app_get_notification(
     State(AppState {
         pool,
         notification_cache,
+        general_db_admission,
         ..
     }): State<AppState>,
     axum::Extension(user): axum::Extension<User>,
@@ -1094,6 +1134,9 @@ async fn app_get_notification(
         return Ok(response);
     }
 
+    let admission_guard = general_db_admission
+        .acquire("app_get_notification", &pool)
+        .await;
     if let Some(diagnostic) = &mut diagnostic {
         diagnostic.observe_pool(&pool, NotificationConnectionStage::InitialLookup);
         diagnostic.sample.terminal_phase = "initial_pool_acquire";
@@ -1115,6 +1158,7 @@ async fn app_get_notification(
     }
     let Some((_, dependency_chair_id)) = latest_ride else {
         drop(initial_connection);
+        drop(admission_guard);
         if let Some(diagnostic) = &mut diagnostic {
             diagnostic.connection_released();
         }
@@ -1272,6 +1316,7 @@ async fn app_get_notification(
         diagnostic.sample.commit_us = Some(diagnostic.elapsed_since_checkpoint_us());
     }
     drop(initial_connection);
+    drop(admission_guard);
     if let Some(diagnostic) = &mut diagnostic {
         diagnostic.connection_released();
         diagnostic.sample.terminal_phase = "response";
@@ -1373,6 +1418,7 @@ async fn app_get_nearby_chairs(
         pool,
         latest_chair_locations,
         active_ride_evaluations,
+        general_db_admission,
         ..
     }): State<AppState>,
     Query(query): Query<AppGetNearbyChairsQuery>,
@@ -1387,6 +1433,9 @@ async fn app_get_nearby_chairs(
     // for a pool connection or an evaluation transaction. Active IDs alone
     // can miss an evaluation that both starts and ends during that wait.
     let evaluation_snapshot = active_ride_evaluations.snapshot();
+    let _admission_guard = general_db_admission
+        .acquire("app_get_nearby_chairs", &pool)
+        .await;
     let chairs: Vec<NearbyChair> = sqlx::query_as(
         r#"
 SELECT chairs.id,

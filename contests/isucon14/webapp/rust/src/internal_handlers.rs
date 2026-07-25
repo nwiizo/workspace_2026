@@ -131,9 +131,13 @@ async fn internal_get_matching(
     State(AppState {
         pool,
         notification_cache,
+        general_db_admission,
         ..
     }): State<AppState>,
 ) -> Result<StatusCode, Error> {
+    let _admission_guard = general_db_admission
+        .acquire("internal_get_matching", &pool)
+        .await;
     let mut diagnostic = MatcherDiagnostic::sampled(&pool);
     let mut tx = pool.begin().await?;
     if let Some(diagnostic) = &mut diagnostic {
