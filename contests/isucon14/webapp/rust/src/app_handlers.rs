@@ -322,6 +322,8 @@ static APP_RIDES_DIAGNOSTICS_ENABLED: OnceLock<bool> = OnceLock::new();
 #[derive(serde::Serialize)]
 struct AppRidesDiagnosticSample {
     sequence: u64,
+    path: &'static str,
+    cache_lookup_us: Option<u64>,
     admission_us: Option<u64>,
     pool_acquire_us: Option<u64>,
     pool_size_before: Option<u64>,
@@ -332,6 +334,7 @@ struct AppRidesDiagnosticSample {
     connection_owned_us: Option<u64>,
     mapping_us: Option<u64>,
     response_us: Option<u64>,
+    cache_insert_us: Option<u64>,
     total_us: u64,
     residual_us: u64,
     outcome: &'static str,
@@ -368,6 +371,8 @@ impl AppRidesDiagnostic {
             connection_acquired_at: None,
             sample: AppRidesDiagnosticSample {
                 sequence,
+                path: "unknown",
+                cache_lookup_us: None,
                 admission_us: None,
                 pool_acquire_us: None,
                 pool_size_before: None,
@@ -378,10 +383,11 @@ impl AppRidesDiagnostic {
                 connection_owned_us: None,
                 mapping_us: None,
                 response_us: None,
+                cache_insert_us: None,
                 total_us: 0,
                 residual_us: 0,
                 outcome: "error_or_cancelled",
-                terminal_phase: "admission",
+                terminal_phase: "cache_lookup",
                 event_at_unix_us: 0,
             },
             emitted: false,
@@ -423,12 +429,14 @@ impl AppRidesDiagnostic {
         self.sample.total_us = crate::drive_diagnostic::duration_us(self.started_at.elapsed());
         let measured_us = self
             .sample
-            .admission_us
+            .cache_lookup_us
             .unwrap_or_default()
+            .saturating_add(self.sample.admission_us.unwrap_or_default())
             .saturating_add(self.sample.pool_acquire_us.unwrap_or_default())
             .saturating_add(self.sample.sql_decode_us.unwrap_or_default())
             .saturating_add(self.sample.mapping_us.unwrap_or_default())
-            .saturating_add(self.sample.response_us.unwrap_or_default());
+            .saturating_add(self.sample.response_us.unwrap_or_default())
+            .saturating_add(self.sample.cache_insert_us.unwrap_or_default());
         self.sample.residual_us = self.sample.total_us.saturating_sub(measured_us);
         self.sample.event_at_unix_us = crate::drive_diagnostic::unix_time_us();
         crate::drive_diagnostic::emit("APP_RIDES_DIAGNOSTIC", &self.sample);
@@ -501,12 +509,31 @@ impl AppRideRow {
 async fn app_get_rides(
     State(AppState {
         pool,
+        app_ride_history_cache,
         general_db_admission,
         ..
     }): State<AppState>,
     axum::Extension(user): axum::Extension<User>,
 ) -> Result<Response, Error> {
     let mut diagnostic = AppRidesDiagnostic::sampled();
+    let (cached_payload, cache_revision) = app_ride_history_cache.get(&user.id);
+    if let Some(diagnostic) = &mut diagnostic {
+        diagnostic.sample.cache_lookup_us = Some(diagnostic.elapsed_since_checkpoint_us());
+    }
+    if let Some(cached_payload) = cached_payload {
+        let response = crate::json_bytes_response(cached_payload);
+        if let Some(mut diagnostic) = diagnostic {
+            diagnostic.sample.path = "cache_hit";
+            diagnostic.sample.terminal_phase = "response";
+            diagnostic.sample.response_us = Some(diagnostic.elapsed_since_checkpoint_us());
+            diagnostic.emit_success();
+        }
+        return Ok(response);
+    }
+    if let Some(diagnostic) = &mut diagnostic {
+        diagnostic.sample.path = "db_miss";
+        diagnostic.sample.terminal_phase = "admission";
+    }
     let _admission_guard = general_db_admission.acquire("app_get_rides", &pool).await;
     if let Some(diagnostic) = &mut diagnostic {
         diagnostic.sample.admission_us = Some(diagnostic.elapsed_since_checkpoint_us());
@@ -575,9 +602,18 @@ ORDER BY rides.created_at DESC
     // The admission permit protects the DB phase. Release it before JSON
     // serialization, matching the previous Json<T> return path.
     drop(_admission_guard);
-    let response = axum::Json(GetAppRidesResponse { rides: items }).into_response();
-    if let Some(mut diagnostic) = diagnostic {
+    let payload =
+        axum::body::Bytes::from(serde_json::to_vec(&GetAppRidesResponse { rides: items })?);
+    if let Some(diagnostic) = &mut diagnostic {
         diagnostic.sample.response_us = Some(diagnostic.elapsed_since_checkpoint_us());
+        diagnostic.sample.terminal_phase = "cache_insert";
+    }
+    app_ride_history_cache.insert_if_current(user.id, cache_revision, payload.clone());
+    if let Some(diagnostic) = &mut diagnostic {
+        diagnostic.sample.cache_insert_us = Some(diagnostic.elapsed_since_checkpoint_us());
+    }
+    let response = crate::json_bytes_response(payload);
+    if let Some(diagnostic) = diagnostic {
         diagnostic.emit_success();
     }
 
@@ -1006,6 +1042,7 @@ async fn app_post_ride_evaluation(
         payment_client,
         active_ride_evaluations,
         notification_cache,
+        app_ride_history_cache,
         general_db_admission,
         ..
     }): State<AppState>,
@@ -1257,6 +1294,7 @@ ON DUPLICATE KEY UPDATE
     notification_cache.invalidate_app(&user.id);
     notification_cache.invalidate_chair(&chair_id);
     notification_cache.invalidate_chair_stats(&chair_id);
+    app_ride_history_cache.invalidate(&user.id);
 
     let response = axum::Json(AppPostRideEvaluationResponse {
         fare,

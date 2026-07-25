@@ -199,6 +199,7 @@ async fn main() -> anyhow::Result<()> {
             .context("failed to initialize payment HTTP client")?,
         auth_cache,
         notification_cache: NotificationCache::default(),
+        app_ride_history_cache: isuride::AppRideHistoryCache::default(),
         latest_chair_locations,
         active_ride_evaluations: ActiveRideEvaluationTracker::default(),
         maintenance_lock: Arc::new(RwLock::new(())),
@@ -360,6 +361,7 @@ async fn post_initialize(
         pool,
         auth_cache,
         notification_cache,
+        app_ride_history_cache,
         latest_chair_locations,
         active_ride_evaluations,
         maintenance_lock,
@@ -378,6 +380,7 @@ async fn post_initialize(
     // database generation.
     auth_cache.clear();
     notification_cache.clear();
+    app_ride_history_cache.clear();
     active_ride_evaluations.clear();
     let output = tokio::process::Command::new("../sql/init.sh")
         .output()

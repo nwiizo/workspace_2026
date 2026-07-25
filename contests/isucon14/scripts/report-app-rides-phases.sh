@@ -109,12 +109,23 @@ jq --slurp --raw-output '
 ' "$json_log"
 
 printf '\noutcome and terminal phase\n\n'
-printf '| outcome | terminal phase | samples |\n'
-printf '|---|---|---:|\n'
+printf '| path | outcome | terminal phase | samples |\n'
+printf '|---|---|---|---:|\n'
 jq --slurp --raw-output '
-  sort_by([.outcome, .terminal_phase]) |
-  group_by([.outcome, .terminal_phase])[] |
-  "| \(.[0].outcome) | \(.[0].terminal_phase) | \(length) |"
+  sort_by([.path, .outcome, .terminal_phase]) |
+  group_by([.path, .outcome, .terminal_phase])[] |
+  "| \(.[0].path) | \(.[0].outcome) | \(.[0].terminal_phase) | \(length) |"
+' "$json_log"
+
+printf '\ncache-hit share among successful samples\n\n'
+printf '| successful samples | cache hits | DB misses | cache-hit share |\n'
+printf '|---:|---:|---:|---:|\n'
+jq --slurp --raw-output '
+  [ .[] | select(.outcome == "success") ] as $samples |
+  ($samples | map(select(.path == "cache_hit")) | length) as $hits |
+  ($samples | map(select(.path == "db_miss")) | length) as $misses |
+  "| \($samples | length) | \($hits) | \($misses) | " +
+  "\((1000 * $hits / ($samples | length) | floor) / 10)% |"
 ' "$json_log"
 
 printf '\nsuccessful handler phase latency\n\n'
@@ -124,12 +135,14 @@ printf 'connection_owned_us overlaps sql_decode_us and is not part of the residu
 printf '| phase | samples | avg_us | p50_us | p95_us | p99_us | max_us |\n'
 printf '|---|---:|---:|---:|---:|---:|---:|\n'
 for phase in \
+  cache_lookup_us \
   admission_us \
   pool_acquire_us \
   sql_decode_us \
   connection_owned_us \
   mapping_us \
   response_us \
+  cache_insert_us \
   residual_us \
   total_us
 do
@@ -156,7 +169,16 @@ done
 printf '\nsummed component share among successful samples\n\n'
 printf '| component | summed_us | share of summed total |\n'
 printf '|---|---:|---:|\n'
-for phase in admission_us pool_acquire_us sql_decode_us mapping_us response_us residual_us; do
+for phase in \
+  cache_lookup_us \
+  admission_us \
+  pool_acquire_us \
+  sql_decode_us \
+  mapping_us \
+  response_us \
+  cache_insert_us \
+  residual_us
+do
   jq --slurp --raw-output --arg phase "$phase" '
     [ .[] | select(.outcome == "success") ] as $samples |
     ($samples | map(.total_us) | add) as $total |
@@ -170,7 +192,7 @@ printf '\nlatency by returned ride count\n\n'
 printf '| rows | samples | sql avg_us | mapping avg_us | response avg_us | total avg_us |\n'
 printf '|---:|---:|---:|---:|---:|---:|\n'
 jq --slurp --raw-output '
-  [ .[] | select(.outcome == "success") ] |
+  [ .[] | select(.outcome == "success" and .row_count != null) ] |
   sort_by(.row_count) |
   group_by(.row_count)[] |
   "| \(.[0].row_count) | \(length) | " +

@@ -35,6 +35,7 @@ pub struct AppState {
     pub payment_client: reqwest::Client,
     pub auth_cache: AuthCache,
     pub notification_cache: NotificationCache,
+    pub app_ride_history_cache: AppRideHistoryCache,
     pub latest_chair_locations: LatestChairLocationCache,
     pub active_ride_evaluations: ActiveRideEvaluationTracker,
     pub maintenance_lock: Arc<RwLock<()>>,
@@ -474,6 +475,90 @@ impl NotificationCache {
         state.chair_stats_revisions.clear();
         state.app_payloads.clear();
         state.chair_payloads.clear();
+    }
+}
+
+#[derive(Clone, Default)]
+pub struct AppRideHistoryCache {
+    inner: Arc<StdMutex<AppRideHistoryCacheState>>,
+}
+
+#[derive(Debug, Default)]
+struct AppRideHistoryCacheState {
+    generation: u64,
+    revisions: HashMap<String, u64>,
+    payloads: HashMap<String, Bytes>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct AppRideHistoryCacheRevision {
+    generation: u64,
+    revision: u64,
+}
+
+impl std::fmt::Debug for AppRideHistoryCache {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let state = self
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        formatter
+            .debug_struct("AppRideHistoryCache")
+            .field("generation", &state.generation)
+            .field("payloads", &state.payloads.len())
+            .finish()
+    }
+}
+
+impl AppRideHistoryCache {
+    pub(crate) fn get(&self, user_id: &str) -> (Option<Bytes>, AppRideHistoryCacheRevision) {
+        let state = self
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        (
+            state.payloads.get(user_id).cloned(),
+            AppRideHistoryCacheRevision {
+                generation: state.generation,
+                revision: state.revisions.get(user_id).copied().unwrap_or_default(),
+            },
+        )
+    }
+
+    pub(crate) fn insert_if_current(
+        &self,
+        user_id: String,
+        snapshot: AppRideHistoryCacheRevision,
+        payload: Bytes,
+    ) {
+        let mut state = self
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let revision = state.revisions.get(&user_id).copied().unwrap_or_default();
+        if state.generation == snapshot.generation && revision == snapshot.revision {
+            state.payloads.insert(user_id, payload);
+        }
+    }
+
+    pub(crate) fn invalidate(&self, user_id: &str) {
+        let mut state = self
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let revision = state.revisions.entry(user_id.to_owned()).or_default();
+        *revision = revision.wrapping_add(1);
+        state.payloads.remove(user_id);
+    }
+
+    pub fn clear(&self) {
+        let mut state = self
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.generation = state.generation.wrapping_add(1);
+        state.revisions.clear();
+        state.payloads.clear();
     }
 }
 
@@ -1198,8 +1283,8 @@ mod tests {
     use super::{
         calculate_fare_with_discount, hold_active_evaluation_until_response_drop, insert_if_newer,
         merge_newer_locations, merge_recorded_at_high_watermarks, ActiveRideEvaluationTracker,
-        DbAdmission, LatestChairLocation, LatestChairLocationCache, NotificationCache,
-        EVALUATION_RESPONSE_DELIVERY_GRACE,
+        AppRideHistoryCache, DbAdmission, LatestChairLocation, LatestChairLocationCache,
+        NotificationCache, EVALUATION_RESPONSE_DELIVERY_GRACE,
     };
     use axum::body::Bytes;
     use axum::response::IntoResponse;
@@ -1252,6 +1337,55 @@ mod tests {
             .acquire("disabled", &pool)
             .await
             .is_none());
+    }
+
+    #[test]
+    fn app_ride_history_cache_returns_current_payload() {
+        let cache = AppRideHistoryCache::default();
+        let (payload, revision) = cache.get("user-1");
+        assert!(payload.is_none());
+
+        cache.insert_if_current(
+            "user-1".to_owned(),
+            revision,
+            Bytes::from_static(b"ride-history"),
+        );
+
+        assert_eq!(
+            cache.get("user-1").0.unwrap(),
+            Bytes::from_static(b"ride-history")
+        );
+        assert!(cache.get("user-2").0.is_none());
+    }
+
+    #[test]
+    fn app_ride_history_cache_rejects_insert_after_invalidation() {
+        let cache = AppRideHistoryCache::default();
+        let (_, stale_revision) = cache.get("user-1");
+        cache.invalidate("user-1");
+
+        cache.insert_if_current(
+            "user-1".to_owned(),
+            stale_revision,
+            Bytes::from_static(b"stale"),
+        );
+
+        assert!(cache.get("user-1").0.is_none());
+    }
+
+    #[test]
+    fn app_ride_history_cache_clear_rejects_previous_generation() {
+        let cache = AppRideHistoryCache::default();
+        let (_, stale_revision) = cache.get("user-1");
+        cache.clear();
+
+        cache.insert_if_current(
+            "user-1".to_owned(),
+            stale_revision,
+            Bytes::from_static(b"stale"),
+        );
+
+        assert!(cache.get("user-1").0.is_none());
     }
 
     #[test]
