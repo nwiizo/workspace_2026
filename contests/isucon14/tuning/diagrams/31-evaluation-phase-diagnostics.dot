@@ -1,0 +1,20 @@
+digraph EvaluationPhaseDiagnostics {
+  graph [bgcolor="#f7f4ed", pad="0.25", nodesep="0.45", ranksep="0.48", fontname="Hiragino Sans", labelloc="t", label="Benchmark 31: 評価APIのconnection所有時間を分解する", fontsize="22"];
+  node [shape=box, style="rounded,filled", fillcolor="#ffffff", color="#17324d", fontcolor="#17324d", fontname="Hiragino Sans", fontsize="13", penwidth="1.8", margin="0.16,0.11"];
+  edge [color="#58708a", fontcolor="#58708a", fontname="Hiragino Sans", fontsize="11", penwidth="1.8", arrowsize="0.8"];
+  total [label="評価API total\n平均369.719ms"];
+  acquire [label="pool acquire\n49.957ms"];
+  owned [label="connection所有\n319.754ms"];
+  db [label="BEGIN・ride lock・fare・\n完了write・COMMIT\n合計は約17ms"];
+  payment [label="外部決済phase\n302.507ms", fillcolor="#fde2cf"];
+  http [label="HTTP request\n100.785ms"];
+  sleep [label="retry sleep\n201.719ms"];
+  conclusion [label="DB処理でなく外部待ち中の\nconnection保持がpoolを枯らす", fillcolor="#d8efeb"];
+  total -> acquire;
+  total -> owned;
+  owned -> db;
+  owned -> payment;
+  payment -> http;
+  payment -> sleep;
+  payment -> conclusion;
+}

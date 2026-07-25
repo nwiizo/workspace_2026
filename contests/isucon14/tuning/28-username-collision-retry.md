@@ -1,5 +1,9 @@
 # Benchmark 28: 生成username衝突の限定再試行
 
+![username衝突時だけ一度再試行する分岐図](./images/28-username-collision-retry.svg)
+
+_通常INSERTを維持し、usernameのUNIQUE衝突だけ内部名で1回再試行します。他のDB errorは隠さず、事前SELECTも増やさずに稀な登録失敗を防ぎます。_
+
 ## 結論
 
 `POST /api/app/users` で、ベンチマーカーが同じ `username` を再生成した場合だけ、

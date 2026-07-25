@@ -1,5 +1,9 @@
 # Benchmark 33: SQLx connection pool上限を50 / 75 / 100で比較
 
+![connection pool上限と待ち時間・競合の関係](./images/33-sqlx-pool-capacity.svg)
+
+_上限を増やすとacquire待ちは短くなっても、DBへ流れる同時処理とrow-lock競合が増えました。有限資源では50本でbackpressureを掛けた方が総合scoreを維持できます。_
+
 ## 結論
 
 SQLx connection poolの`max_connections`を50 / 75 / 100で比較し、50を維持しました。

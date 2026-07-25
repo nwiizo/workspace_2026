@@ -1,0 +1,16 @@
+digraph StatusSemanticOrder {
+  graph [bgcolor="#f7f4ed", pad="0.25", nodesep="0.42", ranksep="0.5", fontname="Hiragino Sans", labelloc="t", label="Benchmark 19: 記録時刻ではなく状態機械の順序で通知する", fontsize="22"];
+  node [shape=box, style="rounded,filled", fillcolor="#ffffff", color="#17324d", fontcolor="#17324d", fontname="Hiragino Sans", fontsize="14", penwidth="1.8", margin="0.17,0.11"];
+  edge [color="#58708a", fontcolor="#58708a", fontname="Hiragino Sans", fontsize="11", penwidth="1.8", arrowsize="0.8"];
+  semantic [label="意味上の遷移\nPICKUP → CARRYING"];
+  waits [label="並行transaction・lock待ち"];
+  recorded [label="記録時刻\nCARRYING → PICKUP", fillcolor="#fde2cf"];
+  old [label="ORDER BY created_at\n古いPICKUPを後から通知\nCODE=11"];
+  enum_order [label="schemaのENUM順\n状態ごとの固定順位", fillcolor="#d8efeb"];
+  new [label="未送信・最新・locking readを\n同じ意味順で選ぶ"];
+  result [label="wall clockが前後しても\n状態遷移順を維持", fillcolor="#d8efeb"];
+  semantic -> waits -> recorded -> old;
+  semantic -> enum_order -> new -> result;
+  {rank=same; recorded; enum_order}
+  {rank=same; old; new}
+}

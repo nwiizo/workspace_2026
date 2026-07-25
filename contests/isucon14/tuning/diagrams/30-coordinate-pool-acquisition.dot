@@ -1,0 +1,18 @@
+digraph CoordinatePoolAcquisition {
+  graph [bgcolor="#f7f4ed", pad="0.25", nodesep="0.46", ranksep="0.5", fontname="Hiragino Sans", labelloc="t", label="Benchmark 30: pool待ちとSQL BEGINを別々に測る", fontsize="22"];
+  node [shape=box, style="rounded,filled", fillcolor="#ffffff", color="#17324d", fontcolor="#17324d", fontname="Hiragino Sans", fontsize="14", penwidth="1.8", margin="0.18,0.12"];
+  edge [color="#58708a", fontcolor="#58708a", fontname="Hiragino Sans", fontsize="11", penwidth="1.8", arrowsize="0.8"];
+  begin [label="従来のpool.begin()\n取得待ちとBEGINが混在"];
+  split [label="phaseを分離"];
+  acquire [label="pool.acquire()\n平均43.657ms / p95 113.156ms", fillcolor="#fde2cf"];
+  sql_begin [label="connection.begin()\n平均0.611ms / p95 2.327ms"];
+  snapshot [label="78.1%のsampleで\nsize=50・idle=0"];
+  cause [label="主因はBEGIN文ではなく\nconnection枯渇", fillcolor="#d8efeb"];
+  next [label="上限を増やす前に\n長時間保持transactionを特定"];
+  begin -> split;
+  split -> acquire;
+  split -> sql_begin;
+  acquire -> snapshot -> cause;
+  sql_begin -> cause;
+  cause -> next;
+}

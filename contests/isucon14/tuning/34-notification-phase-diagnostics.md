@@ -2,6 +2,10 @@
 
 [チューニング目次へ戻る](../TUNING.md)
 
+![通知cache missで二度pool取得する処理の内訳](./images/34-notification-phase-diagnostics.svg)
+
+_cache missはride確認とtransaction開始でgeneral poolへ2回並んでいました。SQL所有時間より2回のacquire待ちが長く、同じconnectionを引き継ぐ仮説へ進みます。_
+
 ## 結論
 
 app / chair通知をcache hit、rideなし、未送信status、定常状態へ分け、cache missの

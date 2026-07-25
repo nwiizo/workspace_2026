@@ -1,5 +1,9 @@
 # Benchmark 21: 通知statusの1 SQL化は不採用
 
+![通知statusを二段階で読む方法と一つのSQLへまとめる方法の比較図](./images/21-notification-status-query.svg)
+
+_SQLを1本へまとめても、CTEとUNIONが毎回両候補を処理すると総仕事量は増えます。累積時間が約32秒から54秒へ悪化したため、単純な2段階へ戻しました。_
+
 ## 結論
 
 app / chair通知で行っていた「未送信status検索」と「未送信がない場合の最新status検索」を、

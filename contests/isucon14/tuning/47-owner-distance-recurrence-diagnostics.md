@@ -2,6 +2,10 @@
 
 [チューニング目次へ戻る](../TUNING.md)
 
+![実際の移動順と時刻で並べ替えた誤った移動順の比較](./images/47-owner-distance-recurrence.svg)
+
+_実際の移動はA→B→C→Dでも、同じchairのwall clockが逆行するとA→D→B→Cにsortされます。LAGが存在しない往復を距離へ加える原因を、chair単位の時系列結合で特定しました。_
+
 ## 結果
 
 Benchmark 46で再発した`CODE=26`を、owner応答、座標transaction、ベンチマーカー内部の

@@ -1,0 +1,14 @@
+digraph EvaluationTransactionSplit {
+  graph [bgcolor="#f7f4ed", pad="0.25", nodesep="0.45", ranksep="0.52", fontname="Hiragino Sans", labelloc="t", label="Benchmark 32: 外部決済を2つの短いtransactionの外へ出す", fontsize="22"];
+  node [shape=box, style="rounded,filled", fillcolor="#ffffff", color="#17324d", fontcolor="#17324d", fontname="Hiragino Sans", fontsize="14", penwidth="1.8", margin="0.18,0.12"];
+  edge [color="#58708a", fontcolor="#58708a", fontname="Hiragino Sans", fontsize="11", penwidth="1.8", arrowsize="0.8"];
+  prepare [label="準備transaction\nride lock・認可・状態確認\n決済情報を取得"];
+  release [label="COMMITして\nDB connectionをpoolへ返す", fillcolor="#d8efeb"];
+  payment [label="DB connectionなしで外部決済\nIdempotency-Key = ride ID"];
+  complete [label="完了transaction\nrideを再lock・再検証\n評価・stats・COMPLETEDを確定"];
+  result [label="connection所有平均\n319.754ms → 19.241ms", fillcolor="#d8efeb"];
+  safety [label="再lockと冪等keyで\n並行実行・再送の正当性を維持", fillcolor="#fff4df"];
+  prepare -> release -> payment -> complete -> result;
+  payment -> safety [style=dashed];
+  complete -> safety [style=dashed];
+}

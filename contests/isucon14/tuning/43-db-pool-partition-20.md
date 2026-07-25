@@ -1,5 +1,9 @@
 # Benchmark 43: coordinate 20 / general 30の中間比較
 
+![三つのDB pool配分を待ち時間と不満率で比較する図](./images/43-db-pool-partition-20.svg)
+
+_20 / 30はgeneral待ちを減らしてもcoordinate待ちが戻り、drive不満は最悪でした。配分とscoreは単調ではないため、診断上最良の24 / 26を通常3走で確認します。_
+
 ## 結論
 
 20 / 30はgeneral待ちを24 / 26より減らしましたが、coordinate pool待ちは共有pool時と

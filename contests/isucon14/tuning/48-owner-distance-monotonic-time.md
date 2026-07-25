@@ -2,6 +2,10 @@
 
 [チューニング目次へ戻る](../TUNING.md)
 
+![chairごとに記録時刻を必ず単調増加させる図](./images/48-owner-distance-monotonic-time.svg)
+
+_chairごとのhigh-water markをlockし、観測時刻が前回以下なら前回+1µsへ進めます。追加SQLなしでcreated_at順と実移動順を一致させ、距離の過大計算を防ぎます。_
+
 ## 結果
 
 Benchmark 47で実測した同一chairのwall clock逆行に対し、1 webapp process内で

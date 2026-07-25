@@ -1,5 +1,9 @@
 # Benchmark 40: drive区間を同一ride IDでphase分解
 
+![走行中の移動tickがpool待ちで止まる流れ](./images/40-drive-phase-diagnostics.svg)
+
+_benchmarkerはcoordinate responseまで次の移動tickを始めません。server時間の約84%をpool待ちが占め、予測blocked tickと実際の余分tickがほぼ一致しました。_
+
 ## 結論
 
 drive評価を落としていた主因は、matcherの距離選択ではなく、走行中の

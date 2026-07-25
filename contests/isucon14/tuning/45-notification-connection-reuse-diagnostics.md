@@ -2,6 +2,10 @@
 
 [チューニング目次へ戻る](../TUNING.md)
 
+![現在の配送状態機械を保ったまま通知connectionを再利用する図](./images/45-notification-connection-reuse-diagnostics.svg)
+
+_配送状態機械と通知cursorを変えず、ride確認に使ったconnectionからtransactionを開始します。全sampleで2回目acquireを消し、以前のCODE=29も再発しませんでした。_
+
 ## 結論
 
 app / chair通知のcache missで、ride存在確認に使ったSQLx connectionを返却せず、

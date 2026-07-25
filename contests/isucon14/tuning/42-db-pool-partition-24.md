@@ -1,5 +1,9 @@
 # Benchmark 42: coordinate 24 / general 26を診断比較
 
+![50接続をcoordinate 24本とgeneral 26本へ分けた診断結果](./images/42-db-pool-partition-24.svg)
+
+_coordinateを24本へ増やすと16本時より待ちが半減しましたが、general 26本はburstで飽和しました。診断1走だけで採用せず、中間配分と通常runへ進みます。_
+
 ## 結論
 
 総接続50のうちcoordinateへ24本を予約すると、Benchmark 41の16本よりcoordinateの

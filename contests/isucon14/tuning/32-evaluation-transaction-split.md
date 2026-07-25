@@ -1,5 +1,13 @@
 # Benchmark 32: 評価のDB transactionと外部決済を分離
 
+![評価処理を二つのDB transactionと外部決済へ分ける図](./images/32-evaluation-transaction-split.svg)
+
+_準備transaction後にconnectionを返し、外部決済をDB外で待ってから完了transactionを開始します。connection所有を平均約320msから19msへ短縮し、冪等keyと再lockで正当性を守ります。_
+
+![外部決済中にDB接続を握る場合と一度返す場合の比較](./images/32-evaluation-transaction-split-generated.webp)
+
+_左は外部決済の待ち時間にも有限なDBの鍵を持ち続け、他requestの列を伸ばします。右は準備後に鍵を返し、決済中は鍵を使わず、完了更新時だけ再取得します。_
+
 ## 結論
 
 `POST /api/app/rides/:ride_id/evaluation` を次の3区間へ分けました。

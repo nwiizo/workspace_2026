@@ -2,6 +2,10 @@
 
 [チューニング目次へ戻る](../TUNING.md)
 
+![記録時刻順と状態の意味順を比較する図](./images/19-status-semantic-order.svg)
+
+_記録時刻はlock待ちで前後しても、状態の意味順は変わりません。通知・最新状態・locking readを同じENUM順で選ぶことで、古いstatusを後から配送する失格を防ぎます。_
+
 ## 結論
 
 `ride_statuses.created_at` を状態の順序そのものとして使うのをやめ、schemaで定義した

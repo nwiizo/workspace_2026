@@ -1,0 +1,22 @@
+digraph OwnerDistanceWatermark {
+  graph [bgcolor="#f7f4ed", pad="0.25", nodesep="0.42", ranksep="0.5", fontname="Hiragino Sans", labelloc="t", label="Benchmark 38: requestごとに可視な距離履歴の境界を固定する", fontsize="22"];
+  node [shape=box, style="rounded,filled", fillcolor="#ffffff", color="#17324d", fontcolor="#17324d", fontname="Hiragino Sans", fontsize="13", penwidth="1.8", margin="0.16,0.11"];
+  edge [color="#58708a", fontcolor="#58708a", fontname="Hiragino Sans", fontsize="11", penwidth="1.8", arrowsize="0.8"];
+  request [label="owner request開始\nmicrosecond時刻を固定"];
+  cutoff [label="watermark = request開始 - 1秒", fillcolor="#d8efeb"];
+  stable [label="watermark以前の座標だけで\nLAG距離を集計"];
+  recent [label="直近1秒の座標は\n今回の合計へ混ぜない"];
+  old [shape=diamond, label="安定側の更新が3秒より古く\n直近1秒に新座標があるか"];
+  omit [label="updated_atを省略\n古い値を新鮮と誤表示しない", fillcolor="#fff4df"];
+  expose [label="固定watermarkを返す"];
+  result [label="並行INSERT中でも\n同じresponse内の距離と時刻が整合", fillcolor="#d8efeb"];
+  request -> cutoff;
+  cutoff -> stable;
+  cutoff -> recent;
+  stable -> old;
+  recent -> old;
+  old -> omit [label="はい"];
+  old -> expose [label="いいえ"];
+  omit -> result;
+  expose -> result;
+}

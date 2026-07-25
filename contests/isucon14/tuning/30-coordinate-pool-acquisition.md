@@ -1,5 +1,9 @@
 # Benchmark 30: coordinateのpool取得待ちとSQL BEGINの分離
 
+![poolからの接続取得とSQL BEGINの時間を分ける図](./images/30-coordinate-pool-acquisition.svg)
+
+_pool.beginを分けると、p95約114msのほぼ全体がconnection取得待ちで、SQL BEGINは約2.3msでした。上限追加ではなく長時間保持transactionを次の対象にします。_
+
 ## 結論
 
 Benchmark 27で `POST /api/chair/coordinate` の `pool.begin()` が平均32.452ms、

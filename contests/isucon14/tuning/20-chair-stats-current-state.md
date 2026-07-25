@@ -1,5 +1,9 @@
 # Benchmark 20: chair statsを完了時に差分更新する
 
+![通知時の全履歴集計と完了時の差分更新を比較する図](./images/20-chair-stats-current-state.svg)
+
+_通知のたびに履歴を集計せず、評価完了transactionで件数と評価合計を1回だけ加算します。通知は1 chair 1 rowを読むだけになり、高頻度pollingの集約costを抑えます。_
+
 ## 結論
 
 `GET /api/app/notification` が返すchairの完了ライド数と平均評価を、通知pollingの

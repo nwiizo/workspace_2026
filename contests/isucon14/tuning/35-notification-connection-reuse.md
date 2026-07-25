@@ -2,6 +2,10 @@
 
 [チューニング目次へ戻る](../TUNING.md)
 
+![接続再利用による高速化と通知の正しさの比較](./images/35-notification-connection-reuse.svg)
+
+_2回目のacquire削減自体は成功しても、ride選択が別rideの未送信statusを見失い失格しました。局所性能を採用せず、配送状態機械の正しさを先に直します。_
+
 ## 結論
 
 app / chair通知のcache missで、最新rideの存在確認に使ったSQLx

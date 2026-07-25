@@ -1,0 +1,18 @@
+digraph CoordinateTransition {
+  graph [bgcolor="#f7f4ed", pad="0.25", nodesep="0.45", ranksep="0.5", fontname="Hiragino Sans", labelloc="t", label="Benchmark 17: 通常座標は軽く読み、状態遷移候補だけlockする", fontsize="22"];
+  node [shape=box, style="rounded,filled", fillcolor="#ffffff", color="#17324d", fontcolor="#17324d", fontname="Hiragino Sans", fontsize="14", penwidth="1.8", margin="0.18,0.12"];
+  edge [color="#58708a", fontcolor="#58708a", fontname="Hiragino Sans", fontsize="11", penwidth="1.8", arrowsize="0.8"];
+  request [label="座標POST\nride ID・evaluation・目的座標を取得"];
+  candidate [shape=diamond, label="pickup / destinationと\n一致する座標か"];
+  normal [label="通常座標\ncurrent locationだけ更新", fillcolor="#d8efeb"];
+  lock [label="遷移候補だけ\nride rowをFOR UPDATE"];
+  current [label="statusをFOR UPDATEでcurrent read\nlock後の最新値を確認"];
+  transition [label="期待した直前状態なら\nPICKUP / ARRIVEDを1回だけ追加", fillcolor="#d8efeb"];
+  benefit [label="通常経路の最新status queryを削減\n遷移の正当性は維持"];
+  request -> candidate;
+  candidate -> normal [label="いいえ"];
+  candidate -> lock [label="はい"];
+  lock -> current -> transition;
+  normal -> benefit;
+  transition -> benefit;
+}

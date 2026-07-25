@@ -2,6 +2,10 @@
 
 [チューニング目次へ戻る](../TUNING.md)
 
+![外部決済の前後で売上完了時刻を確定する境界図](./images/24-owner-sales-completion-boundary.svg)
+
+_evaluationの更新を決済前に行うと、未受領rideがowner売上へ先に現れます。決済成功後の最終transactionでcompleted_atを確定し、同じ時刻をresponseへ返して境界を揃えます。_
+
 ## 結論
 
 `CODE=24` の候補だった「オーナー売上がベンチマーカーの確定済み売上より大きい」

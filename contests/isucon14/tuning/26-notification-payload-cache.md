@@ -2,6 +2,10 @@
 
 [チューニング目次へ戻る](../TUNING.md)
 
+![通知payload cacheとpoll間隔の切り替えを示す図](./images/26-notification-payload-cache.svg)
+
+_cache hitを常に30msで返すと、応答が速いほどpollが増えるclosed-loop loadになります。未送信status中だけ30ms、状態不変時は100msにして、進行速度と負荷を両立します。_
+
 ## 結論
 
 `GET /api/app/notification` と `GET /api/chair/notification` に、recipient ID単位の

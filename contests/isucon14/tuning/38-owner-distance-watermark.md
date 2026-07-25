@@ -2,6 +2,10 @@
 
 [チューニング目次へ戻る](../TUNING.md)
 
+![一つの応答で参照する座標範囲をwatermarkで固定する図](./images/38-owner-distance-watermark.svg)
+
+_request開始時に1秒前のwatermarkを固定し、それ以前の座標だけで距離を集計します。並行INSERT中でも、同じresponseの距離と更新時刻が同じ可視範囲を表します。_
+
 ## 結果
 
 `GET /api/owner/chairs` が返す累積距離を、request開始の1秒前までに記録された

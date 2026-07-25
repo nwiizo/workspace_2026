@@ -1,5 +1,9 @@
 # Benchmark 22: 認証主体をprocess内cacheへ保持する
 
+![認証cacheのhit・miss・再構築の流れ](./images/22-authentication-cache.svg)
+
+_大半のrequestはHashMapから認証主体を取得し、未知tokenだけDBへfallbackします。起動・initializeでcache世代を再構築し、認証SQLを約99.5%削減しました。_
+
 ## 結論
 
 全APIのmiddlewareが毎回行っていたaccess token検索を、process内の

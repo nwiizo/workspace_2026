@@ -1,5 +1,9 @@
 # Benchmark 41: DB poolをgeneral 34 / coordinate 16へ分割
 
+![50接続をcoordinate 16本とgeneral 34本へ分けたときの詰まり](./images/41-db-pool-partition-16.svg)
+
+_総数50のうち16本だけをcoordinateへ予約すると、毎秒約1,000 requestを処理できず専用queueが伸びました。用途分離ではなく予約数16を不採用としました。_
+
 ## 結論
 
 総接続上限50を変えず、`POST /api/chair/coordinate` 専用16本と、それ以外の

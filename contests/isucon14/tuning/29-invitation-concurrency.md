@@ -1,5 +1,9 @@
 # Benchmark 29: 招待登録の直列化とcoupon識別子の安定化
 
+![招待者の行を直列化地点にする並行処理図](./images/29-invitation-concurrency.svg)
+
+_coupon INDEXのgapを同期手段にせず、同じ招待codeが必ず同じ招待者rowへ並ぶようにします。上限3件を守りつつ、異なる招待は並行処理できます。_
+
 ## 結論
 
 `POST /api/app/users` の招待登録を、招待者の `users` 行を直列化地点として処理するように

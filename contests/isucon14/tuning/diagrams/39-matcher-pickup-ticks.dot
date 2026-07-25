@@ -1,0 +1,15 @@
+digraph MatcherPickupTicks {
+  graph [bgcolor="#f7f4ed", pad="0.25", nodesep="0.45", ranksep="0.5", fontname="Hiragino Sans", labelloc="t", label="Benchmark 39: 局所的に正しい目的関数も総合scoreで検証する", fontsize="22"];
+  node [shape=box, style="rounded,filled", fillcolor="#ffffff", color="#17324d", fontcolor="#17324d", fontname="Hiragino Sans", fontsize="13", penwidth="1.8", margin="0.17,0.11"];
+  edge [color="#58708a", fontcolor="#58708a", fontname="Hiragino Sans", fontsize="11", penwidth="1.8", arrowsize="0.8"];
+  candidates [label="同じrideと空きchair候補"];
+  distance [label="現行policy\nマンハッタン距離を最小化", fillcolor="#d8efeb"];
+  ticks [label="試作policy\nceil(distance / model speed)を最小化"];
+  local [label="速いmodelなら遠くても\n予測pickup tickが小さくなる"];
+  global [label="greedy順序・地域供給・後続rideへ\n影響が波及"];
+  compare [label="3走中央値\n距離 134,428 / tick 133,257"];
+  decision [label="明確な総合改善なし\n単純な距離優先へ戻す", fillcolor="#fff4df"];
+  candidates -> distance -> compare;
+  candidates -> ticks -> local -> global -> compare;
+  compare -> decision;
+}

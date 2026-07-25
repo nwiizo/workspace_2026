@@ -2,6 +2,10 @@
 
 [チューニング目次へ戻る](../TUNING.md)
 
+![通知connection再利用を性能と正当性から採用判定する図](./images/46-notification-connection-reuse-adoption.svg)
+
+_+0.85%はrunばらつきより小さい一方、2回目のpool acquire削除は構造上確実です。score改善とは断定せず、general poolの資源効率改善として採用します。_
+
 ## 結論
 
 [Benchmark 45](./45-notification-connection-reuse-diagnostics.md)で、rideあり通知の2回目の

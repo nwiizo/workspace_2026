@@ -1,5 +1,9 @@
 # Benchmark 31: 評価APIのDB接続保持時間を決済待ちまで分解
 
+![評価APIがDB接続を保持する時間の内訳](./images/31-evaluation-phase-diagnostics.svg)
+
+_評価APIがconnectionを持つ平均約320msのうち、外部決済が約303msを占めました。DB処理よりretry HTTPとsleep中の資源保持がpool枯渇を作っています。_
+
 ## 結論
 
 `POST /api/app/rides/:ride_id/evaluation` が長い理由は、完了writeや

@@ -2,6 +2,10 @@
 
 [チューニング目次へ戻る](../TUNING.md)
 
+![座標更新をpool取得とSQL実行へ分けて計測する図](./images/27-coordinate-phase-diagnostics.svg)
+
+_phase分解によりcurrent-state UPDATEではなくpool.beginがtail latencyを支配すると分かりました。推測した箇所を直す前に、次の計測をpool取得とSQL BEGINへ分けます。_
+
 ## 結論
 
 `POST /api/chair/coordinate` の遅延を、64 requestに1件だけphase別に計測しました。

@@ -1,0 +1,16 @@
+digraph ChairStatsCurrentState {
+  graph [bgcolor="#f7f4ed", pad="0.25", nodesep="0.45", ranksep="0.52", fontname="Hiragino Sans", labelloc="t", label="Benchmark 20: 毎回の履歴集計を完了時の差分更新へ移す", fontsize="22"];
+  node [shape=box, style="rounded,filled", fillcolor="#ffffff", color="#17324d", fontcolor="#17324d", fontname="Hiragino Sans", fontsize="14", penwidth="1.8", margin="0.18,0.12"];
+  edge [color="#58708a", fontcolor="#58708a", fontname="Hiragino Sans", fontsize="11", penwidth="1.8", arrowsize="0.8"];
+  poll [label="通知polling"];
+  old [label="変更前\n全ride・statusを毎回集約\nCOUNT / AVG", fillcolor="#fde2cf"];
+  evaluation [label="評価完了transaction"];
+  update [label="chair_statsを差分更新\nrides_count + 1\n評価合計 + score", fillcolor="#d8efeb"];
+  row [label="chair_stats\n1 chair = 1 row"];
+  read [label="変更後の通知\n1行を読むだけ"];
+  repair [label="起動・初期化時は\n履歴から再構築して照合", fillcolor="#fff4df"];
+  result [label="stats read平均\n0.476ms → 0.063ms"];
+  poll -> old -> result [style=dashed, label="旧経路"];
+  evaluation -> update -> row -> read -> result;
+  repair -> row;
+}

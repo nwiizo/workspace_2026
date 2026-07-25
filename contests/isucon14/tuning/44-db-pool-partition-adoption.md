@@ -1,5 +1,9 @@
 # Benchmark 44: coordinate 24 / general 26を通常runで採用判定
 
+![DB pool 24対26の診断から通常run採用までの流れ](./images/44-db-pool-partition-adoption.svg)
+
+_診断で選んだ24 / 26をinstrumentationなしの3走で比較し、中央値と正当性を確認しました。総数50を増やさず、用途別backpressureとして採用します。_
+
 ## 結論
 
 総DB接続50をcoordinate 24 / general 26へ分ける実装を採用しました。

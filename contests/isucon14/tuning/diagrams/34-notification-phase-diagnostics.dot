@@ -1,0 +1,21 @@
+digraph NotificationPhaseDiagnostics {
+  graph [bgcolor="#f7f4ed", pad="0.25", nodesep="0.44", ranksep="0.5", fontname="Hiragino Sans", labelloc="t", label="Benchmark 34: 通知cache missがgeneral poolへ2回並ぶ構造", fontsize="22"];
+  node [shape=box, style="rounded,filled", fillcolor="#ffffff", color="#17324d", fontcolor="#17324d", fontname="Hiragino Sans", fontsize="13", penwidth="1.8", margin="0.17,0.11"];
+  edge [color="#58708a", fontcolor="#58708a", fontname="Hiragino Sans", fontsize="11", penwidth="1.8", arrowsize="0.8"];
+  request [label="通知request"];
+  hit [shape=diamond, label="payload cache hitか"];
+  return_cache [label="即時response"];
+  acquire1 [label="1回目 pool.acquire\n最新rideの存在確認\n平均約40ms", fillcolor="#fde2cf"];
+  release [label="connectionを一度返す"];
+  ride [shape=diamond, label="rideがあるか"];
+  acquire2 [label="2回目 pool.acquire\ntransaction用\n平均約38〜42ms", fillcolor="#fde2cf"];
+  sql [label="connection所有中のSQL\n合計平均約10ms"];
+  hypothesis [label="rideありなら同じconnectionで\ntransactionを開始して2回目を除去", fillcolor="#d8efeb"];
+  request -> hit;
+  hit -> return_cache [label="hit"];
+  hit -> acquire1 [label="miss"];
+  acquire1 -> release -> ride;
+  ride -> return_cache [label="なし"];
+  ride -> acquire2 [label="あり"];
+  acquire2 -> sql -> hypothesis;
+}

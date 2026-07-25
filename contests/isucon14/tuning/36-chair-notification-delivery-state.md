@@ -2,6 +2,10 @@
 
 [チューニング目次へ戻る](../TUNING.md)
 
+![chair通知を配送cursorで管理する状態機械](./images/36-chair-notification-delivery-state.svg)
+
+_chair通知はupdated_at最大ではなく、MATCHINGとCOMPLETEDの配送cursorから現在rideを選びます。status間の空白でも別rideへ切り替わらず、配送順を維持できます。_
+
 ## 結論
 
 chair通知が最初に対象rideを選ぶ規則を、`rides.updated_at`の最大値から

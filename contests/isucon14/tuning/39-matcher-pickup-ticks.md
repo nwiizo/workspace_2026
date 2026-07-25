@@ -2,6 +2,10 @@
 
 [チューニング目次へ戻る](../TUNING.md)
 
+![距離優先とpickup到着tick予測の比較図](./images/39-matcher-pickup-ticks.svg)
+
+_speedを含む予測tickは局所的には妥当でも、greedy順序と後続rideへ影響します。3走中央値が改善しなかったため、単純で結果も良い距離優先へ戻しました。_
+
 ## 結果
 
 空き椅子を単純な距離ではなく、modelのspeedを含む

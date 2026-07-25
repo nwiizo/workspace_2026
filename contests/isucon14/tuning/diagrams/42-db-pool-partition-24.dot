@@ -1,0 +1,15 @@
+digraph DbPoolPartition24 {
+  graph [bgcolor="#f7f4ed", pad="0.25", nodesep="0.46", ranksep="0.5", fontname="Hiragino Sans", labelloc="t", label="Benchmark 42: coordinate 24 / general 26の交換条件を診断する", fontsize="22"];
+  node [shape=box, style="rounded,filled", fillcolor="#ffffff", color="#17324d", fontcolor="#17324d", fontname="Hiragino Sans", fontsize="14", penwidth="1.8", margin="0.18,0.12"];
+  edge [color="#58708a", fontcolor="#58708a", fontname="Hiragino Sans", fontsize="11", penwidth="1.8", arrowsize="0.8"];
+  total [label="DB connection総数 50"];
+  coordinate [label="coordinate専用 24", fillcolor="#d8efeb"];
+  general [label="general 26", fillcolor="#fff4df"];
+  coord_effect [label="16本時よりpool待ち半減以下\ndrive不満74.0%"];
+  general_effect [label="通知・評価・matcherのburstで\nほぼ常時飽和"];
+  diag [label="診断score 152,128\npass=true・error 0"];
+  decision [label="n=1では採用せず\n20 / 30と通常3走へ進む", fillcolor="#d8efeb"];
+  total -> coordinate -> coord_effect -> diag;
+  total -> general -> general_effect -> diag;
+  diag -> decision;
+}

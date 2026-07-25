@@ -2,6 +2,10 @@
 
 [チューニング目次へ戻る](../TUNING.md)
 
+![同じride IDで決済を再試行して一つの結果へ収束させる図](./images/25-payment-idempotency.svg)
+
+_ride IDを冪等keyにすると、response不明時も同じPOSTを再試行して1件の決済結果へ収束できます。確認GETと全ride取得を削り、二重課金も防ぎます。_
+
 ## 結論
 
 `TODO.md` の決済・評価項目から、次の3点を優先して実装しました。

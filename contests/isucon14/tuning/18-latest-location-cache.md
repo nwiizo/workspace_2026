@@ -2,6 +2,10 @@
 
 [チューニング目次へ戻る](../TUNING.md)
 
+![座標履歴と現在位置を分離する構成図](./images/18-latest-location-cache.svg)
+
+_履歴は監査・距離計算用に残し、現在位置は1 chair 1 rowとprocess cacheへ分離します。nearbyとmatcherが履歴全体をsortせず、固定件数で最新位置を取得できます。_
+
 ## 結果
 
 このBenchmarkでの採用対象は、current-state表、2秒ごとの再同期、評価response bodyの

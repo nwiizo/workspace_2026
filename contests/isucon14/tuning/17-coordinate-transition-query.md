@@ -2,6 +2,10 @@
 
 [チューニング目次へ戻る](../TUNING.md)
 
+![通常座標と状態遷移候補で処理経路を分ける図](./images/17-coordinate-transition-query.svg)
+
+_通常座標はcurrent location更新だけで終え、pickup / destinationに一致する約5%の候補だけrideをlockします。通常経路の最新status queryを削りながら、lock後のcurrent readで重複遷移を防ぎます。_
+
 ## 結論
 
 `POST /api/chair/coordinate` が現在rideを取得するたびに最新statusを引く処理をやめました。

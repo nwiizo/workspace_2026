@@ -2,6 +2,14 @@
 
 [チューニング目次へ戻る](../TUNING.md)
 
+![サーバーの確定とクライアントへの応答配送を分けて考える図](./images/23-code30-response-delivery.svg)
+
+_DBのCOMMITはserver内の確定であり、clientがresponseを受け取った証明ではありません。再利用可能状態をclient受領より後へ置くことで、前の応答と次のrideが競合する窓を閉じます。_
+
+![評価応答の配送中に椅子を再利用する場合と受領まで待つ場合の比較](./images/23-response-delivery-generated.webp)
+
+_左はserverのCOMMIT直後にchairを再掲載し、評価response配送中のclientと競合します。右はclient受領までdelivery holdへ置き、受領後だけ次のrideへ戻します。_
+
 > 後続の[Benchmark 24](./24-owner-sales-completion-boundary.md)で、evaluationと
 > `rides.updated_at` のwriteを外部決済成功後へ移しました。本書の「外部決済より前に
 > updated_atが決まる」という説明はBenchmark 23計測時点の実装を示します。

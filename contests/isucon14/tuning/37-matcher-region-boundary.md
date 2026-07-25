@@ -2,6 +2,10 @@
 
 [チューニング目次へ戻る](../TUNING.md)
 
+![全体候補枠と地域別候補枠を比較する図](./images/37-matcher-region-boundary.svg)
+
+_globalな最大64件では一地域が候補枠を消費し、遠距離割当でchair供給を失います。候補取得から地域別quotaに分け、同一地域内だけで割り当てます。_
+
 ## 結果
 
 `CODE=32` の原因を「matcherが遅い」と一括りにせず、pool待ち、SQL、候補数、
