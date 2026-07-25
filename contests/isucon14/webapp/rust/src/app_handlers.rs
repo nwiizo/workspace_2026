@@ -428,6 +428,18 @@ struct AppPostRidesResponse {
     fare: i32,
 }
 
+#[derive(Debug, sqlx::FromRow)]
+struct UserRideState {
+    ride_count: i64,
+    has_active_ride: i64,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct RideCoupon {
+    code: String,
+    discount: i32,
+}
+
 async fn app_post_rides(
     State(AppState {
         pool,
@@ -443,22 +455,33 @@ async fn app_post_rides(
     let _admission_guard = general_db_admission.acquire("app_post_rides", &pool).await;
     let mut tx = pool.begin().await?;
 
-    let rides: Vec<Ride> = sqlx::query_as("SELECT * FROM rides WHERE user_id = ?")
+    // Serialize ride creation and invitation rewards for the same user on the
+    // users primary-key row. Without this lock, concurrent requests can all
+    // observe no active ride before any of their INSERTs becomes visible.
+    let _: String = sqlx::query_scalar("SELECT id FROM users WHERE id = ? FOR UPDATE")
         .bind(&user.id)
-        .fetch_all(&mut *tx)
+        .fetch_one(&mut *tx)
         .await?;
 
-    let mut continuing_ride_count = 0;
-    for ride in rides {
-        let status = crate::get_latest_ride_status(&mut *tx, &ride.id).await?;
-        if status != "COMPLETED" {
-            continuing_ride_count += 1;
-        }
-    }
-
-    if continuing_ride_count > 0 {
+    // Evaluation and COMPLETED are committed together by the evaluation
+    // transaction. Use the ride row as current state instead of loading every
+    // historical ride and querying its latest status.
+    let ride_state: UserRideState = sqlx::query_as(
+        r#"
+SELECT
+  COUNT(*) AS ride_count,
+  CAST(COALESCE(MAX(evaluation IS NULL), 0) AS SIGNED) AS has_active_ride
+FROM rides
+WHERE user_id = ?
+        "#,
+    )
+    .bind(&user.id)
+    .fetch_one(&mut *tx)
+    .await?;
+    if ride_state.has_active_ride != 0 {
         return Err(Error::Conflict("ride already exists"));
     }
+    let is_first_ride = ride_state.ride_count == 0;
 
     sqlx::query("INSERT INTO rides (id, user_id, pickup_latitude, pickup_longitude, destination_latitude, destination_longitude) VALUES (?, ?, ?, ?, ?, ?)")
         .bind(&ride_id)
@@ -477,69 +500,49 @@ async fn app_post_rides(
         .execute(&mut *tx)
         .await?;
 
-    let ride_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM rides WHERE user_id = ?")
-        .bind(&user.id)
-        .fetch_one(&mut *tx)
-        .await?;
+    // On the first ride CP_NEW2024 has priority even if another coupon was
+    // granted earlier. On later rides all unused coupons retain created_at
+    // order. The PRIMARY hint bounds this lookup to one user's coupon range.
+    let coupon: Option<RideCoupon> = sqlx::query_as(
+        r#"
+SELECT code, discount
+FROM coupons FORCE INDEX (PRIMARY)
+WHERE user_id = ?
+  AND used_by IS NULL
+ORDER BY
+  CASE WHEN ? AND code = 'CP_NEW2024' THEN 0 ELSE 1 END,
+  created_at,
+  code
+LIMIT 1
+FOR UPDATE
+        "#,
+    )
+    .bind(&user.id)
+    .bind(is_first_ride)
+    .fetch_optional(&mut *tx)
+    .await?;
 
-    if ride_count == 1 {
-        // 初回利用で、初回利用クーポンがあれば必ず使う
-        let coupon: Option<Coupon> = sqlx::query_as("SELECT * FROM coupons WHERE user_id = ? AND code = 'CP_NEW2024' AND used_by IS NULL FOR UPDATE")
-            .bind(&user.id)
-            .fetch_optional(&mut *tx)
-            .await?;
-        if coupon.is_some() {
-            sqlx::query("UPDATE coupons SET used_by = ? WHERE user_id = ? AND code = 'CP_NEW2024'")
-                .bind(&ride_id)
-                .bind(&user.id)
-                .execute(&mut *tx)
-                .await?;
-        } else {
-            // 無ければ他のクーポンを付与された順番に使う
-            let coupon: Option<Coupon> = sqlx::query_as("SELECT * FROM coupons WHERE user_id = ? AND used_by IS NULL ORDER BY created_at LIMIT 1 FOR UPDATE")
-                .bind(&user.id)
-                .fetch_optional(&mut *tx)
-                .await?;
-            if let Some(coupon) = coupon {
-                sqlx::query("UPDATE coupons SET used_by = ? WHERE user_id = ? AND code = ?")
-                    .bind(&ride_id)
-                    .bind(&user.id)
-                    .bind(coupon.code)
-                    .execute(&mut *tx)
-                    .await?;
-            }
-        }
-    } else {
-        // 他のクーポンを付与された順番に使う
-        let coupon: Option<Coupon> = sqlx::query_as("SELECT * FROM coupons WHERE user_id = ? AND used_by IS NULL ORDER BY created_at LIMIT 1 FOR UPDATE")
-                .bind(&user.id)
-                .fetch_optional(&mut *tx)
-                .await?;
-        if let Some(coupon) = coupon {
-            sqlx::query("UPDATE coupons SET used_by = ? WHERE user_id = ? AND code = ?")
-                .bind(&ride_id)
-                .bind(&user.id)
-                .bind(coupon.code)
-                .execute(&mut *tx)
-                .await?;
+    if let Some(coupon) = &coupon {
+        let claimed = sqlx::query(
+            "UPDATE coupons SET used_by = ? WHERE user_id = ? AND code = ? AND used_by IS NULL",
+        )
+        .bind(&ride_id)
+        .bind(&user.id)
+        .bind(&coupon.code)
+        .execute(&mut *tx)
+        .await?;
+        if claimed.rows_affected() != 1 {
+            return Err(Error::Conflict("coupon already used"));
         }
     }
 
-    let ride: Ride = sqlx::query_as("SELECT * FROM rides WHERE id = ?")
-        .bind(&ride_id)
-        .fetch_one(&mut *tx)
-        .await?;
-
-    let fare = calculate_discounted_fare(
-        &mut tx,
-        &user.id,
-        Some(&ride),
+    let fare = crate::calculate_fare_with_discount(
         req.pickup_coordinate.latitude,
         req.pickup_coordinate.longitude,
         req.destination_coordinate.latitude,
         req.destination_coordinate.longitude,
-    )
-    .await?;
+        coupon.map(|coupon| coupon.discount).unwrap_or(0),
+    );
 
     tx.commit().await?;
     notification_cache.invalidate_app(&user.id);
