@@ -310,7 +310,7 @@
     全走`pass=true`・`CODE=32` 0件、`CODE=26`は118 / 136 / 120件
   - 固定2地域への依存と、旧実装で地域間へ移動済みのchairは残余riskとして継続
   - 詳細: [`tuning/37-matcher-region-boundary.md`](./tuning/37-matcher-region-boundary.md)
-- [ ] `CODE=26` のowner累積距離が座標responseの受信境界より先へ進む競合を検証する
+- [x] `CODE=26` のowner累積距離が座標responseの受信境界より先へ進む競合を検証する
   - 期待値より実値が4–40程度大きく、直近1回の移動距離に近い例を確認
   - ベンチマーカーのcoordinate POST、world更新、owner検証の順序を同じchairで追う
   - server側はowner request開始時の座標watermarkを固定できるか検討する
@@ -320,9 +320,29 @@
   - Benchmark 30診断runもerror map空。再現待ちだけで他のP0計測を止めない
   - Benchmark 36レビュー前は診断153件、通常130 / 136 / 151件。
     最終実装でも144 / 85 / 80件と毎回再現したため、`CODE=32`の次に調べる
-  - Benchmark 37最終3走でも118 / 136 / 120件と全走で再現。現在の最優先項目とする
+  - Benchmark 37最終3走でも118 / 136 / 120件と全走で再現したため最優先で着手
   - `got`が`want`を大きく上回る例もあり、直近1移動分という仮説に限定せず、
     location IDの採用範囲とowner requestのsnapshot境界から再確認する
+  - 変更前revisionの追加2走は136,723 / 131,526点でerror map空。同じrevisionでも
+    非決定的に再現することを確認したが、並行順序と乱数データの差は完全には分離していない
+  - 新規56,856 stepのmodel speed超過0件、同一chair / created_at重複0 groupのため、
+    恒常的な履歴順序異常とwindow tieを棄却
+  - commit直後の座標を直ちにownerへ公開する赤fixtureはbaseline 132→immediate 133で失敗
+  - request開始1秒前までを安定snapshotとし、安定時刻が3秒より古い一方で新しい未安定行が
+    ある短時間だけoptionalな`total_distance_updated_at`を省略
+  - 単純な1秒lagは132,553点、`CODE=26` 49件がすべて「反映が遅い」へ変わったため不採用
+  - 最終fixtureはbaseline 132、immediate 132 / 更新時刻なし、eventual 133で成功
+  - レビューでSQLのmicrosecond境界をRustのmillisecondへ切り捨てる穴を発見し、
+    `DateTime<Utc>`のまま比較してsnapshot直後と3秒境界直前のテストを追加
+  - 精度修正後の最終通常3走は132,225 / 134,428 / 137,075点、中央値134,428点、
+    全走`pass=true`・error map空・`CODE=26` 0件
+  - Benchmark 37中央値比-4.3%のため得点改善とはせず、error予算を中央値120件から0件へ
+    戻す正当性修正として採用
+  - [ ] 座標の`recorded_at`決定からcommitまでのp99 / maxと、複数processのwall clock差を
+    計測し、1秒の安定化幅を超えないことを確認する
+  - [ ] 同一chair・同一`created_at`の履歴をfixtureで作り、window順を
+    `(created_at, id)`へ固定した場合の距離と実行計画を検証する
+  - 詳細: [`tuning/38-owner-distance-watermark.md`](./tuning/38-owner-distance-watermark.md)
 - [ ] `CODE=8` の未依頼userへ状態通知される経路を再現する
   - Benchmark 36最終run 2だけ24件、run 1 / 3は0件
   - app通知のride ID / user ID、ベンチ側current request、DBのuser_idとapp cursorを相関する
@@ -1253,9 +1273,8 @@
 1. `CODE=32`のmatcher phase・候補数・最古待ち・割当距離の診断は完了。
    地域別quotaと距離200以下を実装し、通常3走143,887 / 140,426 / 137,801点、
    全走`pass=true`・`CODE=32` 0件
-2. `CODE=26` を再現し、ベンチマーカーがresponseを受信済みの座標と
-   `owner_get_chairs` が集計する座標のwatermark差を同じchairで特定する。
-   再現しない間も以下のP0計測は止めない
+2. `CODE=26`のowner距離watermark修正は完了。赤・緑fixtureと通常3走で検証し、
+   132,225 / 134,428 / 137,075点、全走error map空
 3. `CODE=8`が再発したらapp通知のride / user / cursorを同一requestで保存する
 4. 評価APIのphase計測は完了。connection所有平均319.754msの約94.6%が決済で、
    retry sleepだけで平均201.719msと確認した
@@ -1265,11 +1284,11 @@
    同じrequestの2回のacquire平均合計がapp 77.839ms、chair 82.513msだった
 7. pool上限50 / 75 / 100の比較は完了し、通常3走中央値が最も高い50を維持した
 8. chair通知のride選択は配送状態機械へ変更済み。hidden pendingとdelivery gapの
-   固定回帰、Benchmark 37通常3走の`CODE=12/29/32` 0件を確認。`CODE=26`は別途継続
-9. owner request開始時に既知の座標までを集計する方法を設計し、決定的な赤・緑テストと
-   通常3走で`CODE=26`のerror予算・scoreを比較する
+   固定回帰、Benchmark 38通常3走の`CODE=12/26/29/32` 0件を確認
+9. owner距離はrequest開始1秒前の安定snapshotへ固定済み。次は診断時だけ
+   更新時刻省略数、対象履歴行数、query時間を記録してcurrent-state集約と比較する
 10. `CODE=27`を同じchairのDB current row、process cache、nearby応答で追跡する
-11. rideあり通知のconnection再利用は、`CODE=26/27`を解消してerror mapを安定させてから
+11. rideあり通知のconnection再利用は、`CODE=27`を解消してerror mapを安定させてから
    再比較する
 12. latest-coordinate cacheの `RwLock` とmaintenance gateの待機・保持時間を計測し、
    2秒再同期時のglobal stallを定量化する

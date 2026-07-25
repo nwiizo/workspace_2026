@@ -1979,6 +1979,71 @@ let Some((chair_index, distance)) = nearest_chair_within_region(/* ... */) else 
 計測と通常3走の詳細は
 [Benchmark 37](./37-matcher-region-boundary.md)に記録しています。
 
+## `Option`で「値がない」と「境界を安全に示せない」を区別する
+
+Benchmark 38の `total_distance_updated_at` はOpenAPI上optionalです。座標が一度もない
+場合だけでなく、commit済みの最新行とownerへ公開する安定snapshotの間にgapがある
+短時間にも `None` を使います。
+
+```rust
+total_distance_updated_at: if suppress_unstable_timestamp {
+    None
+} else {
+    chair
+        .total_distance_updated_at
+        .map(|updated_at| updated_at.timestamp_millis())
+},
+```
+
+serialize fieldには `skip_serializing_if = "Option::is_none"` があるため、`None` は
+JSONの `null` ではなくfield省略になります。`0`を番兵値にすると1970年の時刻として
+解釈できてしまい、型だけでは「未確定」を区別できません。`Option<i64>`なら
+`Some(timestamp)` のときだけ、その時刻が累積距離のwatermarkだという契約を持てます。
+
+省略条件は小さい純粋関数へ分離しました。
+
+```rust
+fn should_suppress_owner_distance_timestamp(
+    stable_updated_at: Option<&DateTime<Utc>>,
+    latest_location_created_at: Option<&DateTime<Utc>>,
+    distance_snapshot_at: &DateTime<Utc>,
+    freshness_boundary: &DateTime<Utc>,
+) -> bool
+```
+
+テストでは次の条件と境界を固定します。
+
+1. 安定時刻が3秒より古く、新しい未安定行があるなら省略する
+2. 安定時刻が新しければ、未安定行があっても安定時刻を返す
+3. 新しい未安定行がなければ、古い履歴の時刻も従来どおり返す
+4. snapshotの50マイクロ秒後にある最新行を新しい行として扱う
+5. 3秒境界の1マイクロ秒前にある安定時刻を古い時刻として扱う
+6. snapshotまたは3秒境界と完全に同じ時刻は不等号の外側として扱う
+
+3番目がないと、長期間動いていない正常なchairまで更新時刻なしになります。条件式を
+短く書くことより、どの組み合わせをAPI上の意味として採用するかが重要です。4番目と
+5番目は、SQLの `DATETIME(6)` をmillisecondへ切り捨てたレビュー前候補の境界穴を
+固定した回帰です。
+
+request時刻は1回だけ取得し、SQL bindとRustの判定を同じ
+`DateTime<Utc>` から導きます。
+
+```rust
+let request_started_at = Utc::now();
+let distance_snapshot_at = request_started_at
+    - chrono::Duration::milliseconds(1_000);
+let freshness_boundary = request_started_at
+    - chrono::Duration::milliseconds(3_000);
+```
+
+MySQLの `DATETIME(6)` と `DateTime<Utc>` はmicrosecond精度のまま比較し、
+JSONへ返す値だけ最後にepoch millisecondsへ変換します。先に
+`timestamp_millis()`へ変換すると、SQLがsnapshot外へ除いた行でも同じmillisecond内なら
+Rustが「新しくない」と判断する最大999マイクロ秒の穴ができます。chairごとのmap内で
+時刻を取り直すと、配列の前半と後半でwatermarkが変わるため、requestごとに固定します。
+詳細と通常3走は
+[Benchmark 38](./38-owner-distance-watermark.md)に記録しています。
+
 ### INDEXでCASE sortが自動的に消えるとは限らない
 
 `rides(chair_id, created_at)`は1 chairの候補へ絞り、

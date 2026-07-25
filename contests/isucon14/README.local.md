@@ -227,6 +227,10 @@ cd contests/isucon14
 # 注意: 8秒遅延する一時決済mock containerを起動し、終了時にローカルデータを初期化する
 ./scripts/test-owner-sales-response-boundary.sh
 
+# owner累積距離がcommit直後の未安定座標を公開せず、1秒後には反映することを確認
+# 注意: 座標fixtureを追加し、終了時にPOST /api/initializeでローカルデータを初期化する
+./scripts/test-owner-distance-watermark.sh
+
 # 同じusernameの再登録を別userとして継続できることを確認
 # 注意: 開始時と終了時にPOST /api/initializeを呼び、ローカルデータを初期化する
 ./scripts/test-username-collision.sh
@@ -399,6 +403,7 @@ RESET=1 ./scripts/down.sh
 | coordinateのpool取得分解 | 診断1走124,064点・未推定。1,173 sampleでacquire p95 113.156ms、SQL BEGIN p95 2.327ms。78.1%がpool size 50 / idle 0 |
 | chair通知の配送状態機械 | レビュー修正後は86,532点`pass=true`、43,980 / 44,825点`pass=false`。`CODE=12/29`は0件だが`CODE=32`が2走。推定代表値なし。hidden pendingとride取り違えの固定回帰は成功 |
 | matcherの地域間割当を除外 | 地域ごとにride / chairを最大64件取得し、距離200以下だけへ最大64件割当。通常3走137,801–143,887点、中央値140,426点、全run `pass=true`・`CODE=32` 0件。境界付き診断は150,696点、2,738割当の距離200超0件、最古待ち5.034秒、`CODE=26` 92件。通常3走の`CODE=26`は118 / 136 / 120件 |
+| owner累積距離の可視watermark | request開始1秒前までを安定snapshotとし、3秒より古い安定時刻と新しい未安定行が併存する間だけoptional更新時刻を省略。SQLとRustの境界判定はmicrosecond精度を維持。最終通常3走132,225–137,075点、中央値134,428点、全run `pass=true`・error map空、`CODE=26` 0件 |
 
 初回の初期60秒走行ではMySQLのqueryが十数秒以上へ遅延し、ベンチマーカーの期限を
 超えました。同じ初期revisionを外部コンテナの大きな共有負荷がない条件で再計測
