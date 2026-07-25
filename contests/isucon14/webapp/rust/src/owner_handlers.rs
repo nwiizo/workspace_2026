@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::time::Instant;
 
 use axum::extract::{Query, State};
 use axum::http::StatusCode;
@@ -360,6 +361,8 @@ struct ChairWithDetail {
     created_at: DateTime<Utc>,
     total_distance: MysqlDecimal,
     total_distance_updated_at: Option<DateTime<Utc>>,
+    stable_location_count: MysqlDecimal,
+    latest_location_id: Option<String>,
     latest_location_created_at: Option<DateTime<Utc>>,
 }
 
@@ -380,6 +383,40 @@ struct OwnerGetChairResponseChair {
     total_distance_updated_at: Option<i64>,
 }
 
+#[derive(Debug, serde::Serialize)]
+struct OwnerDistanceDiagnosticChair {
+    chair_id: String,
+    total_distance: i64,
+    stable_location_count: i64,
+    stable_updated_at_unix_us: Option<i64>,
+    latest_location_id: Option<String>,
+    latest_location_created_at_unix_us: Option<i64>,
+    timestamp_suppressed: bool,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct OwnerDistanceDiagnosticSample {
+    owner_id: String,
+    request_started_at_unix_us: i64,
+    distance_snapshot_at_unix_us: i64,
+    freshness_boundary_unix_us: i64,
+    event_at_unix_us: u64,
+    query_us: u64,
+    response_build_us: u64,
+    total_us: u64,
+    chair_count: usize,
+    timestamp_suppressed_count: usize,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct OwnerDistanceChairDiagnosticSample {
+    owner_id: String,
+    request_started_at_unix_us: i64,
+    distance_snapshot_at_unix_us: i64,
+    freshness_boundary_unix_us: i64,
+    chair: OwnerDistanceDiagnosticChair,
+}
+
 fn should_suppress_owner_distance_timestamp(
     stable_updated_at: Option<&DateTime<Utc>>,
     latest_location_created_at: Option<&DateTime<Utc>>,
@@ -397,6 +434,7 @@ async fn owner_get_chairs(
     State(AppState { pool, .. }): State<AppState>,
     axum::Extension(owner): axum::Extension<Owner>,
 ) -> Result<axum::Json<OwnerGetChairResponse>, Error> {
+    let started_at = Instant::now();
     // A coordinate row becomes visible at COMMIT slightly before the chair
     // client receives recorded_at. Returning that row to an owner in this gap
     // exposes a distance watermark that the client cannot identify yet.
@@ -414,13 +452,16 @@ async fn owner_get_chairs(
        chairs.created_at,
        IFNULL(total_distance, 0) AS total_distance,
        total_distance_updated_at,
+       IFNULL(stable_location_count, 0) AS stable_location_count,
+       chair_current_locations.location_id AS latest_location_id,
        chair_current_locations.created_at AS latest_location_created_at
 FROM chairs
        LEFT JOIN chair_current_locations
               ON chair_current_locations.chair_id = chairs.id
-       LEFT JOIN (SELECT chair_id,
+                   LEFT JOIN (SELECT chair_id,
                           SUM(IFNULL(distance, 0)) AS total_distance,
-                          MAX(created_at)          AS total_distance_updated_at
+                          MAX(created_at)          AS total_distance_updated_at,
+                          COUNT(*)                 AS stable_location_count
                    FROM (SELECT chair_locations.chair_id,
                                 chair_locations.created_at,
                                 ABS(chair_locations.latitude - LAG(chair_locations.latitude)
@@ -441,33 +482,92 @@ WHERE chairs.owner_id = ?
     .fetch_all(&pool)
     .await?;
 
-    Ok(axum::Json(OwnerGetChairResponse {
-        chairs: chairs
-            .into_iter()
-            .map(|chair| {
-                let suppress_unstable_timestamp = should_suppress_owner_distance_timestamp(
-                    chair.total_distance_updated_at.as_ref(),
-                    chair.latest_location_created_at.as_ref(),
-                    &distance_snapshot_at,
-                    &freshness_boundary,
-                );
+    let query_us = crate::drive_diagnostic::duration_us(started_at.elapsed());
+    let diagnostic_enabled = crate::drive_diagnostic::enabled();
+    let response_build_started_at = Instant::now();
+    let mut response_chairs = Vec::with_capacity(chairs.len());
+    let mut diagnostic_chairs = diagnostic_enabled.then(|| Vec::with_capacity(chairs.len()));
+    let mut timestamp_suppressed_count = 0;
 
-                OwnerGetChairResponseChair {
-                    id: chair.id,
-                    name: chair.name,
-                    model: chair.model,
-                    active: chair.is_active,
-                    registered_at: chair.created_at.timestamp_millis(),
-                    total_distance: chair.total_distance.0,
-                    total_distance_updated_at: if suppress_unstable_timestamp {
-                        None
-                    } else {
-                        chair
-                            .total_distance_updated_at
-                            .map(|updated_at| updated_at.timestamp_millis())
-                    },
-                }
-            })
-            .collect(),
+    for chair in chairs {
+        let suppress_unstable_timestamp = should_suppress_owner_distance_timestamp(
+            chair.total_distance_updated_at.as_ref(),
+            chair.latest_location_created_at.as_ref(),
+            &distance_snapshot_at,
+            &freshness_boundary,
+        );
+        if suppress_unstable_timestamp {
+            timestamp_suppressed_count += 1;
+        }
+
+        if let Some(diagnostic_chairs) = &mut diagnostic_chairs {
+            diagnostic_chairs.push(OwnerDistanceDiagnosticChair {
+                chair_id: chair.id.clone(),
+                total_distance: chair.total_distance.0,
+                stable_location_count: chair.stable_location_count.0,
+                stable_updated_at_unix_us: chair
+                    .total_distance_updated_at
+                    .as_ref()
+                    .map(DateTime::timestamp_micros),
+                latest_location_id: chair.latest_location_id.clone(),
+                latest_location_created_at_unix_us: chair
+                    .latest_location_created_at
+                    .as_ref()
+                    .map(DateTime::timestamp_micros),
+                timestamp_suppressed: suppress_unstable_timestamp,
+            });
+        }
+
+        response_chairs.push(OwnerGetChairResponseChair {
+            id: chair.id,
+            name: chair.name,
+            model: chair.model,
+            active: chair.is_active,
+            registered_at: chair.created_at.timestamp_millis(),
+            total_distance: chair.total_distance.0,
+            total_distance_updated_at: if suppress_unstable_timestamp {
+                None
+            } else {
+                chair
+                    .total_distance_updated_at
+                    .map(|updated_at| updated_at.timestamp_millis())
+            },
+        });
+    }
+
+    let response_build_us =
+        crate::drive_diagnostic::duration_us(response_build_started_at.elapsed());
+    if let Some(diagnostic_chairs) = diagnostic_chairs {
+        for chair in diagnostic_chairs {
+            crate::drive_diagnostic::emit(
+                "OWNER_DISTANCE_CHAIR_DIAGNOSTIC",
+                &OwnerDistanceChairDiagnosticSample {
+                    owner_id: owner.id.clone(),
+                    request_started_at_unix_us: request_started_at.timestamp_micros(),
+                    distance_snapshot_at_unix_us: distance_snapshot_at.timestamp_micros(),
+                    freshness_boundary_unix_us: freshness_boundary.timestamp_micros(),
+                    chair,
+                },
+            );
+        }
+        crate::drive_diagnostic::emit(
+            "OWNER_DISTANCE_DIAGNOSTIC",
+            &OwnerDistanceDiagnosticSample {
+                owner_id: owner.id,
+                request_started_at_unix_us: request_started_at.timestamp_micros(),
+                distance_snapshot_at_unix_us: distance_snapshot_at.timestamp_micros(),
+                freshness_boundary_unix_us: freshness_boundary.timestamp_micros(),
+                event_at_unix_us: crate::drive_diagnostic::unix_time_us(),
+                query_us,
+                response_build_us,
+                total_us: crate::drive_diagnostic::duration_us(started_at.elapsed()),
+                chair_count: response_chairs.len(),
+                timestamp_suppressed_count,
+            },
+        );
+    }
+
+    Ok(axum::Json(OwnerGetChairResponse {
+        chairs: response_chairs,
     }))
 }

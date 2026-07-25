@@ -135,11 +135,14 @@ struct CoordinateDiagnosticSample {
     trace_ride: bool,
     ride_id: Option<String>,
     chair_id: Option<String>,
+    location_id: Option<String>,
     latitude: Option<i32>,
     longitude: Option<i32>,
     recorded_at_ms: Option<i64>,
+    recorded_at_unix_us: Option<i64>,
     transition_status: Option<String>,
     committed_at_unix_us: Option<u64>,
+    recorded_to_commit_us: Option<u64>,
     event_at_unix_us: Option<u64>,
     cache_lookup_us: u64,
     pool_acquire_us: u64,
@@ -165,6 +168,7 @@ struct CoordinateDiagnosticSample {
 struct CoordinateDiagnostic {
     started_at: Instant,
     checkpoint_at: Instant,
+    recorded_at_instant: Option<Instant>,
     sample: CoordinateDiagnosticSample,
     force_emit: bool,
     emitted: bool,
@@ -186,17 +190,21 @@ impl CoordinateDiagnostic {
         Some(Self {
             started_at,
             checkpoint_at: started_at,
+            recorded_at_instant: None,
             sample: CoordinateDiagnosticSample {
                 sequence,
                 periodic_sample,
                 trace_ride: false,
                 ride_id: None,
                 chair_id: None,
+                location_id: None,
                 latitude: None,
                 longitude: None,
                 recorded_at_ms: None,
+                recorded_at_unix_us: None,
                 transition_status: None,
                 committed_at_unix_us: None,
+                recorded_to_commit_us: None,
                 event_at_unix_us: None,
                 cache_lookup_us: 0,
                 pool_acquire_us: 0,
@@ -356,6 +364,11 @@ async fn chair_post_coordinate(
     }
 
     let mut diagnostic = CoordinateDiagnostic::sampled();
+    if let Some(diagnostic) = &mut diagnostic {
+        diagnostic.sample.chair_id = Some(chair.id.clone());
+        diagnostic.sample.latitude = Some(req.latitude);
+        diagnostic.sample.longitude = Some(req.longitude);
+    }
     let current_location_exists = latest_chair_locations.contains(&chair.id).await;
     if let Some(diagnostic) = &mut diagnostic {
         let elapsed_us = diagnostic.elapsed_since_checkpoint_us();
@@ -384,7 +397,15 @@ async fn chair_post_coordinate(
     let mut notification_user_id = None;
 
     let chair_location_id = Ulid::new().to_string();
+    if let Some(diagnostic) = &mut diagnostic {
+        diagnostic.sample.location_id = Some(chair_location_id.clone());
+    }
+    let recorded_at_instant = Instant::now();
     let recorded_at = chrono::Utc::now().naive_utc();
+    if let Some(diagnostic) = &mut diagnostic {
+        diagnostic.recorded_at_instant = Some(recorded_at_instant);
+        diagnostic.sample.recorded_at_unix_us = Some(recorded_at.and_utc().timestamp_micros());
+    }
     sqlx::query(
         "INSERT INTO chair_locations (id, chair_id, latitude, longitude, created_at) VALUES (?, ?, ?, ?, ?)",
     )
@@ -551,7 +572,19 @@ LIMIT 1
     if let Some(diagnostic) = &mut diagnostic {
         let elapsed_us = diagnostic.elapsed_since_checkpoint_us();
         diagnostic.sample.commit_us = elapsed_us;
-        diagnostic.sample.committed_at_unix_us = Some(crate::drive_diagnostic::unix_time_us());
+        let committed_at_unix_us = crate::drive_diagnostic::unix_time_us();
+        diagnostic.sample.committed_at_unix_us = Some(committed_at_unix_us);
+        diagnostic.sample.recorded_to_commit_us =
+            diagnostic.recorded_at_instant.map(|recorded_at_instant| {
+                crate::drive_diagnostic::duration_us(recorded_at_instant.elapsed())
+            });
+        if diagnostic
+            .sample
+            .recorded_to_commit_us
+            .is_some_and(|elapsed_us| elapsed_us >= 1_000_000)
+        {
+            diagnostic.force_emit = true;
+        }
         diagnostic.sample.terminal_phase = "cache_update";
     }
     drop(connection);

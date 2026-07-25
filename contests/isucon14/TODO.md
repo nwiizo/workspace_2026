@@ -1199,13 +1199,32 @@
   - 詳細:
     [`tuning/45-notification-connection-reuse-diagnostics.md`](./tuning/45-notification-connection-reuse-diagnostics.md)、
     [`tuning/46-notification-connection-reuse-adoption.md`](./tuning/46-notification-connection-reuse-adoption.md)
-- [ ] 再発した`CODE=26`について、owner距離の更新時刻省略数、対象履歴行数、
+- [x] 再発した`CODE=26`について、owner距離の更新時刻省略数、対象履歴行数、
   query時間を診断sampleへ追加する
   - 同じchair IDでowner request開始時刻、安定境界、採用したlocation ID /
     `created_at`、最新location、JSONの`total_distance_updated_at`有無を保存する
   - 候補通常runの77 / 64件と、差分なし対照94件の`got - want`を集計し、
     Benchmark 38の固定fixtureが覆っていない並行順序を追加する
-  - 計測できたら公開watermarkを保ったcurrent-state差分集約と1秒cacheを比較する
+  - 主要診断は145,128点、`pass=true`、`CODE=26` 94件。
+    owner query 125件のp95は660.307ms、更新時刻省略は270 / 4,590 chair
+  - 独立レビューでwall clock同士の差では逆行時に外れ値を0へ潰す問題を発見。
+    `Instant`へ修正した再診断は159,936点、`pass=true`・error map空
+  - `Instant`で測った`recorded_at`決定からcommitまでは2,983 sample、
+    p99 123.156ms、最大304.287ms、1秒以上0件だったため、長いcommit待ち仮説を棄却
+  - 相関はserver request開始がbenchmark以後1秒以内、返却距離、watermark、
+    benchmark snapshotが一致する候補1件だけを許可。履歴診断42件を全件再相関
+  - 同一chairで`recorded_at`が約81.37ms逆行し、speed 2の移動が
+    `created_at`順では6〜8の往復へ並び替わった。DB距離465、ベンチ期待429の差36が
+    `CODE=26`と一致
+  - 詳細: [`tuning/47-owner-distance-recurrence-diagnostics.md`](./tuning/47-owner-distance-recurrence-diagnostics.md)
+- [ ] wall clock逆行時もchair内の`recorded_at`を単調増加させる
+  - `max(Utc::now(), last_recorded_at + 1µs)`を1 webapp processで予約し、
+    逆行補正回数と補正幅を診断する
+  - 同時刻tieは`(created_at, id)`で決定的にするが、逆行修正の代用にはしない
+  - 時刻逆行fixture、Benchmark 38のwatermark fixture、最新座標cache fixtureを通す
+  - 診断でspeed超過stepと`CODE=26`が0になることを確認後、通常60秒を3走する
+  - 複数webapp processへ進む前に、DB sequenceまたはcurrent rowのatomic採番と比較する
+  - 成功後、公開watermarkを保ったcurrent-state差分集約と1秒cacheを比較する
 - [ ] static partitionで片側idleを共有できないため、共有pool 50 + general permitの
   admission controlを24 / 26と比較する
   - pool別permit待ち、`Threads_connected` / `Threads_running`、処理件数あたりrow-lock waitを
@@ -1349,8 +1368,8 @@
 完了済みのmatcher `CODE=32`、owner `CODE=26`、評価phase、pool上限50 / 75 / 100、
 drive phaseの診断は上の各項目へ結果を残しています。現在の未完了項目は次の順です。
 
-1. 再発した`CODE=26`についてowner距離の更新時刻省略数、対象履歴行数、query時間を
-   採取し、同じchairのrequest境界とwatermarkを保存して再修正する
+1. `CODE=26`で実測したchair内wall clock逆行に対し、`recorded_at`を単調増加させ、
+   時刻逆行fixture、診断run、通常3走で再発0を確認する
 2. 総上限50のstatic 26 / 24で見えたgeneral starvationに対し、共有pool 50のまま
    general permitでcoordinate余力を保証するadmission controlと比較する
 3. static partition後も残るcoordinate p95に対し、per-chair queueへ進む前に

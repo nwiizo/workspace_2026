@@ -344,6 +344,34 @@ BENCHMARK_OUTPUT_FILE="$drive_benchmark_log" \
   "$drive_benchmark_log"
 ```
 
+owner距離診断は、owner queryの境界とchair別の採用位置を短いJSON行で保存し、
+ベンチマーカーが`CODE=26`で比較した距離・watermark・内部履歴と結合します。
+座標の`recorded_at`からcommitまでの時間も同時に集計します。
+
+```sh
+owner_diagnostic_since=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+owner_benchmark_log=$(mktemp /tmp/isucon14-owner-distance.XXXXXX)
+
+ISUCON_DIAGNOSTIC=1 \
+BENCHMARK_OUTPUT_FILE="$owner_benchmark_log" \
+./scripts/benchmark.sh 60
+
+./scripts/report-owner-distance.sh \
+  "$owner_diagnostic_since" \
+  "$owner_benchmark_log"
+```
+
+1 request分の全chairを1つのJSON配列にすると、Dockerのログ行上限で途中にtimestampが
+挿入され、JSONとして読めなくなります。この診断はrequest summaryとchair 1件ごとの行を
+分けています。空の集計や壊れたJSONは成功として扱いません。benchmark不一致との相関は、
+server request開始がbenchmark開始以後1秒以内、chair ID、返却距離、millisecondへ
+切り捨てたwatermarkが一致する候補を探します。候補が0件または複数、benchmark snapshot
+が不一致、最終件数が不一致ならreport自体を失敗させます。
+
+`recorded_at`からcommitまでの経過時間はwall clockの引き算ではなく`Instant`で測ります。
+wall clockが逆行しても負の差を0へ丸めず、1秒以上のsampleを周期filter外から強制出力
+できます。
+
 `BENCHMARK_OUTPUT_FILE`を指定した場合も、終了後に同じ内容をterminalへ表示し、
 benchmarkのexit statusを維持します。保存ファイルにはride ID、chair ID、座標、
 tick、response時間が含まれますが、Cookie、access token、決済情報は含みません。

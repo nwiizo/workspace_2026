@@ -109,6 +109,12 @@ owner検証時: 時刻付きwantはAより前、現在の全距離はB、gotだ�
 古い座標が新しい座標の後へcommitされて往復しているなら、通常は1tickのspeedを超える
 stepが現れます。このrunでは0件だったため、恒常的な履歴順序異常を原因から外しました。
 
+この結論は「当該runでは0件」までが証拠の範囲です。後続の
+[Benchmark 47](./47-owner-distance-recurrence-diagnostics.md)では、
+同じchairの`recorded_at`が約81ms逆行し、speed 2のstepがDBの時刻順で6〜8へ
+並び替わる例を直接観測しました。単一runの0件を非決定的な時刻逆行の恒久的な否定へ
+広げられないため、原因候補から外した判断を修正します。
+
 ### 同じchairで`created_at`が同値になっている
 
 window関数は当初 `ORDER BY created_at` だけだったため、同一時刻の複数行があれば

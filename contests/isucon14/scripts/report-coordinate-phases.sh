@@ -149,6 +149,34 @@ do
   ' "$json_log"
 done
 
+printf '\nrecorded_at to commit visibility window\n\n'
+printf 'This is the interval in which created_at ages before the row becomes visible to other transactions.\n\n'
+printf '| samples | avg_us | p50_us | p95_us | p99_us | max_us | over_1000ms |\n'
+printf '|---:|---:|---:|---:|---:|---:|---:|\n'
+jq --slurp --raw-output '
+  [
+    .[] |
+    select((.outcome // "success") == "success") |
+    select(.recorded_to_commit_us != null) |
+    .recorded_to_commit_us
+  ] | sort as $values |
+  ($values | length) as $length |
+  if $length == 0 then
+    "| 0 | n/a | n/a | n/a | n/a | n/a | n/a |"
+  else
+    [
+      $length,
+      (($values | add) / $length | floor),
+      $values[(($length - 1) * 0.50 | floor)],
+      $values[(($length - 1) * 0.95 | floor)],
+      $values[(($length - 1) * 0.99 | floor)],
+      $values[$length - 1],
+      ([$values[] | select(. >= 1000000)] | length)
+    ] |
+    "| \(.[0]) | \(.[1]) | \(.[2]) | \(.[3]) | \(.[4]) | \(.[5]) | \(.[6]) |"
+  end
+' "$json_log"
+
 printf '\npool state before sampled acquire\n\n'
 printf 'summary: '
 jq --slurp --raw-output '
