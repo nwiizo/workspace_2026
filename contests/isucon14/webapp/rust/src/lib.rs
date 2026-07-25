@@ -22,7 +22,10 @@ pub(crate) const CACHED_NOTIFICATION_RETRY_AFTER_MS: i32 = 100;
 
 #[derive(Debug, Clone)]
 pub struct AppState {
+    /// General-purpose pool used by every DB workload except chair coordinates.
     pub pool: sqlx::MySqlPool,
+    /// Reserved pool for POST /api/chair/coordinate.
+    pub coordinate_pool: sqlx::MySqlPool,
     pub payment_client: reqwest::Client,
     pub auth_cache: AuthCache,
     pub notification_cache: NotificationCache,

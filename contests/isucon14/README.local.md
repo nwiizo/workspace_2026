@@ -383,12 +383,28 @@ stop-then-startです。複数instanceのrolling restartはこの結果へ含め
 BENCHMARK_DURATION=10 ./scripts/benchmark.sh
 ```
 
-SQLx pool上限は既定で50です。比較や別構成での再計測時だけ正の整数で上書きできます。
+SQLxの総接続予算は既定で50です。その内訳はgeneral 26、`POST /api/chair/coordinate`
+専用24です。`ISUCON_DB_MAX_CONNECTIONS`は2つのpoolそれぞれの上限ではなく合計で、
+coordinate値を差し引いた残りがgeneralになります。どちらも正整数で、
+coordinateは総数より小さい必要があります。coordinateを省略した場合は
+`min(24, total / 2)`で求めるため、総数を24以下へ下げても独立した既定値24で
+起動失敗しません。2つのpoolへ最低1本ずつ残すため、総数の最小値は2です。
 
 ```sh
+# 既定: total 50 = general 26 + coordinate 24
 ISUCON_DB_MAX_CONNECTIONS=50 ./scripts/benchmark.sh 60
-ISUCON_DB_MAX_CONNECTIONS=100 ./scripts/benchmark.sh 60
+
+# 接続総数50を維持し、配分だけgeneral 30 + coordinate 20へ変える
+ISUCON_DB_MAX_CONNECTIONS=50 \
+ISUCON_DB_COORDINATE_CONNECTIONS=20 \
+./scripts/benchmark.sh 60
 ```
+
+起動logの `configured database connection pools` で、実際のtotal / general / coordinateを
+確認できます。総数75 / 100は過去の通常3走で悪化したため、既定値にはしていません。
+配分16 / 20 / 24の診断と採用判断は
+[`tuning/44-db-pool-partition-adoption.md`](./tuning/44-db-pool-partition-adoption.md)
+に記録しています。
 
 ベンチマーカーは実行開始時に `POST /api/initialize` を呼ぶため、DB は初期データへ戻ります。フロントエンドの静的ファイル検証だけを省略したい場合は、公式オプションを次のように有効化できます。
 
@@ -450,6 +466,7 @@ RESET=1 ./scripts/down.sh
 | owner累積距離の可視watermark | request開始1秒前までを安定snapshotとし、3秒より古い安定時刻と新しい未安定行が併存する間だけoptional更新時刻を省略。SQLとRustの境界判定はmicrosecond精度を維持。最終通常3走132,225–137,075点、中央値134,428点、全run `pass=true`・error map空、`CODE=26` 0件 |
 | pickup予測tick優先matcher | `ceil(distance / speed)` を最小化する局所greedyを比較。通常3走126,948–134,611点、中央値133,257点、全run `pass=true`・error map空。Benchmark 38比-0.9%、pickup不満はほぼ不変のため距離優先へ復元 |
 | drive区間のride単位診断 | 最終診断1走146,727点・未推定、`pass=true`・error map空。全2,310 rideのdrive不満77.3%。抽出74 ride・1,191 coordinate POSTの86.6%がclient 30ms以上で、server平均76.515msのうちpool取得が64.349ms。Rust / Go barrierと`dropped_lines=0`を確認 |
+| DB poolの用途別予約 | 総数50を維持し、general 34 / coordinate 16、30 / 20、26 / 24を診断比較。24 / 26の通常3走は133,797–142,851点、中央値138,027点、全走`pass=true`・error map空。直前中央値比+3.6%。既定値での追加確認も132,756点、`pass=true` |
 
 初回の初期60秒走行ではMySQLのqueryが十数秒以上へ遅延し、ベンチマーカーの期限を
 超えました。同じ初期revisionを外部コンテナの大きな共有負荷がない条件で再計測

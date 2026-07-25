@@ -13,19 +13,73 @@ use tokio::sync::RwLock;
 use tokio::time::{Duration, MissedTickBehavior};
 
 const DEFAULT_DB_MAX_CONNECTIONS: u32 = 50;
+const DEFAULT_DB_COORDINATE_CONNECTIONS: u32 = 24;
 
-fn parse_db_max_connections(value: Option<&str>) -> anyhow::Result<u32> {
+#[derive(Debug, PartialEq, Eq)]
+struct DbPoolLimits {
+    total: u32,
+    general: u32,
+    coordinate: u32,
+}
+
+fn parse_positive_connection_limit(
+    name: &str,
+    value: Option<&str>,
+    default: u32,
+) -> anyhow::Result<u32> {
     let Some(value) = value else {
-        return Ok(DEFAULT_DB_MAX_CONNECTIONS);
+        return Ok(default);
     };
-    let max_connections = value.parse::<u32>().with_context(|| {
-        format!("ISUCON_DB_MAX_CONNECTIONS must be a positive integer: {value}")
-    })?;
-    anyhow::ensure!(
-        max_connections > 0,
-        "ISUCON_DB_MAX_CONNECTIONS must be greater than zero"
-    );
+    let max_connections = value
+        .parse::<u32>()
+        .with_context(|| format!("{name} must be a positive integer: {value}"))?;
+    anyhow::ensure!(max_connections > 0, "{name} must be greater than zero");
     Ok(max_connections)
+}
+
+fn parse_db_pool_limits(
+    total: Option<&str>,
+    coordinate: Option<&str>,
+) -> anyhow::Result<DbPoolLimits> {
+    let total = parse_positive_connection_limit(
+        "ISUCON_DB_MAX_CONNECTIONS",
+        total,
+        DEFAULT_DB_MAX_CONNECTIONS,
+    )?;
+    let coordinate = match coordinate {
+        Some(value) => parse_positive_connection_limit(
+            "ISUCON_DB_COORDINATE_CONNECTIONS",
+            Some(value),
+            DEFAULT_DB_COORDINATE_CONNECTIONS,
+        )?,
+        None => {
+            let derived = DEFAULT_DB_COORDINATE_CONNECTIONS.min(total / 2);
+            anyhow::ensure!(
+                derived > 0,
+                "ISUCON_DB_MAX_CONNECTIONS ({total}) must be at least 2 when database pools are partitioned"
+            );
+            derived
+        }
+    };
+    anyhow::ensure!(
+        coordinate < total,
+        "ISUCON_DB_COORDINATE_CONNECTIONS ({coordinate}) must be smaller than ISUCON_DB_MAX_CONNECTIONS ({total})"
+    );
+    Ok(DbPoolLimits {
+        total,
+        general: total - coordinate,
+        coordinate,
+    })
+}
+
+fn optional_env(name: &str) -> anyhow::Result<Option<String>> {
+    match std::env::var(name) {
+        Ok(value) => Ok(Some(value)),
+        Err(std::env::VarError::NotPresent) => Ok(None),
+        Err(error) => {
+            Err(anyhow::Error::new(error).context(format!("{name} must contain valid Unicode")))
+        }
+    }
 }
 
 #[tokio::main]
@@ -46,27 +100,35 @@ async fn main() -> anyhow::Result<()> {
     let user = std::env::var("ISUCON_DB_USER").unwrap_or_else(|_| "isucon".to_owned());
     let password = std::env::var("ISUCON_DB_PASSWORD").unwrap_or_else(|_| "isucon".to_owned());
     let dbname = std::env::var("ISUCON_DB_NAME").unwrap_or_else(|_| "isuride".to_owned());
-    let db_max_connections = match std::env::var("ISUCON_DB_MAX_CONNECTIONS") {
-        Ok(value) => Some(value),
-        Err(std::env::VarError::NotPresent) => None,
-        Err(error) => {
-            return Err(anyhow::Error::new(error)
-                .context("ISUCON_DB_MAX_CONNECTIONS must contain valid Unicode"));
-        }
-    };
-    let db_max_connections = parse_db_max_connections(db_max_connections.as_deref())?;
+    let db_max_connections = optional_env("ISUCON_DB_MAX_CONNECTIONS")?;
+    let db_coordinate_connections = optional_env("ISUCON_DB_COORDINATE_CONNECTIONS")?;
+    let db_pool_limits = parse_db_pool_limits(
+        db_max_connections.as_deref(),
+        db_coordinate_connections
+            .as_deref()
+            .filter(|value| !value.is_empty()),
+    )?;
 
+    let connect_options = sqlx::mysql::MySqlConnectOptions::default()
+        .host(&host)
+        .port(port)
+        .username(&user)
+        .password(&password)
+        .database(&dbname);
     let pool = sqlx::mysql::MySqlPoolOptions::new()
-        .max_connections(db_max_connections)
-        .connect_with(
-            sqlx::mysql::MySqlConnectOptions::default()
-                .host(&host)
-                .port(port)
-                .username(&user)
-                .password(&password)
-                .database(&dbname),
-        )
+        .max_connections(db_pool_limits.general)
+        .connect_with(connect_options.clone())
         .await?;
+    let coordinate_pool = sqlx::mysql::MySqlPoolOptions::new()
+        .max_connections(db_pool_limits.coordinate)
+        .connect_with(connect_options)
+        .await?;
+    tracing::info!(
+        total = db_pool_limits.total,
+        general = db_pool_limits.general,
+        coordinate = db_pool_limits.coordinate,
+        "configured database connection pools"
+    );
 
     let auth_cache = AuthCache::load(&pool)
         .await
@@ -79,6 +141,7 @@ async fn main() -> anyhow::Result<()> {
         .context("failed to load chair stats")?;
     let app_state = AppState {
         pool,
+        coordinate_pool,
         payment_client: reqwest::Client::builder()
             .build()
             .context("failed to initialize payment HTTP client")?,
@@ -119,29 +182,67 @@ async fn main() -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_db_max_connections, DEFAULT_DB_MAX_CONNECTIONS};
+    use super::{parse_db_pool_limits, DbPoolLimits};
 
     #[test]
-    fn db_max_connections_defaults_to_fifty() {
+    fn db_pool_limits_default_to_a_fifty_connection_budget() {
         assert_eq!(
-            parse_db_max_connections(None).expect("default pool size"),
-            DEFAULT_DB_MAX_CONNECTIONS
+            parse_db_pool_limits(None, None).expect("default pool limits"),
+            DbPoolLimits {
+                total: 50,
+                general: 26,
+                coordinate: 24,
+            }
         );
     }
 
     #[test]
-    fn db_max_connections_accepts_a_positive_integer() {
+    fn db_pool_limits_split_the_configured_total() {
         assert_eq!(
-            parse_db_max_connections(Some("75")).expect("configured pool size"),
-            75
+            parse_db_pool_limits(Some("50"), Some("16")).expect("configured pool limits"),
+            DbPoolLimits {
+                total: 50,
+                general: 34,
+                coordinate: 16,
+            }
         );
     }
 
     #[test]
-    fn db_max_connections_rejects_zero_and_non_numbers() {
-        assert!(parse_db_max_connections(Some("0")).is_err());
-        assert!(parse_db_max_connections(Some("")).is_err());
-        assert!(parse_db_max_connections(Some("many")).is_err());
+    fn coordinate_default_scales_down_with_a_small_total() {
+        assert_eq!(
+            parse_db_pool_limits(Some("16"), None).expect("derived pool limits"),
+            DbPoolLimits {
+                total: 16,
+                general: 8,
+                coordinate: 8,
+            }
+        );
+        assert_eq!(
+            parse_db_pool_limits(Some("2"), None).expect("minimum split pool limits"),
+            DbPoolLimits {
+                total: 2,
+                general: 1,
+                coordinate: 1,
+            }
+        );
+        assert!(parse_db_pool_limits(Some("1"), None).is_err());
+    }
+
+    #[test]
+    fn db_pool_limits_reject_zero_and_non_numbers() {
+        assert!(parse_db_pool_limits(Some("0"), None).is_err());
+        assert!(parse_db_pool_limits(Some(""), None).is_err());
+        assert!(parse_db_pool_limits(Some("many"), None).is_err());
+        assert!(parse_db_pool_limits(None, Some("0")).is_err());
+        assert!(parse_db_pool_limits(None, Some("")).is_err());
+        assert!(parse_db_pool_limits(None, Some("many")).is_err());
+    }
+
+    #[test]
+    fn coordinate_pool_must_leave_at_least_one_general_connection() {
+        assert!(parse_db_pool_limits(Some("16"), Some("16")).is_err());
+        assert!(parse_db_pool_limits(Some("15"), Some("16")).is_err());
     }
 }
 

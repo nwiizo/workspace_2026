@@ -364,7 +364,7 @@
 | P0 | 通知2経路 | recipient + chair stats dependency revision付きpayload cache。chairは配送状態機械でcurrent rideを維持。未送信statusは30ms、定常cacheは100ms | connection再利用、response ACKなしの配送loss、long pollingを順に検証 |
 | P0 | `get_chair_stats` | 評価時差分更新 + 主キーreadへ変更 | SQL累積は約89%減、スコア中央値は約3.5%低下したため次の通知施策と合わせて再評価 |
 | P0 | `app_post_ride_evaluation` | 準備transaction、transaction外の冪等決済、ride再lock付き完了transactionへ分割済み | connection所有平均は94.0%短縮。完了時の追加acquireとprocess crash後の自動回収を検討する |
-| P0 | `chair_post_coordinate` | 履歴INSERT + current UPDATE、遷移候補だけride lock + 最新status再読。drive追跡1,191 POSTの86.6%がclient 30ms以上、server時間の84.1%がpool待ち | 総接続50内のgeneral 34 + coordinate 16を検証開始値にし、static partitionとadmission controlを比較する |
+| P0 | `chair_post_coordinate` | 履歴INSERT + current UPDATE、遷移候補だけride lock + 最新status再読。総接続50をgeneral 26 + coordinate 24へ分け、通常3走中央値138,027点で採用 | shared pool + general admission control、通知二重取得削減、必要ならper-chair queueを比較する |
 | P1 | `app_get_rides` | rideごとにstatus、coupon、chair、ownerを取得 | 履歴増加に比例するN+1 |
 | P1 | `owner_get_sales` | ownerのchairごとに完了rideを取得し、評価responseと重なったride IDを除外 | N+1、read transactionが暗黙ROLLBACK。複数processではtracker共有が必要 |
 | P1 | `app_post_rides` | userの全rideとride別最新statusを取得 | ライド作成ごとに履歴全体を再走査 |
@@ -372,7 +372,7 @@
 | P1 | 認証middleware | 初期tokenはprocess cache、動的主体は最初のmissだけDB検索 | DB外のtoken失効と複数processのcache invalidationは未対応 |
 | P1 | `payment_gateway` | process共有client + ride IDの冪等POST。エラー時の履歴GETは削除済み | TCP connect回数、retry status別回数、connection再利用率の直接計測は未実施 |
 | P2 | nginx / Rustログ | stock設定のまま全リクエストを処理 | 高頻度経路のログI/Oとproxy overheadが未計測 |
-| P2 | MySQL / sqlx pool | stock MySQL、SQLx pool上限50。50 / 75 / 100の通常各3走で維持を決定 | 上限追加でrow-lock待ちとDB内滞在が増えたため、query・lock保持を減らす |
+| P2 | MySQL / sqlx pool | stock MySQL、総接続上限50。50 / 75 / 100では50を維持し、内訳はgeneral 26 + coordinate 24を採用 | static partitionのidle非共有をshared pool + admission controlと比較し、query・lock保持も減らす |
 
 ## Fable独立レビューで追加した正当性不変条件
 
@@ -1164,13 +1164,29 @@
   - Rust report前とGo Validation終了時にFIFO barrierを待ち、Rust queueの
     `dropped_lines=0`を確認。client / serverの末尾未flushを除外
   - 詳細: [`tuning/40-drive-phase-diagnostics.md`](./tuning/40-drive-phase-diagnostics.md)
-- [ ] 総DB接続上限50をgeneral 34 + coordinate 16へ分け、coordinateの30ms超過率、
+- [x] 総DB接続上限50をgeneral / coordinateへ分け、coordinateの30ms超過率、
   drive不満、通知 / matcher / 評価p95、完了数、通常3走中央値を比較する
-  - 34 / 16は採用値ではなく検証開始値。固定partitionでは片側のidleを共有できない
-  - coordinate / general別のsize、idle、acquire、connection所有と、MySQL総接続数、
-    `Threads_running`、処理件数あたりrow-lock waitを同じrunで採取する
-  - initialize、reconciliation、matcherを含む全pool利用先をどちらへ置くか一覧化する
-  - general starvationが出た場合は共有pool 50 + general 34 permitのadmission controlを比較する
+  - 34 / 16は128,038点、完了1,979、drive不満79.5%。周期sampleのcoordinate
+    pool平均71.623msで不採用
+  - 30 / 20は145,732点、完了2,327、drive不満80.6%。周期sampleのpool平均62.854ms
+  - 26 / 24は152,128点、完了2,386、drive不満74.0%。周期sampleのpool平均30.414ms
+  - 26 / 24の通常3走は138,027 / 142,851 / 133,797点、中央値138,027点。
+    全走`pass=true`・error map空、Benchmark 39中央値比+3.6%で採用
+  - 既定値反映後も環境変数なしで132,756点、`pass=true`、起動logの
+    `total=50 general=26 coordinate=24`を確認
+  - `ISUCON_DB_MAX_CONNECTIONS`は総予算とし、coordinateを差し引いた残りをgeneralへ設定。
+    initialize、reconciliation、matcherを含む座標以外はgeneralへ配置
+  - pool別size / idle / acquireとfresh process累積row-lockは採取済み。
+    `Threads_connected` / `Threads_running`の時系列は未採取のため次のadmission control比較へ持ち越す
+  - 詳細:
+    [`tuning/41-db-pool-partition-16.md`](./tuning/41-db-pool-partition-16.md)、
+    [`tuning/42-db-pool-partition-24.md`](./tuning/42-db-pool-partition-24.md)、
+    [`tuning/43-db-pool-partition-20.md`](./tuning/43-db-pool-partition-20.md)、
+    [`tuning/44-db-pool-partition-adoption.md`](./tuning/44-db-pool-partition-adoption.md)
+- [ ] static partitionで片側idleを共有できないため、共有pool 50 + general permitの
+  admission controlを24 / 26と比較する
+  - pool別permit待ち、`Threads_connected` / `Threads_running`、処理件数あたりrow-lock waitを
+    1秒間隔で採取する
 - [ ] 接続隔離後もcoordinateが30msを超える場合は、per-chair順序、全履歴、status遷移、
   3秒可視性を維持する非同期queueを別施策として比較する
 - [ ] matcherの目的関数を「割当件数最大化 → 期限超過ride最小化 → pickup予測tick最小化」の辞書順で定義する
@@ -1310,11 +1326,11 @@
 完了済みのmatcher `CODE=32`、owner `CODE=26`、評価phase、pool上限50 / 75 / 100、
 drive phaseの診断は上の各項目へ結果を残しています。現在の未完了項目は次の順です。
 
-1. 総上限50を維持したgeneral 34 + coordinate 16を最初の比較条件として実装し、
-   pool別待ち、drive tick、general endpoint、MySQL競合、通常3走中央値で採否を決める
-2. static partitionでgeneral starvationまたは片側idleが出た場合は、共有pool 50のまま
-   generalだけ34 permitへ制限するadmission controlと比較する
-3. rideあり通知の二重pool取得を、現在の配送状態機械を維持したまま単独で再比較する
+1. rideあり通知の二重pool取得を、現在の配送状態機械を維持したまま単独で再比較する
+2. 総上限50のstatic 26 / 24で見えたgeneral starvationに対し、共有pool 50のまま
+   general permitでcoordinate余力を保証するadmission controlと比較する
+3. static partition後も残るcoordinate p95に対し、per-chair queueへ進む前に
+   current write / COMMIT / row lockの処理量を減らせるか確認する
 4. `CODE=27`を同じchairのDB current row、process cache、nearby応答で追跡する
 5. owner距離の更新時刻省略数、対象履歴行数、query時間を診断時だけ記録し、
    current-state集約と比較する

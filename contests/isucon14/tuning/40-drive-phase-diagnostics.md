@@ -364,7 +364,7 @@ app 47.720 + 49.757ms、chair 49.868 + 51.591msです。通知自身もpool待�
 - blocked tick見積りが実際の余分tickへ近く、coordinate応答待ちが直接原因
 - 通知も遅いが、driveの `PickedUpAt -> ArrivedAt` へ直接積み上がるのは走行中POST
 
-## 次に比較する実装
+## 次に比較した実装
 
 ### 1. 総接続数50を用途別に分ける
 
@@ -387,6 +387,12 @@ Littleの法則による平均同時実行は概算12.8 connectionです。た�
 - coordinate / general各poolのsize、idle、acquire、connection所有
 - MySQL総接続数、`Threads_running`、処理件数で正規化したInnoDB row-lock wait
 - 通常3走のスコア中央値とerror map
+
+この比較はBenchmark 41–44で完了しました。16 / 20 / 24本を診断し、coordinate 24 /
+general 26の通常3走中央値は138,027点、直前比+3.6%、全走error map空でした。
+16はcoordinate不足、20はcoordinate待ちが共有pool時相当、24はgeneral飽和という
+trade-offを記録したうえで24を採用しています。詳細は
+[Benchmark 44](./44-db-pool-partition-adoption.md)を参照してください。
 
 固定partitionではgeneralがidleでもcoordinateは借りられず、その逆も起きます。
 general側が34でstarvationするなら、単に総上限を増やす前に次を比較します。

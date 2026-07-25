@@ -336,7 +336,7 @@ ON DUPLICATE KEY UPDATE
 
 async fn chair_post_coordinate(
     State(AppState {
-        pool,
+        coordinate_pool: pool,
         latest_chair_locations,
         notification_cache,
         ..

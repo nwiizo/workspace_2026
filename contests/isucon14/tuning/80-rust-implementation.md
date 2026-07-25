@@ -2247,6 +2247,94 @@ attempt間のretry backoffは含まないため、失敗があるrunではblocke
 計測結果と接続予約の次仮説は
 [Benchmark 40](./40-drive-phase-diagnostics.md)に記録しています。
 
+## 2つのSQLx poolで総接続予算を分ける
+
+Benchmark 41–44では、総接続50をgeneralとcoordinateへ分けました。
+
+```rust
+let general_pool = MySqlPoolOptions::new()
+    .max_connections(total - coordinate)
+    .connect_with(connect_options.clone())
+    .await?;
+let coordinate_pool = MySqlPoolOptions::new()
+    .max_connections(coordinate)
+    .connect_with(connect_options)
+    .await?;
+```
+
+`MySqlConnectOptions::clone()` が複製するのはhost、port、user、databaseなどの設定値です。
+確立済みTCP connectionを複製する処理ではありません。`connect_with`を2回呼ぶため、
+待ち行列と上限が独立した2つのpoolになります。
+
+一方、既存の `MySqlPool::clone()` は同じpool内部への参照countされたhandleを作ります。
+handlerへpoolを渡すための軽い操作ですが、用途別予約にはなりません。
+
+```text
+MySqlPool::clone()
+  -> 同じ接続集合・同じ待ち行列
+
+PoolOptions::connect_with()を2回
+  -> 別の接続集合・別の待ち行列
+```
+
+### 各poolへ総上限をそのまま設定しない
+
+次の実装は誤りです。
+
+```rust
+general.max_connections(50);
+coordinate.max_connections(50);
+```
+
+process全体では最大100 connectionになり、過去の50 / 75 / 100比較と条件が変わります。
+そこで `ISUCON_DB_MAX_CONNECTIONS`を総予算、coordinate設定を内訳として扱い、
+generalを差し引きで求めます。
+
+```rust
+anyhow::ensure!(coordinate < total);
+let general = total - coordinate;
+```
+
+正整数だけを許可し、generalを最低1本残します。0を「共有pool」など別の意味へ暗黙変換すると、
+設定ミスと実験条件が区別できないためです。
+
+coordinate設定を省略した場合は、総数50なら24、小さい総数なら半分になるよう
+`min(24, total / 2)`で導出します。総数だけを16へ下げた既存設定が、独立した
+coordinate既定24との大小関係だけで起動失敗しないためです。2 poolへ最低1本ずつ必要なので、
+total 1は理由付きで拒否します。
+
+### poolを分けるときはbackground taskも分類する
+
+HTTP handlerだけを一覧にしても不十分です。今回generalへ置いた処理には次も含みます。
+
+- 認証cacheの起動時loadとinitialize後refresh
+- latest coordinate cacheの起動時load、initialize後refresh、2秒reconciliation
+- chair statsの起動時repair
+- matcher
+
+coordinate専用poolは `POST /api/chair/coordinate` だけです。予約した接続を定常hot pathへ
+残す意図が、background taskの利用で崩れないようにします。
+
+### static partitionの限界
+
+generalが26本すべて待っていても、coordinate側にidleがあれば借りられません。逆も同じです。
+これは性能bugではなくstatic partitionの保証と代償です。
+
+```text
+保証: 他用途のburstが予約分を使い切らない
+代償: 片側の余りを融通できない
+```
+
+16 / 20 / 24を診断した結果、24は周期sampleのcoordinate pool平均を30.414msまで
+下げましたが、general 26では通知・評価・matcherが飽和しました。それでも通常3走中央値は
+133,257点から138,027点へ約3.6%改善し、全走error map空だったため採用しました。
+
+次の比較候補はshared pool 50 + general admission controlです。接続を共有したまま
+general burstへpermit上限を設ければ、coordinateの余地を残しつつidleを融通できます。
+ただし全general handlerとbackground taskが同じpermitを守らなければ、予約保証に穴が開きます。
+
+詳細は[Benchmark 44](./44-db-pool-partition-adoption.md)に記録しています。
+
 ### INDEXでCASE sortが自動的に消えるとは限らない
 
 `rides(chair_id, created_at)`は1 chairの候補へ絞り、
