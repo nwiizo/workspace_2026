@@ -2469,6 +2469,60 @@ static partitionまでの経緯は[Benchmark 44](./44-db-pool-partition-adoption
 admission scope、MySQL 1秒時系列、除外runの根拠は
 [Benchmark 49](./49-db-shared-pool-admission.md)に記録しています。
 
+### SQL往復を減らしてもDBの仕事は消えない
+
+Benchmark 50では、Rustが順に実行していた履歴INSERTとcurrent UPDATEに対し、
+MySQLの`AFTER INSERT`トリガーでアプリ発行DMLとDB往復を2回から1回へ減らしました。
+
+```text
+変更前:
+Rust -> history INSERT -> current UPDATE -> COMMIT
+
+候補:
+Rust -> history INSERT
+          └ MySQL trigger -> current UPSERT
+       -> COMMIT
+```
+
+Rustから見た書込み区間は平均3.510msから2.563msへ27.0%短くなりました。しかし、
+トリガー内でも`chair_current_locations`の主キーINDEX lookup、row更新、lock取得は
+実行されます。`performance_schema`では28,513回、平均1.314ms、累積37.461秒でした。
+
+通常3走中央値は直前の135,410点から121,185点へ10.51%下がり、元のRust実装へ戻した
+同時間帯の単発対照は132,970点でした。単発対照だけでは因果を確定できませんが、
+採用を支持するscore evidenceがないため、トリガーは保守的に不採用としました。
+「awaitを1回減らした」「SQLを1本に見せた」だけでは高速化の根拠にならず、
+DB内の処理量、tail latency、最終スコアまでつなげて判断します。
+
+### SQLxのprepared queryと固定DDLを分ける
+
+SQLxの`query()`はprepared statementとして実行されます。MySQL 8.4は実験した
+`CREATE TRIGGER`をprepared protocolで受け付けず、error 1295になりました。
+
+固定DDLだけは次のように`raw_sql()`で実行できます。
+
+```rust
+sqlx::raw_sql(
+    r#"
+CREATE TRIGGER IF NOT EXISTS ...
+    "#,
+)
+.execute(pool)
+.await?;
+```
+
+`raw_sql()`にはbind parameterがありません。HTTP requestの値や認証主体の値を文字列へ
+埋め込むとSQL injectionの原因になります。今回の候補で使えたのは、外部入力を含まない
+コンパイル時固定DDLだけだったためです。通常のSELECT / INSERT / UPDATEは引き続き
+`query()`と`.bind()`を使います。
+
+トリガー候補ではbinary log有効時の権限error 1419も確認しました。ローカル候補runだけ
+`log_bin_trust_function_creators`を有効にしましたが、候補棄却と一緒に戻しています。
+アプリ変更だけでなく、動作に必要なDB設定とその安全性も採否へ含めます。
+
+詳しいSQL、INDEXの働き、rollback fixture、phase計測、代替案は
+[Benchmark 50](./50-coordinate-current-trigger.md)に記録しています。
+
 ### INDEXでCASE sortが自動的に消えるとは限らない
 
 `rides(chair_id, created_at)`は1 chairの候補へ絞り、

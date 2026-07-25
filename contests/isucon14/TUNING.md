@@ -77,7 +77,7 @@
 | owner椅子一覧をownerで先に絞る | 実装・単独ベンチ済み | 最新位置と累積距離のcurrent-state化 |
 | owner累積距離の公開境界 | request開始1秒前の安定snapshotを使用。同一chairの`recorded_at`をDBと同じµs精度へ正規化し、process内high-water markで単調増加。window順序を`(created_at, id)`で決定。最終診断の87,005区間はspeed超過0、通常3走も`CODE=26` 0 | 1秒公開境界を維持したcurrent-state差分集約を比較。複数process化前にDB sequenceまたはatomic current rowへ置き換える |
 | owner売上の評価境界 | 完了時刻を最終SQLで保存し、owner requestと重なる評価ride IDだけをrevision trackerで除外 | body drop後のclient計上差はprotocol ACKなしでは残る。複数process前に共有化 |
-| 最新位置をcurrent-state表で管理 | 履歴INSERTと同じtransactionで更新し、cacheを2秒ごとに再同期 | current UPDATEのrow-lock待ちとwrite amplificationを削減 |
+| 最新位置をcurrent-state表で管理 | 履歴INSERTと同じtransactionで更新し、cacheを2秒ごとに再同期。`AFTER INSERT`トリガー統合は通常3走中央値121,185点、同時間帯の単発対照132,970点。因果未確定だが採用を支持するscore evidenceがなく保守的に棄却 | current UPDATEのrow-lock待ちとwrite amplificationを、per-chair queueで正当性を保って削減 |
 | pending rideと空き椅子のbatch matching | 地域ごとに最大64候補、全体最大64割当、近傍優先、同一地域の距離200以下まで実装済み。speedだけを使う局所greedyは中央値-0.9%で不採用 | 地域ID + INDEX、期限とpickup予測を含む二部matchingを比較 |
 | JSON通知のcache | recipient revisionとchair stats dependency revision付きprocess cache。chairは配送状態機械でcurrent rideを維持。rideありは存在確認connectionをtransactionへ再利用し、2回目のpool取得を診断878 / 878 sampleで削除。通常3走中央値139,198点 | owner `CODE=26`を再修正後、response ACKなしの配送loss、DB connectionを保持しないlong pollingを比較 |
 | 座標更新のpool待ち | 総接続50のshared pool + general permit 26を採用。static / shared近接3組の中央値126,104→135,410点（+7.38%）。coordinateはpermit対象外、general通知の二重取得も削減済み | coordinate current write / COMMIT / row-lockを減らし、必要ならper-chair queueを比較 |
@@ -133,6 +133,14 @@ general DB phaseだけをSemaphore permit 26で制限しました。static / sha
 外部決済やcache hit中もpermitを持ち、周期sampleの待ちp95 275.731msだったため棄却しています。
 採用版は実際のDB phaseだけを囲みます。詳細は
 [Benchmark 49](./tuning/49-db-shared-pool-admission.md)に記録しています。
+
+Benchmark 50では、履歴INSERT後のcurrent UPDATEをMySQL `AFTER INSERT`トリガーへ
+統合しました。アプリ側の履歴 + current書込み平均は3.510msから2.563msへ27.0%
+短くなりましたが、通常3走中央値は135,410点から121,185点へ10.51%低下しました。
+同じ時間帯に元の2クエリへ戻した単発対照は132,970点でした。単発対照だけでは因果を
+確定できませんが、候補3走が過去分布をすべて下回り、採用を支持するscore evidenceが
+ないため保守的に棄却しています。INDEX lookupとrow更新がトリガー内にも残ることを
+[Benchmark 50](./tuning/50-coordinate-current-trigger.md)へ記録しました。
 
 通知cacheはDB上の配信cursorの代替にはしません。recipientごとにpayloadとrevisionを保持し、
 app payloadが参照するchair statsにもdependency revisionを持たせます。ride割当・status追加・
@@ -944,6 +952,7 @@ amountを記録するため、ride IDを同じkeyとして再利用すれば、�
 | [47-owner-distance-recurrence-diagnostics.md](./tuning/47-owner-distance-recurrence-diagnostics.md) | owner応答、coordinate commit、ベンチ内部履歴をchair IDとマイクロ秒時刻で厳格相関。commit窓は`Instant`で計測 | 再発診断145,128点、`pass=true`、`CODE=26` 94件。owner query p95 660.307ms。`Instant`修正後159,936点・error空、2,983 sampleのcommit窓はp99 123.156ms・最大304.287ms・1秒超0件 | 診断run・未推定。履歴診断30秒は65,908点・42件を全件再相関。chair内時刻が約81ms逆行し、DB距離465・期待429の差36とerrorが一致。1秒超commit仮説を棄却 |
 | [48-owner-distance-monotonic-time.md](./tuning/48-owner-distance-monotonic-time.md) | DBと同じµs精度へ正規化後、chairごとのprocess内high-water markで`recorded_at`を単調増加。同時刻を`id`で決定し、距離不一致と3秒超stalenessを別reasonで診断 | 通常3走139,218–146,999点、中央値141,228点、全走`pass=true`・error map空。診断158,260点、87,005区間のspeed超過0、commit最大197.062ms | 実測n=3。Benchmark 46中央値比+1.46%だがrun間分散より小さく高速化の因果は未確定。実測した時刻逆行を追加SQLなしで防ぐ正当性修正として採用。複数process保証は未対応 |
 | [49-db-shared-pool-admission.md](./tuning/49-db-shared-pool-admission.md) | static 26 / 24と、shared pool 50 + general DB phase permit 26を実行順反転込みで比較 | static中央値126,104点、shared中央値135,410点、差+9,306点（+7.38%）。全6走`pass=true`・error map空。30秒診断はMySQL statusを1秒採取 | 各構成実測n=3、3組すべてsharedが上回ったため既定へ採用。request-wide permitはDB外待ちも枠を塞ぐため棄却し、phase scopeだけを採用 |
+| [50-coordinate-current-trigger.md](./tuning/50-coordinate-current-trigger.md) | MySQL `AFTER INSERT`トリガーでアプリ発行DMLとDB往復を2回から1回へ削減 | 書込みphase平均3.510→2.563ms（-27.0%）だが、通常3走117,326–121,580点、中央値121,185点。同時間帯の2クエリ単発対照132,970点 | 実測n=3。単発対照では因果未確定だが、直前中央値比-10.51%で採用を支持するscore evidenceがなく保守的に棄却。最終ソースは2クエリ構成 |
 | [80-rust-implementation.md](./tuning/80-rust-implementation.md) | Rust / sqlxとrelease buildの知識 | 再build 30分52秒→11.02秒 | build時間の実測。スコア推定対象外 |
 | [81-evaluation-authorization.md](./tuning/81-evaluation-authorization.md) | 評価rideを認証ユーザー所有へ制限 | 公式prevalidation `pass=true`、別ユーザーHTTP回帰成功 | 正当性修正。60秒スコアはBenchmark 20から更新しない |
 | [90-local-environment.md](./tuning/90-local-environment.md) | build context、BuildKit、固定Colima資源 | context 467MB→32.5KB | sizeの実測。スコア推定対象外 |
