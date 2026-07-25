@@ -177,63 +177,6 @@ jq --slurp --raw-output '
   end
 ' "$json_log"
 
-printf '\nqueued coordinate delivery\n\n'
-printf '| metric | samples | avg_us | p50_us | p95_us | p99_us | max_us |\n'
-printf '|---|---:|---:|---:|---:|---:|---:|\n'
-for metric in queue_enqueue_wait_us queue_admission_wait_us queue_wait_us acknowledged_to_commit_us
-do
-  jq --slurp --raw-output --arg metric "$metric" '
-    [
-      .[] |
-      select(.queued == true) |
-      select((.outcome // "success") == "success") |
-      if $metric == "acknowledged_to_commit_us" then
-        select(
-          .acknowledged_at_unix_us != null and
-          .committed_at_unix_us != null and
-          .committed_at_unix_us >= .acknowledged_at_unix_us
-        ) |
-        (.committed_at_unix_us - .acknowledged_at_unix_us)
-      else
-        .[$metric]
-      end
-    ] | sort as $values |
-    ($values | length) as $length |
-    if $length == 0 then
-      "| \($metric) | 0 | n/a | n/a | n/a | n/a | n/a |"
-    else
-      [
-        $metric,
-        $length,
-        (($values | add) / $length | floor),
-        $values[(($length - 1) * 0.50 | floor)],
-        $values[(($length - 1) * 0.95 | floor)],
-        $values[(($length - 1) * 0.99 | floor)],
-        $values[$length - 1]
-      ] |
-      "| \(.[0]) | \(.[1]) | \(.[2]) | \(.[3]) | \(.[4]) | \(.[5]) | \(.[6]) |"
-    end
-  ' "$json_log"
-done
-
-printf '\nqueue depth before enqueue\n\n'
-printf '| shard | samples | avg depth | max depth |\n'
-printf '|---:|---:|---:|---:|\n'
-jq --slurp --raw-output '
-  [
-    .[] |
-    select(.queued == true and .queue_depth_before != null)
-  ] |
-  group_by(.queue_shard)[] |
-  [
-    .[0].queue_shard,
-    length,
-    ([.[].queue_depth_before] | add / length | floor),
-    ([.[].queue_depth_before] | max)
-  ] |
-  "| \(.[0]) | \(.[1]) | \(.[2]) | \(.[3]) |"
-' "$json_log"
-
 printf '\npool state before sampled acquire\n\n'
 printf 'summary: '
 jq --slurp --raw-output '

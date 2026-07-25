@@ -36,7 +36,6 @@ pub struct AppState {
     pub auth_cache: AuthCache,
     pub notification_cache: NotificationCache,
     pub latest_chair_locations: LatestChairLocationCache,
-    pub coordinate_write_queue: Option<crate::chair_handlers::CoordinateWriteQueue>,
     pub active_ride_evaluations: ActiveRideEvaluationTracker,
     pub maintenance_lock: Arc<RwLock<()>>,
     pub general_db_admission: DbAdmission,
