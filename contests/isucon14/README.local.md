@@ -60,6 +60,7 @@ git -C "$source_dir/isucon14" archive HEAD | tar -x -C contests/isucon14
 | `scripts/test-owner-sales-response-boundary.sh` | 遅い決済中の評価完了時刻とowner salesの`until`境界をHTTP・決済TCP accept・InnoDB行ロック・response JSON・SQLで確認 |
 | `scripts/test-username-collision.sh` | 同じusernameを2回登録し、別user・別認証・招待couponを維持した限定再試行を確認 |
 | `scripts/test-invitation-concurrency.sh` | 異なる招待コードと同一招待コードをbarrier付きで並行登録し、上限、coupon件数、MySQL 1062 / 1213の増分0を確認 |
+| `scripts/test-app-rides-batch.sh` | 完了ride一覧の未完了除外、順序、割引、時刻、UTF-8とstatus / evaluation不変条件を確認 |
 | `scripts/benchmark.sh` | 決済モックを含む公式ベンチマーカーの実行 |
 | `scripts/report-endpoint-latency.sh` | 診断runのnginx timing logをendpoint別に集計 |
 | `scripts/report-coordinate-phases.sh` | 診断runのcoordinate phase、row lock、current-state writeを集計 |
@@ -243,6 +244,10 @@ cd contests/isucon14
 # 異なる24招待コードと同一招待コード4件を並行登録し、lockと3回上限を確認
 # 注意: 開始時と終了時にPOST /api/initializeを呼び、ローカルデータを初期化する
 ./scripts/test-invitation-concurrency.sh
+
+# 完了ride一覧の未完了除外、降順、couponなし・通常・過大割引、時刻、UTF-8を確認
+# 注意: 開始時と終了時にPOST /api/initializeを呼び、ローカルデータを初期化する
+./scripts/test-app-rides-batch.sh
 
 # 公式ベンチマーカーによる短い動作確認
 ./scripts/benchmark.sh 10
@@ -525,6 +530,8 @@ RESET=1 ./scripts/down.sh
 | owner距離の時刻単調化 | `Utc::now()`をDBと同じµs精度へ正規化し、chairごとのprocess内high-water markで逆行と同時刻tieを防止。通常3走139,218–146,999点、中央値141,228点、全走`pass=true`・error map空。診断runは87,005移動区間のspeed超過0、`CODE=26` 0。直前中央値比+1.46%だが分散より小さく高速化の因果は未確定 |
 | shared DB pool + general admission | static / sharedを実行順反転込みで3組比較。static中央値126,104点、shared中央値135,410点（+7.38%）、全6走`pass=true`・error map空。sharedを既定に採用し、環境変数なしの最終確認も131,963点・`shared=true` |
 | current更新のMySQLトリガー統合 | アプリ発行DMLを2本から1本へ減らし、履歴 + current書込み平均3.510→2.563ms（-27.0%）。通常3走中央値121,185点は直前中央値135,410点比-10.51%、同時間帯の2クエリ単発対照は132,970点。単発対照では因果未確定だが採用を支持するscore evidenceがないため保守的に棄却 |
+| coordinateの非同期queue | 同期対照3走中央値127,499点に対し、候補3走中央値122,125点（-4.22%）。全走`pass=true`・error map空だが、post-ACK DB失敗と再起動時の復元不能も残るため棄却 |
+| 利用者ライド履歴の1 SQL化 | ride別status / coupon / chair / owner検索を1 statementへ統合し、read-only transactionを除去。通常3走124,205–133,737点、中央値128,584点（同期対照比+0.85%）。全走`pass=true`・error map空、旧新JSON一致と固定fixtureを確認して採用 |
 
 初回の初期60秒走行ではMySQLのqueryが十数秒以上へ遅延し、ベンチマーカーの期限を
 超えました。同じ初期revisionを外部コンテナの大きな共有負荷がない条件で再計測

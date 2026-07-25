@@ -365,7 +365,7 @@
 | P0 | `get_chair_stats` | 評価時差分更新 + 主キーreadへ変更 | SQL累積は約89%減、スコア中央値は約3.5%低下したため次の通知施策と合わせて再評価 |
 | P0 | `app_post_ride_evaluation` | 準備transaction、transaction外の冪等決済、ride再lock付き完了transactionへ分割済み | connection所有平均は94.0%短縮。完了時の追加acquireとprocess crash後の自動回収を検討する |
 | P0 | `chair_post_coordinate` | 履歴INSERT + current UPDATE、遷移候補だけride lock + 最新status再読。shared pool 50 + general DB phase permit 26を近接3組で採用。`AFTER INSERT`とper-chair非同期queueは通常中央値を悪化させ棄却 | 同期commit境界を維持し、current投影・ride lookup・COMMITの仕事量そのものを減らす |
-| P1 | `app_get_rides` | rideごとにstatus、coupon、chair、ownerを取得 | 履歴増加に比例するN+1 |
+| 完了 | `app_get_rides` | `evaluation IS NOT NULL`、chair / owner JOIN、coupon相関lookupを1 statementで取得。明示read transactionも除去 | 通常3走中央値128,584点。HTTP p95 373msのadmission / pool / response内訳は未計測 |
 | P1 | `owner_get_sales` | ownerのchairごとに完了rideを取得し、評価responseと重なったride IDを除外 | N+1、read transactionが暗黙ROLLBACK。複数processではtracker共有が必要 |
 | P1 | `app_post_rides` | userの全rideとride別最新statusを取得 | ライド作成ごとに履歴全体を再走査 |
 | P2 | `app_post_users` | 招待者UNIQUE行を直列化地点にし、couponは `COUNT(*)`、rewardは新規user IDで一意化 | 現在の上限3では十分。上限や同一code集中が増えた場合だけcounterの条件付きUPDATEを比較 |
@@ -976,6 +976,19 @@
 - [x] 座標更新をper-chair順序付きのbounded queueへ投入し、HTTP応答と永続化・status判定を分離する実験を行う
   - 通常候補中央値122,125点、同期対照127,499点で-4.22%のため棄却
   - 詳細: [`tuning/51-coordinate-async-queue.md`](./tuning/51-coordinate-async-queue.md)
+- [x] `app_get_rides`のride別status / coupon / chair / owner N+1を1 statementへ集約する
+  - 変更前の終了時snapshotは親query 10,048回、owner個別query 13,527回。
+    status / coupon / chairは他endpointの実行分も含むため、全回数を一覧だけへ帰属しない
+  - `COMPLETED`とevaluationが同じtransactionで確定する不変条件を確認し、
+    `rides.evaluation IS NOT NULL` を完了current stateとして利用
+  - 既存の `(user_id, created_at)`、chair / owner主キー、`coupons(used_by)` を使用し、
+    追加INDEXによるwrite amplificationを避ける
+  - 診断runは138,231点、一覧12,100 request、新SQL11,956回・平均0.322ms。
+    prepared statementは終了済みconnection分を失うため件数差はsnapshotの制約
+  - 通常3走128,584 / 124,205 / 133,737点、推定代表値の中央値128,584点。
+    直前同期版中央値127,499点から+0.85%
+  - 全走`pass=true`・error map空。旧新JSONのSHA-256一致、固定fixture、54 Rust testを確認
+  - 詳細: [`tuning/52-app-rides-batch.md`](./tuning/52-app-rides-batch.md)
 - [ ] 最新座標をメモリ上では即時更新し、`chair_locations` を30 / 50 / 100ms単位でbulk INSERTする
 - [x] queue内の中間座標は累積距離と乗車地点・目的地への到達判定に必要なので、最新1件へ無条件にcoalesceしない
   - 実験は全座標をbounded FIFOへ保持し、24件の履歴数と順序を固定fixtureで確認
@@ -1008,13 +1021,20 @@
 
 ### 利用者ライド履歴
 
-- [ ] completed rideだけをSQL側で絞る
-- [ ] ride、chair、owner、適用couponをJOINし、1 SQLでレスポンス行を返す
-- [ ] 最新status取得をrideごとのqueryからJOINまたはcurrent status列へ置き換える
+- [x] completed rideだけをSQL側で絞る
+  - `COMPLETED`とevaluationを同じtransactionで確定する不変条件を確認し、
+    `rides.evaluation IS NOT NULL` を完了current stateとして使用
+- [x] ride、chair、owner、適用couponを1 SQLでレスポンス行へまとめる
+  - chair / ownerは主キーJOIN、couponは既存の`coupons(used_by)`を使うscalar subquery
+- [x] 最新status取得をrideごとのqueryからcurrent stateへ置き換える
+  - 一覧は完了rideだけを返すため、検証済みのevaluationをcurrent stateとして使用
 - [ ] fareをライド作成時に確定保存し、履歴表示ごとのcoupon検索をなくす
 - [ ] ridesへ列追加する場合は初期ダンプ投入後にALTERし、初期rideの `updated_at` を変えずにbackfillする
-- [ ] read-only transactionを廃止する
+- [x] read-only transactionを廃止する
+  - 複数SELECTを1 statementへ統合し、InnoDBのstatement snapshotだけで一貫して取得
 - [ ] 履歴0 / 1 / 多数件で内容と順序を検証する
+  - [x] 3件の完了ride + 1件の進行中ride、および終了DBの9件で多数件を検証
+  - [ ] 0件と1件を固定fixtureで検証
 
 ### ライド作成
 
@@ -1415,6 +1435,9 @@
 - [ ] 決済retryとexactly-once相当の結果
 - [x] 招待登録の異なる24 code同時実行、同一codeの3成功・1拒否、
   coupon件数、MySQL 1062 / 1213増分0
+- [x] 完了ride一覧の未完了除外、降順、couponなし・通常割引・過大割引、
+  millisecond変換、UTF-8、初期データ不変条件
+  - `./scripts/test-app-rides-batch.sh`
 - [ ] `rides.updated_at` と履歴 `completed_at` が完全一致すること
 - [ ] 既存表へ列を追加しても列名なし初期ダンプをロードできること
 - [ ] initialize直後とwebapp再起動後
@@ -1450,10 +1473,10 @@
 完了済みのmatcher `CODE=32`、owner `CODE=26`、評価phase、pool上限50 / 75 / 100、
 drive phaseの診断は上の各項目へ結果を残しています。現在の未完了項目は次の順です。
 
-1. `app_get_rides`のride別status / coupon / chair / owner N+1をphase分解し、
-   endpointのquery回数と累積時間を固定してからbatch化する
-2. `app_post_rides`のuser全履歴とride別最新status走査を、現在rideのcurrent-stateへ
+1. `app_post_rides`のuser全履歴とride別最新status走査を、現在rideのcurrent-stateへ
    置き換えられるか正当性fixture付きで比較する
+2. `app_get_rides`のgeneral admission、pool acquire、SQL、row mapping、responseを
+   phase分解し、p95 373msのうちSQL平均0.322ms以外の待ちを特定する
 3. nearbyのride antijoinとevaluation tracker確認を分け、どちらが高頻度pollの
    DB時間を支配するか計測する
 4. owner距離のwindow集計を、1秒公開watermarkを維持したcurrent-state差分集約と

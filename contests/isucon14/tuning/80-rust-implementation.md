@@ -2868,6 +2868,135 @@ worker数を増やす前に、次を確認します。
 正当性fixture、診断値、通常A/B、24 / 40 in-flightの比較は
 [Benchmark 51](./51-coordinate-async-queue.md)に記録しています。
 
+## SQLのN+1をRustのasyncで隠さず、結果型でまとめる
+
+### `.await` が非blockingでも、往復回数は残る
+
+SQLxのqueryを `.await` している間、OS threadを占有し続けるわけではありません。
+しかし、次のloopはride数だけ逐次的な依存を作ります。
+
+```rust
+for ride in rides {
+    let status = get_latest_ride_status(&mut *tx, &ride.id).await?;
+    let coupon = find_coupon(&mut *tx, &ride.id).await?;
+    let chair = find_chair(&mut *tx, &ride.chair_id).await?;
+    let owner = find_owner(&mut *tx, &chair.owner_id).await?;
+}
+```
+
+1つ前のqueryが終わるまで次のqueryを発行できません。`async` は待機中のthreadを他taskへ
+譲れますが、MySQL protocolの往復数、pool connectionの保持時間、MySQLのstatement数は
+減らしません。
+
+多数のqueryを `tokio::spawn` で並行化するとloopの壁時計は短くなる可能性があります。
+一方、共有poolへ一度に多数の取得要求を送り、coordinateや通知の待ちを増やします。
+ISUCONのように全endpointが同じDBを共有する環境では、handler単体の並行化より
+query数そのものを減らす方を先に検証します。
+
+### 永続化modelとquery projectionを分ける
+
+`Ride` はrides tableの1行を表します。JOINした一覧responseは、rideだけでは表せません。
+そこで、queryが返す列に対応する専用型を使います。
+
+```rust
+#[derive(sqlx::FromRow)]
+struct AppRideRow {
+    id: String,
+    pickup_latitude: i32,
+    // ...
+    chair_name: String,
+    owner_name: String,
+    discount: i32,
+}
+```
+
+この型は新しいdomain entityではなく、SQL結果とRustの間のprojectionです。
+
+利点は次です。
+
+- `SELECT` のaliasとRust fieldの対応が見える
+- 不要なaccess tokenをdecodeしない
+- DBのnullable列とAPIの必須fieldの境界を1か所に置ける
+- JOIN結果を複数の永続化modelへ一度分解して再結合しない
+- response変換をDB accessから分離できる
+
+`AppRideRow::into_response_item` は値を所有して受け取ります。取得した行をその後cacheへ
+残さないため、`String` をcloneせずresponseへmoveできます。
+
+```rust
+let items = rides
+    .into_iter()
+    .map(AppRideRow::into_response_item)
+    .collect();
+```
+
+`iter()` なら要素を借用するため、responseが所有する `String` にはcloneが必要です。
+`into_iter()` は `Vec` を消費し、各fieldの所有権をそのままresponseへ移します。
+
+### async関数から純粋な計算を取り出す
+
+割引料金の旧関数は、coupon queryと計算を同時に行いました。DB取得済みのdiscountを
+一覧queryから渡すには、計算部分を純粋関数へ分けると再利用できます。
+
+```rust
+pub fn calculate_fare_with_discount(
+    pickup_latitude: i32,
+    pickup_longitude: i32,
+    dest_latitude: i32,
+    dest_longitude: i32,
+    discount: i32,
+) -> i32
+```
+
+純粋関数は同じ入力へ同じ値を返し、DB、時刻、global stateを変更しません。このため、
+「割引は従量部分だけ」「過大な割引でも初乗り料金を下回らない」という境界を、
+MySQLを起動せず単体テストできます。
+
+async関数を短くすること自体が目的ではありません。I/Oと計算を分けることで、
+同じ料金式を履歴、見積り、決済準備から呼んでも意味がずれないことが目的です。
+
+### 1 statementなら明示read transactionが不要になる理由
+
+複数queryを同じ時点として読むときは、SQLxの `Transaction` がsnapshotとconnectionを
+保持します。JOINと相関subqueryで1 statementへまとめると、InnoDBのstatement snapshotが
+関連行を同じviewで読みます。
+
+```rust
+let rows = sqlx::query_as::<_, AppRideRow>(sql)
+    .bind(user_id)
+    .fetch_all(&pool)
+    .await?;
+```
+
+ここでtransactionの概念が消えたわけではありません。MySQLはSELECTもtransactionの規則で
+処理します。Rustが明示的に `BEGIN` を送り、複数statementの間ずっとconnectionを保持し、
+最後に `COMMIT` を待つ必要がなくなった、という違いです。
+
+writeを含む処理へ同じ省略を適用してはいけません。status、evaluation、statsのように
+複数tableの変更を原子的に公開する処理は、引き続き1つの明示transactionに置きます。
+
+### `query_as` がcompileできてもSQL実行は証明されない
+
+関数版の `sqlx::query_as` は、Rustの型として `FromRow` が使えることをcompile時に
+確認します。しかし、SQL本文の構文、列alias、MySQLが返す実型との対応は実行時確認です。
+
+今回の検証を層に分けた理由は次です。
+
+| 検証 | 見つけられる問題 |
+| --- | --- |
+| `cargo test` | 純粋な料金式、Rustの所有権・型 |
+| `cargo clippy` | Rustの誤用、不要処理、警告 |
+| 固定HTTP fixture | SQL構文、FromRow mapping、JSON、時刻、文字コード |
+| 旧新JSON hash | 実データに対するresponse差 |
+| `EXPLAIN ANALYZE` | INDEX、join順、実走査行数 |
+| 60秒ベンチ | pool競合、共有CPU、正当性、総スコア |
+
+どれか1つで他のすべてを代用できません。compile成功はDB schemaとの結合テストではなく、
+単発fixture成功は高並行時の性能証明ではありません。
+
+詳細なSQL、INDEX、実測値は
+[Benchmark 52](./52-app-rides-batch.md)に記録しています。
+
 ## 避けるショートカット
 
 - N+1を無制限の `tokio::spawn` で隠す

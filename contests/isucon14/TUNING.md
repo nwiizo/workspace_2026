@@ -82,6 +82,7 @@
 | JSON通知のcache | recipient revisionとchair stats dependency revision付きprocess cache。chairは配送状態機械でcurrent rideを維持。rideありは存在確認connectionをtransactionへ再利用し、2回目のpool取得を診断878 / 878 sampleで削除。通常3走中央値139,198点 | owner `CODE=26`を再修正後、response ACKなしの配送loss、DB connectionを保持しないlong pollingを比較 |
 | 座標更新のpool待ち | 総接続50のshared pool + general permit 26を採用。static / shared近接3組の中央値126,104→135,410点（+7.38%）。coordinateはpermit対象外、general通知の二重取得も削減済み | 非同期queueで待ちを隠さず、coordinate current write / COMMIT / row-lockを直接減らす |
 | 座標更新の非同期・bulk INSERT | per-chair FIFO、全履歴、status遷移、initialize世代を守るmemory queueを実験。HTTP平均2ms・drive不満-7.3ptだが、matching不満+8.8pt、通常中央値122,125点で対照比-4.22% | post-ACK durabilityとclosed-loop負荷のため棄却。最終ソースは同期transaction |
+| 利用者の完了ride一覧 | `evaluation IS NOT NULL` を完了current stateとして使い、chair / owner JOINとcoupon相関lookupを1 statementへ集約。query専用projectionと純粋な割引計算関数でresponseを構築 | 診断runの一覧SQL平均0.322ms。HTTP p95 373msにはpool等の待ちが残るためphase分解を継続 |
 | 決済HTTP client | process内で1個を共有し、冪等なPOST / retryでconnection poolを再利用済み。診断203 sampleは608 attempts、途中5xx 405回、最終204 | TCP connect回数とconnection再利用率を採取 |
 | 決済の `Idempotency-Key` | ride IDを全POSTへ設定し、確認GETとuser全ride取得を削除済み | 準備transactionと完了transactionの間に決済を置く構成まで実装。TCP connect回数と再利用率を採取する |
 | 招待登録 | 招待者のUNIQUE行を `FOR UPDATE` して同一コードだけを直列化。couponは `COUNT(*)`、reward codeは新規user IDで一意化 | 上限が増えてCOUNTが支配的になった場合だけ、条件付きcounter UPDATEを比較 |
@@ -153,6 +154,14 @@ HTTPからDB待ちを外してもDB仕事量は減らず、closed-loop clientが
 全体のsaturationを強めたためです。post-ACKのmemory queueはprocess停止時の未commit
 データも復元できません。得点とdurabilityの両方で採用根拠がないため同期経路へ戻しました。
 詳細は[Benchmark 51](./tuning/51-coordinate-async-queue.md)に記録しています。
+
+Benchmark 52では、`GET /api/app/rides` のride別status / coupon / chair / owner N+1を
+1 statementへまとめました。通常3走は124,205–133,737点、推定代表値の中央値
+128,584点で、直前の同期実装中央値127,499点から+0.85%です。全走
+`pass=true`・error map空でした。点差はrun間の幅より小さい一方、変更前に
+10,048回動いた親queryから派生する逐次往復と一覧専用owner queryを除去し、旧新JSONの
+byte一致と固定fixtureを確認できたため採用しました。詳細は
+[Benchmark 52](./tuning/52-app-rides-batch.md)に記録しています。
 
 通知cacheはDB上の配信cursorの代替にはしません。recipientごとにpayloadとrevisionを保持し、
 app payloadが参照するchair statsにもdependency revisionを持たせます。ride割当・status追加・
@@ -987,6 +996,7 @@ amountを記録するため、ride IDを同じkeyとして再利用すれば、�
 | [49-db-shared-pool-admission.md](./tuning/49-db-shared-pool-admission.md) | static 26 / 24と、shared pool 50 + general DB phase permit 26を実行順反転込みで比較 | static中央値126,104点、shared中央値135,410点、差+9,306点（+7.38%）。全6走`pass=true`・error map空。30秒診断はMySQL statusを1秒採取 | 各構成実測n=3、3組すべてsharedが上回ったため既定へ採用。request-wide permitはDB外待ちも枠を塞ぐため棄却し、phase scopeだけを採用 |
 | [50-coordinate-current-trigger.md](./tuning/50-coordinate-current-trigger.md) | MySQL `AFTER INSERT`トリガーでアプリ発行DMLとDB往復を2回から1回へ削減 | 書込みphase平均3.510→2.563ms（-27.0%）だが、通常3走117,326–121,580点、中央値121,185点。同時間帯の2クエリ単発対照132,970点 | 実測n=3。単発対照では因果未確定だが、直前中央値比-10.51%で採用を支持するscore evidenceがなく保守的に棄却。最終ソースは2クエリ構成 |
 | [51-coordinate-async-queue.md](./tuning/51-coordinate-async-queue.md) | per-chair FIFO、bounded channel、initialize世代、DB in-flight制限付きでcoordinate永続化をHTTP応答後へ移す実験 | 通常候補3走110,353–126,964点、中央値122,125点。同期対照3走124,230–128,061点、中央値127,499点。差-5,374点（-4.22%）。候補HTTP平均2ms、p95 7ms。revert後の最終確認120,343点 | 各構成実測n=3。全6走`pass=true`・error map空だが、候補はmatching不満+8.8pt、drive不満-7.3pt。24 / 40 in-flightとstatic pool診断も可視性またはgeneral待ちを悪化させ、post-ACK durabilityも弱いため棄却。最終確認n=1は中央値へ混ぜない |
+| [52-app-rides-batch.md](./tuning/52-app-rides-batch.md) | 利用者の完了ride一覧をquery専用projectionで1 statement化し、明示read transactionとride別status / coupon / chair / owner往復を除去 | 通常3走124,205–133,737点、中央値128,584点。直前同期版中央値127,499点から+1,085点（+0.85%）。診断138,231点、一覧SQL11,956回・平均0.322ms | 実測n=3、全走`pass=true`・error map空。score差はrun間の幅より小さいが、N+1削減をsource・prepared statementで確認し、旧新JSON完全一致と固定fixtureを通したため採用 |
 | [80-rust-implementation.md](./tuning/80-rust-implementation.md) | Rust / sqlxとrelease buildの知識 | 再build 30分52秒→11.02秒 | build時間の実測。スコア推定対象外 |
 | [81-evaluation-authorization.md](./tuning/81-evaluation-authorization.md) | 評価rideを認証ユーザー所有へ制限 | 公式prevalidation `pass=true`、別ユーザーHTTP回帰成功 | 正当性修正。60秒スコアはBenchmark 20から更新しない |
 | [90-local-environment.md](./tuning/90-local-environment.md) | build context、BuildKit、固定Colima資源 | context 467MB→32.5KB | sizeの実測。スコア推定対象外 |
