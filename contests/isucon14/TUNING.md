@@ -75,7 +75,7 @@
 | 高頻度検索へのINDEX | 主要INDEX、`coupons(code)`、`coupons(used_by)` を追加済み。`users(access_token)` と `users(invitation_code)` は既存の `UNIQUE` INDEXで充足 | prepared statement統計で次の全件走査を探し、未使用INDEXを増やさない |
 | nearbyの2N+1解消 | 最新座標はcurrent-state表 + process cache、active / 割当可否はDBで合成。評価は開始snapshot・completion revision・response body drop後1秒leaseで除外し、initialize世代をgenerationで分離 | ride antijoinとtracker確認の内訳を計測 |
 | owner椅子一覧をownerで先に絞る | 実装・単独ベンチ済み | 最新位置と累積距離のcurrent-state化 |
-| owner累積距離の公開境界 | request開始1秒前の安定snapshotを使用。再発診断で同一chairの`recorded_at`が約81ms逆行し、window順序が変わってDB距離465・期待429になったことを特定 | chair内時刻を単調化し、逆行補正数、speed超過step、`CODE=26`を再計測してからcurrent-state化 |
+| owner累積距離の公開境界 | request開始1秒前の安定snapshotを使用。同一chairの`recorded_at`をDBと同じµs精度へ正規化し、process内high-water markで単調増加。window順序を`(created_at, id)`で決定。最終診断の87,005区間はspeed超過0、通常3走も`CODE=26` 0 | 1秒公開境界を維持したcurrent-state差分集約を比較。複数process化前にDB sequenceまたはatomic current rowへ置き換える |
 | owner売上の評価境界 | 完了時刻を最終SQLで保存し、owner requestと重なる評価ride IDだけをrevision trackerで除外 | body drop後のclient計上差はprotocol ACKなしでは残る。複数process前に共有化 |
 | 最新位置をcurrent-state表で管理 | 履歴INSERTと同じtransactionで更新し、cacheを2秒ごとに再同期 | current UPDATEのrow-lock待ちとwrite amplificationを削減 |
 | pending rideと空き椅子のbatch matching | 地域ごとに最大64候補、全体最大64割当、近傍優先、同一地域の距離200以下まで実装済み。speedだけを使う局所greedyは中央値-0.9%で不採用 | 地域ID + INDEX、期限とpickup予測を含む二部matchingを比較 |
@@ -937,6 +937,7 @@ amountを記録するため、ride IDを同じkeyとして再利用すれば、�
 | [45-notification-connection-reuse-diagnostics.md](./tuning/45-notification-connection-reuse-diagnostics.md) | 現在のchair配送状態機械を維持し、ride存在確認connectionをtransactionへ再利用 | 146,532点、評価2,305件。rideありapp 436 / chair 442 sampleの2回目pool取得を全廃。所有平均9.875 / 10.906ms | 診断n=1・未推定。`pass=true`・error map空・`CODE=29` 0件。初回取得平均は約82ms残り、general飽和自体は未解消 |
 | [46-notification-connection-reuse-adoption.md](./tuning/46-notification-connection-reuse-adoption.md) | 通知connection再利用を通常3走し、差分なし`main`対照でerror因果を分離 | 3走134,732–150,117点、中央値139,198点、直前比+0.85%。全走`pass=true`、`CODE=29` 0件 | 実測n=3。score差は分散より小さいが重複queue待ちを確実に削減して採用。`CODE=26` 77 / 64件は差分なし対照でも94件再現したためowner側の次のP0 |
 | [47-owner-distance-recurrence-diagnostics.md](./tuning/47-owner-distance-recurrence-diagnostics.md) | owner応答、coordinate commit、ベンチ内部履歴をchair IDとマイクロ秒時刻で厳格相関。commit窓は`Instant`で計測 | 再発診断145,128点、`pass=true`、`CODE=26` 94件。owner query p95 660.307ms。`Instant`修正後159,936点・error空、2,983 sampleのcommit窓はp99 123.156ms・最大304.287ms・1秒超0件 | 診断run・未推定。履歴診断30秒は65,908点・42件を全件再相関。chair内時刻が約81ms逆行し、DB距離465・期待429の差36とerrorが一致。1秒超commit仮説を棄却 |
+| [48-owner-distance-monotonic-time.md](./tuning/48-owner-distance-monotonic-time.md) | DBと同じµs精度へ正規化後、chairごとのprocess内high-water markで`recorded_at`を単調増加。同時刻を`id`で決定し、距離不一致と3秒超stalenessを別reasonで診断 | 通常3走139,218–146,999点、中央値141,228点、全走`pass=true`・error map空。診断158,260点、87,005区間のspeed超過0、commit最大197.062ms | 実測n=3。Benchmark 46中央値比+1.46%だがrun間分散より小さく高速化の因果は未確定。実測した時刻逆行を追加SQLなしで防ぐ正当性修正として採用。複数process保証は未対応 |
 | [80-rust-implementation.md](./tuning/80-rust-implementation.md) | Rust / sqlxとrelease buildの知識 | 再build 30分52秒→11.02秒 | build時間の実測。スコア推定対象外 |
 | [81-evaluation-authorization.md](./tuning/81-evaluation-authorization.md) | 評価rideを認証ユーザー所有へ制限 | 公式prevalidation `pass=true`、別ユーザーHTTP回帰成功 | 正当性修正。60秒スコアはBenchmark 20から更新しない |
 | [90-local-environment.md](./tuning/90-local-environment.md) | build context、BuildKit、固定Colima資源 | context 467MB→32.5KB | sizeの実測。スコア推定対象外 |

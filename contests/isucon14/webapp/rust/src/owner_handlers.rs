@@ -465,9 +465,9 @@ FROM chairs
                    FROM (SELECT chair_locations.chair_id,
                                 chair_locations.created_at,
                                 ABS(chair_locations.latitude - LAG(chair_locations.latitude)
-                                  OVER (PARTITION BY chair_locations.chair_id ORDER BY chair_locations.created_at)) +
+                                  OVER (PARTITION BY chair_locations.chair_id ORDER BY chair_locations.created_at, chair_locations.id)) +
                                 ABS(chair_locations.longitude - LAG(chair_locations.longitude)
-                                  OVER (PARTITION BY chair_locations.chair_id ORDER BY chair_locations.created_at)) AS distance
+                                  OVER (PARTITION BY chair_locations.chair_id ORDER BY chair_locations.created_at, chair_locations.id)) AS distance
                          FROM chair_locations
                          INNER JOIN chairs AS owner_chairs
                                  ON owner_chairs.id = chair_locations.chair_id

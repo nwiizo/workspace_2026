@@ -1217,7 +1217,7 @@
     `created_at`順では6〜8の往復へ並び替わった。DB距離465、ベンチ期待429の差36が
     `CODE=26`と一致
   - 詳細: [`tuning/47-owner-distance-recurrence-diagnostics.md`](./tuning/47-owner-distance-recurrence-diagnostics.md)
-- [ ] wall clock逆行時もchair内の`recorded_at`を単調増加させる
+- [x] wall clock逆行時もchair内の`recorded_at`を単調増加させる
   - `max(Utc::now(), last_recorded_at + 1µs)`を1 webapp processで予約し、
     逆行補正回数と補正幅を診断する
   - 同時刻tieは`(created_at, id)`で決定的にするが、逆行修正の代用にはしない
@@ -1225,6 +1225,16 @@
   - 診断でspeed超過stepと`CODE=26`が0になることを確認後、通常60秒を3走する
   - 複数webapp processへ進む前に、DB sequenceまたはcurrent rowのatomic採番と比較する
   - 成功後、公開watermarkを保ったcurrent-state差分集約と1秒cacheを比較する
+  - `Utc::now()`をDBと同じµs精度へ正規化してから比較し、100ns / 200nsが
+    DBで同時刻へ落ちる精度穴も固定回帰で防ぐ
+  - 最終診断は158,260点、`pass=true`・error map空。2,996 coordinate sampleの
+    commit p99 76.030ms、最大197.062ms、1秒超0件
+  - 終了DBの87,005区間を`(created_at, id)`順で全件照合し、model speed超過0件
+  - 最終通常3走は141,228 / 146,999 / 139,218点、全走`pass=true`・error map空。
+    推定代表値141,228点、Benchmark 46中央値比+1.46%だが高速化の因果は未確定
+  - 途中runの「反映が遅い」2件は距離不一致と別reasonで診断できるようにした。
+    最終診断と通常3走では再発せず、推測で3秒境界を変更しない
+  - 詳細: [`tuning/48-owner-distance-monotonic-time.md`](./tuning/48-owner-distance-monotonic-time.md)
 - [ ] static partitionで片側idleを共有できないため、共有pool 50 + general permitの
   admission controlを24 / 26と比較する
   - pool別permit待ち、`Threads_connected` / `Threads_running`、処理件数あたりrow-lock waitを
@@ -1368,12 +1378,12 @@
 完了済みのmatcher `CODE=32`、owner `CODE=26`、評価phase、pool上限50 / 75 / 100、
 drive phaseの診断は上の各項目へ結果を残しています。現在の未完了項目は次の順です。
 
-1. `CODE=26`で実測したchair内wall clock逆行に対し、`recorded_at`を単調増加させ、
-   時刻逆行fixture、診断run、通常3走で再発0を確認する
-2. 総上限50のstatic 26 / 24で見えたgeneral starvationに対し、共有pool 50のまま
+1. 総上限50のstatic 26 / 24で見えたgeneral starvationに対し、共有pool 50のまま
    general permitでcoordinate余力を保証するadmission controlと比較する
-3. static partition後も残るcoordinate p95に対し、per-chair queueへ進む前に
+2. static partition後も残るcoordinate p95に対し、per-chair queueへ進む前に
    current write / COMMIT / row lockの処理量を減らせるか確認する
+3. owner距離のwindow集計を、1秒公開watermarkを維持したcurrent-state差分集約と
+   短時間cacheで比較する
 4. `CODE=27`を同じchairのDB current row、process cache、nearby応答で追跡する
 5. latest-coordinate cacheの `RwLock` とmaintenance gateの待機・保持時間を計測し、
    2秒再同期時のglobal stallを定量化する

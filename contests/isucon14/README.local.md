@@ -372,6 +372,12 @@ server request開始がbenchmark開始以後1秒以内、chair ID、返却距離
 wall clockが逆行しても負の差を0へ丸めず、1秒以上のsampleを周期filter外から強制出力
 できます。
 
+同じレポートはchair内の`recorded_at`補正回数・補正幅と、終了DBの全移動区間が
+chair modelのspeed以下かも検査します。ベンチマーカー側のowner距離errorは
+`total_distance_mismatch`と`total_distance_stale`を分け、後者では最後の移動から
+response watermarkまでの遅れも出します。距離値の不一致と3秒公開境界の遅れを
+同じ原因として修正しないためです。
+
 `BENCHMARK_OUTPUT_FILE`を指定した場合も、終了後に同じ内容をterminalへ表示し、
 benchmarkのexit statusを維持します。保存ファイルにはride ID、chair ID、座標、
 tick、response時間が含まれますが、Cookie、access token、決済情報は含みません。
@@ -496,6 +502,7 @@ RESET=1 ./scripts/down.sh
 | drive区間のride単位診断 | 最終診断1走146,727点・未推定、`pass=true`・error map空。全2,310 rideのdrive不満77.3%。抽出74 ride・1,191 coordinate POSTの86.6%がclient 30ms以上で、server平均76.515msのうちpool取得が64.349ms。Rust / Go barrierと`dropped_lines=0`を確認 |
 | DB poolの用途別予約 | 総数50を維持し、general 34 / coordinate 16、30 / 20、26 / 24を診断比較。24 / 26の通常3走は133,797–142,851点、中央値138,027点、全走`pass=true`・error map空。直前中央値比+3.6%。既定値での追加確認も132,756点、`pass=true` |
 | 通知connection再利用 | rideありの存在確認connectionをtransactionへ引き継ぎ、診断878 / 878 sampleで2回目のpool取得を削除。通常3走134,732–150,117点、中央値139,198点（直前比+0.85%）、全走`pass=true`・`CODE=29` 0件。`CODE=26`は2走で再発したが、差分なし`main`対照でも94件再現 |
+| owner距離の時刻単調化 | `Utc::now()`をDBと同じµs精度へ正規化し、chairごとのprocess内high-water markで逆行と同時刻tieを防止。通常3走139,218–146,999点、中央値141,228点、全走`pass=true`・error map空。診断runは87,005移動区間のspeed超過0、`CODE=26` 0。直前中央値比+1.46%だが分散より小さく高速化の因果は未確定 |
 
 初回の初期60秒走行ではMySQLのqueryが十数秒以上へ遅延し、ベンチマーカーの期限を
 超えました。同じ初期revisionを外部コンテナの大きな共有負荷がない条件で再計測

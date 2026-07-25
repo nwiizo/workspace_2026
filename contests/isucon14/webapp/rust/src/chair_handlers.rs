@@ -139,7 +139,9 @@ struct CoordinateDiagnosticSample {
     latitude: Option<i32>,
     longitude: Option<i32>,
     recorded_at_ms: Option<i64>,
+    observed_at_unix_us: Option<i64>,
     recorded_at_unix_us: Option<i64>,
+    recorded_at_adjustment_us: Option<i64>,
     transition_status: Option<String>,
     committed_at_unix_us: Option<u64>,
     recorded_to_commit_us: Option<u64>,
@@ -201,7 +203,9 @@ impl CoordinateDiagnostic {
                 latitude: None,
                 longitude: None,
                 recorded_at_ms: None,
+                observed_at_unix_us: None,
                 recorded_at_unix_us: None,
+                recorded_at_adjustment_us: None,
                 transition_status: None,
                 committed_at_unix_us: None,
                 recorded_to_commit_us: None,
@@ -401,10 +405,20 @@ async fn chair_post_coordinate(
         diagnostic.sample.location_id = Some(chair_location_id.clone());
     }
     let recorded_at_instant = Instant::now();
-    let recorded_at = chrono::Utc::now().naive_utc();
+    let observed_at = chrono::Utc::now().naive_utc();
+    let recorded_at = latest_chair_locations.reserve_recorded_at(&chair.id, observed_at);
     if let Some(diagnostic) = &mut diagnostic {
+        let recorded_at_adjustment_us = recorded_at
+            .signed_duration_since(observed_at)
+            .num_microseconds()
+            .unwrap_or(i64::MAX);
         diagnostic.recorded_at_instant = Some(recorded_at_instant);
+        diagnostic.sample.observed_at_unix_us = Some(observed_at.and_utc().timestamp_micros());
         diagnostic.sample.recorded_at_unix_us = Some(recorded_at.and_utc().timestamp_micros());
+        diagnostic.sample.recorded_at_adjustment_us = Some(recorded_at_adjustment_us);
+        if recorded_at_adjustment_us > 0 {
+            diagnostic.force_emit = true;
+        }
     }
     sqlx::query(
         "INSERT INTO chair_locations (id, chair_id, latitude, longitude, created_at) VALUES (?, ?, ?, ?, ?)",

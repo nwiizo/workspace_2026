@@ -246,34 +246,38 @@ func (p *Owner) ValidateChairs(serverSide *GetOwnerChairsResponse, baseTime time
 		//}
 		if data.TotalDistanceUpdatedAt.Valid {
 			lastMoved := chair.Location.GetLocationEntryByTime(baseTime)
+			want := chair.Location.TotalTravelDistanceUntil(data.TotalDistanceUpdatedAt.Time)
+			currentDistance := chair.Location.TotalTravelDistance()
 			if lastMoved != nil && lastMoved.ServerTime.Time.Sub(data.TotalDistanceUpdatedAt.Time) > 3*time.Second {
+				if ownerDistanceDiagnosticsEnabled() {
+					emitOwnerDistanceValidationDiagnostic(
+						"total_distance_stale",
+						int(p.ID),
+						chair.ServerID,
+						baseTime,
+						data,
+						&chair.Location,
+						want,
+						currentDistance,
+						lastMoved,
+					)
+				}
 				return fmt.Errorf("total_distanceの反映が遅いデータがあります (id: %s)", chair.ServerID)
 			}
-			want := chair.Location.TotalTravelDistanceUntil(data.TotalDistanceUpdatedAt.Time)
 			// LocationのSetServerTimeが間に合ってない場合があるので、総走行距離と一致していても許容する
-			currentDistance := chair.Location.TotalTravelDistance()
 			if data.TotalDistance != want && data.TotalDistance != currentDistance {
 				if ownerDistanceDiagnosticsEnabled() {
-					var lastKnownMovedAtUnixUs *int64
-					if lastMoved != nil {
-						value := lastMoved.ServerTime.Time.UnixMicro()
-						lastKnownMovedAtUnixUs = &value
-					}
-					emitOwnerDistanceBenchmarkDiagnostic(ownerDistanceBenchmarkDiagnostic{
-						Reason:                  "total_distance_mismatch",
-						OwnerID:                 int(p.ID),
-						ChairID:                 chair.ServerID,
-						RequestStartedAtUnixUs:  baseTime.UnixMicro(),
-						ResponseWatermarkUnixUs: data.TotalDistanceUpdatedAt.Time.UnixMicro(),
-						ResponseTotalDistance:   data.TotalDistance,
-						InitialExpectedDistance: want,
-						InitialCurrentDistance:  currentDistance,
-						LastKnownMovedAtUnixUs:  lastKnownMovedAtUnixUs,
-						Location: chair.Location.ownerDistanceDiagnosticSnapshot(
-							data.TotalDistanceUpdatedAt.Time,
-							captureFullOwnerDistanceHistory(),
-						),
-					})
+					emitOwnerDistanceValidationDiagnostic(
+						"total_distance_mismatch",
+						int(p.ID),
+						chair.ServerID,
+						baseTime,
+						data,
+						&chair.Location,
+						want,
+						currentDistance,
+						lastMoved,
+					)
 				}
 				return fmt.Errorf("total_distanceが一致しないデータがあります (id: %s, got: %v, want: %v)", chair.ServerID, data.TotalDistance, want)
 			}

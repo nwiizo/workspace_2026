@@ -2406,6 +2406,134 @@ general burstへpermit上限を設ければ、coordinateの余地を残しつつ
 追加しませんでした。sortを消すこと自体を目的にせず、候補行数、全request累積時間、
 write増加を測ってから物理化します。
 
+## wall clockをAPI順序へ使うときのRust実装
+
+Benchmark 48では、`Utc::now()`が同じchairの直前値より約81ms戻り、SQL window関数の
+入力順を壊した実測を受けて、chairごとのhigh-water markを追加しました。
+
+```rust
+pub(crate) fn reserve_recorded_at(
+    &self,
+    chair_id: &str,
+    observed_at: chrono::NaiveDateTime,
+) -> chrono::NaiveDateTime {
+    let mut high_watermarks = self
+        .recorded_at_high_watermarks
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+
+    if let Some(previous) = high_watermarks.get_mut(chair_id) {
+        let next = next_chair_recorded_at(Some(*previous), observed_at);
+        *previous = next;
+        next
+    } else {
+        high_watermarks.insert(chair_id.to_owned(), observed_at);
+        observed_at
+    }
+}
+```
+
+### `std::sync::Mutex`をasync handlerで使える条件
+
+同期mutexが常に悪いわけではありません。重要なのはguardを持つ時間と、その区間に
+`.await`があるかです。今回はHashMapのlookupと値更新だけでguardを解放し、その後で
+sqlxをawaitします。
+
+```text
+良い境界:
+lock -> 比較 -> 更新 -> unlock -> SQL await
+
+避ける境界:
+lock -> SQL await -> unlock
+```
+
+後者はexecutor workerを待機中も塞ぎます。また、`MutexGuard`を`.await`の先へ残すと
+handler futureが`Send`を満たさず、Axumの`Handler`実装エラーとしてcompile時に現れる
+ことがあります。最初の実装でもguardのscopeが広く、compilerがawaitをまたぐ可能性を
+指摘したため、同期予約関数へ閉じ込めました。
+
+### poisonをどう扱うか
+
+標準mutexはguard保持中にpanicするとpoisonされます。ここで`lock().unwrap()`だけを使うと、
+以後すべての座標requestがpanicします。
+
+```rust
+.unwrap_or_else(std::sync::PoisonError::into_inner)
+```
+
+今回はHashMapの値自体は比較と代入だけで、途中不変条件が複数fieldにまたがりません。
+poison後もinnerを回収する方を選びました。複雑な構造でpanic途中の値が壊れ得る場合は、
+回収ではなくprocessを落としてDBから再構築する判断も必要です。
+
+### 正常経路のallocationを減らす
+
+`HashMap<String, _>::entry(chair_id.to_owned())`は書きやすい一方、登録済みchairでも
+lookup前に`String`を作る形になり得ます。高頻度経路では借用keyで先に探します。
+
+```rust
+if let Some(value) = map.get_mut(chair_id) {
+    // 既存chair: allocationなし
+} else {
+    map.insert(chair_id.to_owned(), observed_at);
+}
+```
+
+同様に、commit後のlatest-location cache updateでhigh-water markをもう一度更新する
+必要はありません。時刻はINSERT前に予約済みなので、二重lockを削除しました。
+
+### 永続化先の精度へ比較前に揃える
+
+Chronoの`Utc::now()`はナノ秒精度を持てますが、MySQL `DATETIME(6)`はマイクロ秒までです。
+Rust上で100nsから200nsへ進んでも、DBは両方を0µsへ切り捨てます。
+
+```rust
+let remainder = value.and_utc().timestamp_subsec_nanos() % 1_000;
+let normalized = value - chrono::Duration::nanoseconds(i64::from(remainder));
+```
+
+high-water markへ入れる前にMySQLと同じ精度へ正規化します。型の比較結果だけでなく、
+serialize後に永続化される値がstrictly increasingでなければ、SQLの順序keyとしては
+不十分です。100nsと200nsを連続入力する回帰テストで、保存予定値が0µs、1µsになることを
+固定しました。
+
+### refreshとreconcileは同じ上書きではない
+
+initialize後の`refresh`はDBが初期化済みなので、high-water markをDB内容で置き換えます。
+定期`reconcile`は通常処理と並行するため、DB snapshot取得後に予約された未commit時刻を
+消さないよう`max(process, database)`でmergeします。
+
+この違いをなくすと、次のどちらかが起きます。
+
+- initialize後も前runの未来時刻を保持する
+- 定期再同期がin-flight reservationを過去へ戻す
+
+maintenanceの意味に応じて「置換」と「単調merge」を使い分けます。
+
+### rollbackしてもhigh-water markは戻さない
+
+予約後のtransactionが失敗しても、process内時刻は巻き戻しません。戻す間に別requestが
+次時刻を予約している可能性があり、安全なrollbackには世代やcompare-and-swapが必要です。
+時刻に1µsの穴ができてもwindow順序は壊れないため、単調性を優先します。
+
+### 1 process保証を明記する
+
+`Arc<Mutex<HashMap<...>>>`が共有するのは1 process内だけです。webappを2 instanceへ増やすと、
+同じchairを別processが同じ時刻または逆順で発行できます。
+
+複数processでは次を比較します。
+
+- chair current rowを`SELECT ... FOR UPDATE`してsequenceを進める
+- `UPDATE ... SET sequence = LAST_INSERT_ID(sequence + 1)`のようなatomic採番
+- DBが発行する全体AUTO_INCREMENT
+- node IDと論理counterを持つHybrid Logical Clock
+
+追加SQLとrow lockはcoordinateの律速になり得るため、現在の単一process構成では
+process内方式を採用しました。通常3走中央値は139,198点から141,228点へ1.46%上がりましたが、
+run間分散より小さいため高速化の因果は未確定です。一方、診断と通常3走は
+すべてerror map空で、終了DBの87,005区間にmodel speed超過はありませんでした。
+詳しい仮説、INDEX、代替案は
+[Benchmark 48](./48-owner-distance-monotonic-time.md)に記録しています。
+
 ## 避けるショートカット
 
 - N+1を無制限の `tokio::spawn` で隠す

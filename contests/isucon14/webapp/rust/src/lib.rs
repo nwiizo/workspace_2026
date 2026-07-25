@@ -733,6 +733,7 @@ struct LatestChairLocation {
 #[derive(Debug, Clone, Default)]
 pub struct LatestChairLocationCache {
     inner: Arc<RwLock<HashMap<String, LatestChairLocation>>>,
+    recorded_at_high_watermarks: Arc<StdMutex<HashMap<String, chrono::NaiveDateTime>>>,
     reconciliation_lock: Arc<Mutex<()>>,
 }
 
@@ -756,8 +757,14 @@ impl LatestChairLocationCache {
     pub async fn refresh(&self, pool: &sqlx::MySqlPool) -> sqlx::Result<()> {
         let _reconciliation_guard = self.reconciliation_lock.lock().await;
         let refreshed_locations = fetch_latest_chair_locations(pool).await?;
+        let refreshed_high_watermarks = recorded_at_high_watermarks(&refreshed_locations);
         let mut cached_locations = self.inner.write().await;
         *cached_locations = refreshed_locations;
+        let mut high_watermarks = self
+            .recorded_at_high_watermarks
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *high_watermarks = refreshed_high_watermarks;
         Ok(())
     }
 
@@ -771,8 +778,42 @@ impl LatestChairLocationCache {
         // the fetched snapshot so reconciliation neither loses that commit nor
         // blocks every nearby read while waiting for MySQL.
         merge_newer_locations(&mut refreshed_locations, cached_locations.drain());
+        let refreshed_high_watermarks = recorded_at_high_watermarks(&refreshed_locations);
         *cached_locations = refreshed_locations;
+        drop(cached_locations);
+
+        // A coordinate may have reserved a timestamp but not committed yet.
+        // Reconciliation can advance the reservation watermark from MySQL, but
+        // must never move an in-flight process-local reservation backwards.
+        let mut high_watermarks = self
+            .recorded_at_high_watermarks
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        merge_recorded_at_high_watermarks(&mut high_watermarks, refreshed_high_watermarks);
         Ok(())
+    }
+
+    pub(crate) fn reserve_recorded_at(
+        &self,
+        chair_id: &str,
+        observed_at: chrono::NaiveDateTime,
+    ) -> chrono::NaiveDateTime {
+        // MySQL DATETIME(6) discards sub-microsecond precision. Normalize before
+        // comparing so two distinct nanosecond values cannot collapse to the
+        // same persisted timestamp after this function considered them ordered.
+        let observed_at = truncate_to_microseconds(observed_at);
+        let mut high_watermarks = self
+            .recorded_at_high_watermarks
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(high_watermark) = high_watermarks.get_mut(chair_id) {
+            let recorded_at = next_chair_recorded_at(Some(*high_watermark), observed_at);
+            *high_watermark = recorded_at;
+            recorded_at
+        } else {
+            high_watermarks.insert(chair_id.to_owned(), observed_at);
+            observed_at
+        }
     }
 
     pub(crate) async fn update(
@@ -844,6 +885,57 @@ fn merge_newer_locations(
 ) {
     for (chair_id, location) in candidates {
         insert_if_newer(latest_locations, chair_id, location);
+    }
+}
+
+fn truncate_to_microseconds(value: chrono::NaiveDateTime) -> chrono::NaiveDateTime {
+    let sub_microsecond_nanoseconds = value.and_utc().timestamp_subsec_nanos() % 1_000;
+    value - chrono::Duration::nanoseconds(i64::from(sub_microsecond_nanoseconds))
+}
+
+fn next_chair_recorded_at(
+    previous: Option<chrono::NaiveDateTime>,
+    observed_at: chrono::NaiveDateTime,
+) -> chrono::NaiveDateTime {
+    let Some(previous) = previous else {
+        return observed_at;
+    };
+    if observed_at > previous {
+        return observed_at;
+    }
+
+    previous
+        .checked_add_signed(chrono::Duration::microseconds(1))
+        .unwrap_or(previous)
+}
+
+fn recorded_at_high_watermarks(
+    locations: &HashMap<String, LatestChairLocation>,
+) -> HashMap<String, chrono::NaiveDateTime> {
+    locations
+        .iter()
+        .map(|(chair_id, location)| (chair_id.clone(), location.recorded_at))
+        .collect()
+}
+
+fn merge_recorded_at_high_watermark(
+    high_watermarks: &mut HashMap<String, chrono::NaiveDateTime>,
+    chair_id: &str,
+    recorded_at: chrono::NaiveDateTime,
+) {
+    if let Some(high_watermark) = high_watermarks.get_mut(chair_id) {
+        *high_watermark = (*high_watermark).max(recorded_at);
+    } else {
+        high_watermarks.insert(chair_id.to_owned(), recorded_at);
+    }
+}
+
+fn merge_recorded_at_high_watermarks(
+    high_watermarks: &mut HashMap<String, chrono::NaiveDateTime>,
+    candidates: impl IntoIterator<Item = (String, chrono::NaiveDateTime)>,
+) {
+    for (chair_id, recorded_at) in candidates {
+        merge_recorded_at_high_watermark(high_watermarks, &chair_id, recorded_at);
     }
 }
 
@@ -1022,12 +1114,13 @@ GROUP BY chair_id
 mod tests {
     use super::{
         hold_active_evaluation_until_response_drop, insert_if_newer, merge_newer_locations,
-        ActiveRideEvaluationTracker, LatestChairLocation, LatestChairLocationCache,
-        NotificationCache, EVALUATION_RESPONSE_DELIVERY_GRACE,
+        merge_recorded_at_high_watermarks, ActiveRideEvaluationTracker, LatestChairLocation,
+        LatestChairLocationCache, NotificationCache, EVALUATION_RESPONSE_DELIVERY_GRACE,
     };
     use axum::body::Bytes;
     use axum::response::IntoResponse;
     use std::collections::HashMap;
+    use std::sync::Arc;
     use std::time::Instant;
 
     #[test]
@@ -1175,6 +1268,144 @@ mod tests {
         let locations = cache.coordinates_for(["chair-1"]).await;
         let location = locations[0].as_ref().unwrap();
         assert_eq!((location.latitude, location.longitude), (20, 30));
+    }
+
+    #[test]
+    fn latest_chair_location_cache_reserves_strictly_increasing_recorded_at() {
+        let cache = LatestChairLocationCache::default();
+        let first_observation = chrono::DateTime::from_timestamp_micros(2_000)
+            .unwrap()
+            .naive_utc();
+        let regressed_observation = chrono::DateTime::from_timestamp_micros(1_000)
+            .unwrap()
+            .naive_utc();
+        let future_observation = chrono::DateTime::from_timestamp_micros(3_000)
+            .unwrap()
+            .naive_utc();
+
+        let first = cache.reserve_recorded_at("chair-1", first_observation);
+        let after_regression = cache.reserve_recorded_at("chair-1", regressed_observation);
+        let after_tie = cache.reserve_recorded_at("chair-1", after_regression);
+        let future = cache.reserve_recorded_at("chair-1", future_observation);
+        let other_chair = cache.reserve_recorded_at("chair-2", regressed_observation);
+
+        assert_eq!(first, first_observation);
+        assert_eq!(
+            after_regression,
+            first_observation + chrono::Duration::microseconds(1)
+        );
+        assert_eq!(
+            after_tie,
+            after_regression + chrono::Duration::microseconds(1)
+        );
+        assert_eq!(future, future_observation);
+        assert_eq!(other_chair, regressed_observation);
+    }
+
+    #[test]
+    fn latest_chair_location_cache_orders_values_that_mysql_truncates_to_one_microsecond() {
+        let cache = LatestChairLocationCache::default();
+        let first_observation = chrono::DateTime::from_timestamp(0, 2_000_100)
+            .unwrap()
+            .naive_utc();
+        let second_observation = chrono::DateTime::from_timestamp(0, 2_000_200)
+            .unwrap()
+            .naive_utc();
+        let persisted_first = chrono::DateTime::from_timestamp_micros(2_000)
+            .unwrap()
+            .naive_utc();
+
+        let first = cache.reserve_recorded_at("chair-1", first_observation);
+        let second = cache.reserve_recorded_at("chair-1", second_observation);
+
+        assert_eq!(first, persisted_first);
+        assert_eq!(second, persisted_first + chrono::Duration::microseconds(1));
+    }
+
+    #[test]
+    fn latest_chair_location_cache_serializes_concurrent_recorded_at_reservations() {
+        const REQUESTS: usize = 32;
+
+        let cache = LatestChairLocationCache::default();
+        let barrier = Arc::new(std::sync::Barrier::new(REQUESTS));
+        let observed_at = chrono::DateTime::from_timestamp_micros(2_000)
+            .unwrap()
+            .naive_utc();
+        let mut reservations = std::thread::scope(|scope| {
+            let handles = (0..REQUESTS)
+                .map(|_| {
+                    let cache = cache.clone();
+                    let barrier = Arc::clone(&barrier);
+                    scope.spawn(move || {
+                        barrier.wait();
+                        cache.reserve_recorded_at("chair-1", observed_at)
+                    })
+                })
+                .collect::<Vec<_>>();
+
+            handles
+                .into_iter()
+                .map(|handle| handle.join().expect("reservation thread must not panic"))
+                .collect::<Vec<_>>()
+        });
+        reservations.sort_unstable();
+
+        let expected = (0..REQUESTS)
+            .map(|offset| {
+                observed_at
+                    + chrono::Duration::microseconds(
+                        i64::try_from(offset).expect("request count fits i64"),
+                    )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(reservations, expected);
+    }
+
+    #[test]
+    fn recorded_at_reconciliation_never_rewinds_process_reservations() {
+        let cache = LatestChairLocationCache::default();
+        let process_reservation = chrono::DateTime::from_timestamp_micros(3_000)
+            .unwrap()
+            .naive_utc();
+        let older_database_value = chrono::DateTime::from_timestamp_micros(2_000)
+            .unwrap()
+            .naive_utc();
+        let newer_database_value = chrono::DateTime::from_timestamp_micros(5_000)
+            .unwrap()
+            .naive_utc();
+
+        cache.reserve_recorded_at("chair-1", process_reservation);
+        {
+            let mut high_watermarks = cache
+                .recorded_at_high_watermarks
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            merge_recorded_at_high_watermarks(
+                &mut high_watermarks,
+                [("chair-1".to_owned(), older_database_value)],
+            );
+        }
+        let after_older_snapshot = cache.reserve_recorded_at("chair-1", older_database_value);
+        assert_eq!(
+            after_older_snapshot,
+            process_reservation + chrono::Duration::microseconds(1)
+        );
+
+        {
+            let mut high_watermarks = cache
+                .recorded_at_high_watermarks
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            merge_recorded_at_high_watermarks(
+                &mut high_watermarks,
+                [("chair-1".to_owned(), newer_database_value)],
+            );
+        }
+        let after_newer_snapshot = cache.reserve_recorded_at("chair-1", older_database_value);
+        assert_eq!(
+            after_newer_snapshot,
+            newer_database_value + chrono::Duration::microseconds(1)
+        );
     }
 
     #[test]

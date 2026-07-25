@@ -39,6 +39,7 @@ type ownerDistanceBenchmarkDiagnostic struct {
 	InitialExpectedDistance int                             `json:"initial_expected_distance"`
 	InitialCurrentDistance  int                             `json:"initial_current_distance"`
 	LastKnownMovedAtUnixUs  *int64                          `json:"last_known_moved_at_unix_us"`
+	ResponseLagFromMoveUs   *int64                          `json:"response_lag_from_move_us"`
 	Location                ownerDistanceLocationDiagnostic `json:"location"`
 }
 
@@ -104,6 +105,43 @@ func captureFullOwnerDistanceHistory() bool {
 
 func ownerDistanceDiagnosticsEnabled() bool {
 	return os.Getenv("ISUCON_DIAGNOSTIC") == "1"
+}
+
+func emitOwnerDistanceValidationDiagnostic(
+	reason string,
+	ownerID int,
+	chairID string,
+	requestStartedAt time.Time,
+	response *OwnerChair,
+	location *ChairLocation,
+	expectedDistance int,
+	currentDistance int,
+	lastMoved *LocationEntry,
+) {
+	var lastKnownMovedAtUnixUs *int64
+	var responseLagFromMoveUs *int64
+	if lastMoved != nil {
+		lastMovedAt := lastMoved.ServerTime.Time.UnixMicro()
+		lastKnownMovedAtUnixUs = &lastMovedAt
+		lag := lastMoved.ServerTime.Time.Sub(response.TotalDistanceUpdatedAt.Time).Microseconds()
+		responseLagFromMoveUs = &lag
+	}
+	emitOwnerDistanceBenchmarkDiagnostic(ownerDistanceBenchmarkDiagnostic{
+		Reason:                  reason,
+		OwnerID:                 ownerID,
+		ChairID:                 chairID,
+		RequestStartedAtUnixUs:  requestStartedAt.UnixMicro(),
+		ResponseWatermarkUnixUs: response.TotalDistanceUpdatedAt.Time.UnixMicro(),
+		ResponseTotalDistance:   response.TotalDistance,
+		InitialExpectedDistance: expectedDistance,
+		InitialCurrentDistance:  currentDistance,
+		LastKnownMovedAtUnixUs:  lastKnownMovedAtUnixUs,
+		ResponseLagFromMoveUs:   responseLagFromMoveUs,
+		Location: location.ownerDistanceDiagnosticSnapshot(
+			response.TotalDistanceUpdatedAt.Time,
+			captureFullOwnerDistanceHistory(),
+		),
+	})
 }
 
 func emitOwnerDistanceBenchmarkDiagnostic(sample ownerDistanceBenchmarkDiagnostic) {

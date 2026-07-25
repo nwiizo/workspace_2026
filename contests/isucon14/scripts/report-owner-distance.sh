@@ -111,6 +111,95 @@ jq --slurp --raw-output '
   end
 ' "$coordinate_json"
 
+printf '\nrecorded_at monotonic adjustment\n\n'
+jq --slurp --raw-output '
+  [
+    .[] |
+    select(.recorded_at_adjustment_us != null and .recorded_at_adjustment_us < 0)
+  ] as $invalid |
+  if ($invalid | length) > 0 then
+    error("recorded_at_adjustment_usに負数があります")
+  else
+    [
+      .[] |
+      select(.recorded_at_adjustment_us != null and .recorded_at_adjustment_us > 0) |
+      .recorded_at_adjustment_us
+    ] | sort as $adjusted |
+    ($adjusted | length) as $length |
+    if $length == 0 then
+      "adjusted=0"
+    else
+      "adjusted=\($length) " +
+      "p95_adjustment_us=\($adjusted[(($length - 1) * 0.95 | floor)]) " +
+      "max_adjustment_us=\($adjusted[$length - 1])"
+    end
+  end
+' "$coordinate_json"
+
+printf '\nowner distance ordered step validation\n\n'
+speed_validation=$(ISUCON_DIAGNOSTIC=1 "$compose" exec -T \
+  -e MYSQL_PWD=isucon \
+  db \
+  mysql \
+  --batch \
+  --raw \
+  --skip-column-names \
+  -uisucon \
+  isuride \
+  -e "
+WITH ordered_locations AS (
+  SELECT chair_locations.chair_id,
+         chair_locations.id,
+         chair_locations.created_at,
+         chair_locations.latitude,
+         chair_locations.longitude,
+         LAG(chair_locations.latitude) OVER (
+           PARTITION BY chair_locations.chair_id
+           ORDER BY chair_locations.created_at, chair_locations.id
+         ) AS previous_latitude,
+         LAG(chair_locations.longitude) OVER (
+           PARTITION BY chair_locations.chair_id
+           ORDER BY chair_locations.created_at, chair_locations.id
+         ) AS previous_longitude
+  FROM chair_locations
+),
+steps AS (
+  SELECT
+    ABS(ordered_locations.latitude - ordered_locations.previous_latitude)
+      + ABS(ordered_locations.longitude - ordered_locations.previous_longitude) AS distance,
+    chair_models.speed
+  FROM ordered_locations
+  INNER JOIN chairs
+          ON chairs.id = ordered_locations.chair_id
+  INNER JOIN chair_models
+          ON chair_models.name = chairs.model
+  WHERE ordered_locations.previous_latitude IS NOT NULL
+)
+SELECT COUNT(*) AS steps,
+       COALESCE(SUM(distance > speed), 0) AS speed_violations,
+       COALESCE(MAX(GREATEST(distance - speed, 0)), 0) AS max_excess
+FROM steps
+")
+speed_steps=$(printf '%s\n' "$speed_validation" | cut -f 1)
+speed_violations=$(printf '%s\n' "$speed_validation" | cut -f 2)
+speed_max_excess=$(printf '%s\n' "$speed_validation" | cut -f 3)
+
+case "$speed_steps:$speed_violations:$speed_max_excess" in
+  *[!0-9:]* | *::* | :* | *:)
+    echo "移動区間検査の出力を解釈できません: $speed_validation" >&2
+    exit 1
+    ;;
+esac
+
+printf '| steps | speed_violations | max_excess |\n'
+printf '|---:|---:|---:|\n'
+printf '| %s | %s | %s |\n' "$speed_steps" "$speed_violations" "$speed_max_excess"
+
+if [ "$speed_violations" -ne 0 ]; then
+  echo "model speedを超える移動区間が $speed_violations 件あります。" >&2
+  exit 1
+fi
+
 printf '\nbenchmark mismatch correlation\n\n'
 if [ ! -s "$benchmark_json" ]; then
   printf 'mismatches=0\n'
@@ -165,6 +254,7 @@ jq -n --raw-output \
     last
   ) as $latest_coordinate |
   {
+    reason: $bench.reason,
     chair_id: $bench.chair_id,
     request_delta_us: (
       $request.request_started_at_unix_us - $bench.request_started_at_unix_us
@@ -176,6 +266,7 @@ jq -n --raw-output \
     diagnostic_expected_distance: $bench.location.distance_at_watermark,
     diagnostic_current_distance: $bench.location.current_distance,
     unknown_server_times: $bench.location.unknown_server_times,
+    response_lag_from_move_us: $bench.response_lag_from_move_us,
     server_snapshot_at_unix_us: $request.distance_snapshot_at_unix_us,
     server_stable_updated_at_unix_us: $server_chair.stable_updated_at_unix_us,
     server_latest_location_id: $server_chair.latest_location_id,
