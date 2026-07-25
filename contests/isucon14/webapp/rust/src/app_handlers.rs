@@ -315,6 +315,140 @@ struct GetAppRidesResponseItemChair {
     model: String,
 }
 
+const APP_RIDES_DIAGNOSTIC_SAMPLE_EVERY: u64 = 64;
+static APP_RIDES_DIAGNOSTIC_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+static APP_RIDES_DIAGNOSTICS_ENABLED: OnceLock<bool> = OnceLock::new();
+
+#[derive(serde::Serialize)]
+struct AppRidesDiagnosticSample {
+    sequence: u64,
+    admission_us: Option<u64>,
+    pool_acquire_us: Option<u64>,
+    pool_size_before: Option<u64>,
+    pool_idle_before: Option<u64>,
+    pool_in_use_before: Option<u64>,
+    sql_decode_us: Option<u64>,
+    row_count: Option<usize>,
+    connection_owned_us: Option<u64>,
+    mapping_us: Option<u64>,
+    response_us: Option<u64>,
+    total_us: u64,
+    residual_us: u64,
+    outcome: &'static str,
+    terminal_phase: &'static str,
+    event_at_unix_us: u64,
+}
+
+struct AppRidesDiagnostic {
+    started_at: Instant,
+    checkpoint_at: Instant,
+    connection_acquired_at: Option<Instant>,
+    sample: AppRidesDiagnosticSample,
+    emitted: bool,
+}
+
+impl AppRidesDiagnostic {
+    fn sampled() -> Option<Self> {
+        let enabled = *APP_RIDES_DIAGNOSTICS_ENABLED.get_or_init(|| {
+            std::env::var_os("ISUCON_DIAGNOSTIC").as_deref() == Some(std::ffi::OsStr::new("1"))
+        });
+        if !enabled {
+            return None;
+        }
+
+        let sequence = APP_RIDES_DIAGNOSTIC_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        if sequence.checked_rem(APP_RIDES_DIAGNOSTIC_SAMPLE_EVERY) != Some(0) {
+            return None;
+        }
+
+        let started_at = Instant::now();
+        Some(Self {
+            started_at,
+            checkpoint_at: started_at,
+            connection_acquired_at: None,
+            sample: AppRidesDiagnosticSample {
+                sequence,
+                admission_us: None,
+                pool_acquire_us: None,
+                pool_size_before: None,
+                pool_idle_before: None,
+                pool_in_use_before: None,
+                sql_decode_us: None,
+                row_count: None,
+                connection_owned_us: None,
+                mapping_us: None,
+                response_us: None,
+                total_us: 0,
+                residual_us: 0,
+                outcome: "error_or_cancelled",
+                terminal_phase: "admission",
+                event_at_unix_us: 0,
+            },
+            emitted: false,
+        })
+    }
+
+    fn elapsed_since_checkpoint_us(&mut self) -> u64 {
+        let now = Instant::now();
+        let elapsed = crate::drive_diagnostic::duration_us(now.duration_since(self.checkpoint_at));
+        self.checkpoint_at = now;
+        elapsed
+    }
+
+    fn observe_pool(&mut self, pool: &sqlx::MySqlPool) {
+        let size = u64::from(pool.size());
+        let idle = u64::try_from(pool.num_idle()).unwrap_or(u64::MAX);
+        self.sample.pool_size_before = Some(size);
+        self.sample.pool_idle_before = Some(idle);
+        self.sample.pool_in_use_before = Some(size.saturating_sub(idle));
+    }
+
+    fn connection_acquired(&mut self) {
+        self.connection_acquired_at = Some(Instant::now());
+    }
+
+    fn connection_released(&mut self) {
+        let Some(acquired_at) = self.connection_acquired_at.take() else {
+            return;
+        };
+        self.sample.connection_owned_us =
+            Some(crate::drive_diagnostic::duration_us(acquired_at.elapsed()));
+    }
+
+    fn emit_record(&mut self) {
+        self.emitted = true;
+        if self.connection_acquired_at.is_some() {
+            self.connection_released();
+        }
+        self.sample.total_us = crate::drive_diagnostic::duration_us(self.started_at.elapsed());
+        let measured_us = self
+            .sample
+            .admission_us
+            .unwrap_or_default()
+            .saturating_add(self.sample.pool_acquire_us.unwrap_or_default())
+            .saturating_add(self.sample.sql_decode_us.unwrap_or_default())
+            .saturating_add(self.sample.mapping_us.unwrap_or_default())
+            .saturating_add(self.sample.response_us.unwrap_or_default());
+        self.sample.residual_us = self.sample.total_us.saturating_sub(measured_us);
+        self.sample.event_at_unix_us = crate::drive_diagnostic::unix_time_us();
+        crate::drive_diagnostic::emit("APP_RIDES_DIAGNOSTIC", &self.sample);
+    }
+
+    fn emit_success(mut self) {
+        self.sample.outcome = "success";
+        self.sample.terminal_phase = "complete";
+        self.emit_record();
+    }
+}
+
+impl Drop for AppRidesDiagnostic {
+    fn drop(&mut self) {
+        if !self.emitted {
+            self.emit_record();
+        }
+    }
+}
+
 #[derive(Debug, sqlx::FromRow)]
 struct AppRideRow {
     id: String,
@@ -371,8 +505,20 @@ async fn app_get_rides(
         ..
     }): State<AppState>,
     axum::Extension(user): axum::Extension<User>,
-) -> Result<axum::Json<GetAppRidesResponse>, Error> {
+) -> Result<Response, Error> {
+    let mut diagnostic = AppRidesDiagnostic::sampled();
     let _admission_guard = general_db_admission.acquire("app_get_rides", &pool).await;
+    if let Some(diagnostic) = &mut diagnostic {
+        diagnostic.sample.admission_us = Some(diagnostic.elapsed_since_checkpoint_us());
+        diagnostic.observe_pool(&pool);
+        diagnostic.sample.terminal_phase = "pool_acquire";
+    }
+    let mut connection = pool.acquire().await?;
+    if let Some(diagnostic) = &mut diagnostic {
+        diagnostic.sample.pool_acquire_us = Some(diagnostic.elapsed_since_checkpoint_us());
+        diagnostic.connection_acquired();
+        diagnostic.sample.terminal_phase = "sql_decode";
+    }
     // Completion writes COMPLETED and evaluation in the same transaction.
     // coupons.used_by is not UNIQUE in the schema, so LIMIT 1 preserves the
     // previous fetch_optional cardinality even if inconsistent data exists.
@@ -406,14 +552,36 @@ ORDER BY rides.created_at DESC
         "#,
     )
     .bind(&user.id)
-    .fetch_all(&pool)
+    .fetch_all(&mut *connection)
     .await?;
+    if let Some(diagnostic) = &mut diagnostic {
+        diagnostic.sample.sql_decode_us = Some(diagnostic.elapsed_since_checkpoint_us());
+        diagnostic.sample.row_count = Some(rides.len());
+    }
+    drop(connection);
+    if let Some(diagnostic) = &mut diagnostic {
+        diagnostic.connection_released();
+        diagnostic.sample.terminal_phase = "mapping";
+    }
     let items = rides
         .into_iter()
         .map(AppRideRow::into_response_item)
         .collect();
+    if let Some(diagnostic) = &mut diagnostic {
+        diagnostic.sample.mapping_us = Some(diagnostic.elapsed_since_checkpoint_us());
+        diagnostic.sample.terminal_phase = "response";
+    }
 
-    Ok(axum::Json(GetAppRidesResponse { rides: items }))
+    // The admission permit protects the DB phase. Release it before JSON
+    // serialization, matching the previous Json<T> return path.
+    drop(_admission_guard);
+    let response = axum::Json(GetAppRidesResponse { rides: items }).into_response();
+    if let Some(mut diagnostic) = diagnostic {
+        diagnostic.sample.response_us = Some(diagnostic.elapsed_since_checkpoint_us());
+        diagnostic.emit_success();
+    }
+
+    Ok(response)
 }
 
 #[derive(Debug, serde::Deserialize)]
