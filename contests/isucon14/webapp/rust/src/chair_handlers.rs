@@ -632,11 +632,35 @@ async fn chair_get_notification(
         diagnostic.sample.transaction_begin_us = Some(diagnostic.elapsed_since_checkpoint_us());
         diagnostic.sample.terminal_phase = "ride_query";
     }
-    let ride: Ride =
-        sqlx::query_as("SELECT * FROM rides WHERE chair_id = ? ORDER BY updated_at DESC LIMIT 1")
-            .bind(&chair.id)
-            .fetch_one(&mut *tx)
-            .await?;
+    let ride: Ride = sqlx::query_as(
+        r#"
+SELECT rides.*
+FROM rides
+LEFT JOIN ride_statuses AS matching_status
+       ON matching_status.ride_id = rides.id
+      AND matching_status.status = 'MATCHING'
+LEFT JOIN ride_statuses AS completed_status
+       ON completed_status.ride_id = rides.id
+      AND completed_status.status = 'COMPLETED'
+WHERE rides.chair_id = ?
+ORDER BY CASE
+    WHEN matching_status.chair_sent_at IS NOT NULL
+     AND completed_status.chair_sent_at IS NULL THEN 0
+    WHEN matching_status.id IS NOT NULL
+     AND matching_status.chair_sent_at IS NULL
+     AND completed_status.chair_sent_at IS NULL THEN 1
+    ELSE 2
+END,
+matching_status.chair_sent_at DESC,
+rides.updated_at DESC,
+rides.created_at DESC,
+rides.id DESC
+LIMIT 1
+        "#,
+    )
+    .bind(&chair.id)
+    .fetch_one(&mut *tx)
+    .await?;
     if let Some(diagnostic) = &mut diagnostic {
         diagnostic.sample.ride_query_us = Some(diagnostic.elapsed_since_checkpoint_us());
         diagnostic.sample.terminal_phase = "pending_status_query";

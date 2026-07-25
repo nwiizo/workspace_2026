@@ -281,11 +281,30 @@
     hidden pending状態を25 chairで確認
   - connection再利用のソースはBenchmark 34へ戻し、次はride選択だけを独立修正する
   - 詳細: [`tuning/35-notification-connection-reuse.md`](./tuning/35-notification-connection-reuse.md)
-- [ ] chair通知で`updated_at`最大rideより、未送信statusを持つrideを優先する
-  - 失敗runのhidden pending fixtureを固定し、期待ride / user / statusをHTTPで確認する
-  - 未送信がない定常状態は従来の`updated_at DESC`をfallbackとして維持する
-  - 既存`(ride_id, chair_sent_at, status)` INDEXの利用とsortを`EXPLAIN ANALYZE`する
-  - `CODE=29` 0件と通常3走中央値を確認してからconnection再利用を再試験する
+- [x] chair通知のride選択を`updated_at`最大から配送状態機械へ変更する
+  - hidden pending fixtureを固定し、期待ride / user / statusとcursor更新をHTTPで確認
+  - 単純な未送信優先はdelivery gapで別rideへ切り替わり、診断runで`CODE=12` 4件を
+    起こしたため不採用
+  - `MATCHING`送信済み・`COMPLETED`未送信のcurrent ride、新規`MATCHING`未送信、
+    完了履歴の順に選ぶ
+  - `idx_rides_chair_created_at`と`idx_ride_statuses_ride_status`の利用を確認。
+    2 ride fixtureの`EXPLAIN ANALYZE`は0.182msの点観測
+  - レビュー前候補の診断runは113,046点、通常3走91,603 / 94,301 / 112,819点だが、
+    `COMPLETED`後の終端反例を含むため採用値には使わない
+  - 終端反例を修正した最終3走は86,532点`pass=true`、43,980 / 44,825点`pass=false`
+  - 最終3走の`CODE=12/29`は0件だが、`CODE=32`が2走で発生したため推定代表値は出さない
+  - hidden pendingとride取り違えを防ぐ変更は保持し、全体の正当性gateは未通過として
+    `CODE=32`を次の最優先へ移す
+  - 詳細: [`tuning/36-chair-notification-delivery-state.md`](./tuning/36-chair-notification-delivery-state.md)
+- [ ] `CODE=32` の長時間MATCHINGを再現し、rideとmatcher候補を同じtickで追う
+  - Benchmark 36最終3走のrun 2 / 3で各1件発生し、両方`pass=false`
+  - pending ride ID、作成時刻、地域、空きchair数、matcherが選んだbatchとUPDATE件数を採取する
+  - `internal_get_matching`の64件batch、地域間距離、500ms pollのどこでstarvationしたか分ける
+  - critical errorなので、通常3走がすべて`pass=true`になるまで次の性能施策を重ねない
+- [ ] `CODE=8` の未依頼userへ状態通知される経路を再現する
+  - Benchmark 36最終run 2だけ24件、run 1 / 3は0件
+  - app通知のride ID / user ID、ベンチ側current request、DBのuser_idとapp cursorを相関する
+  - chair側の配送状態修正とはendpointが異なるため、同じ根本原因と決めつけず分離する
 - [ ] `CODE=26` のowner累積距離が座標responseの受信境界より先へ進む競合を検証する
   - 期待値より実値が4–40程度大きく、直近1回の移動距離に近い例を確認
   - ベンチマーカーのcoordinate POST、world更新、owner検証の順序を同じchairで追う
@@ -294,6 +313,15 @@
   - Benchmark 29前の診断3走と通常3走では再現しなかった。解決とは扱わず、
     再発時に座標request / responseとowner集計を同じchair IDで採取する
   - Benchmark 30診断runもerror map空。再現待ちだけで他のP0計測を止めない
+  - Benchmark 36レビュー前は診断153件、通常130 / 136 / 151件。
+    最終実装でも144 / 85 / 80件と毎回再現したため、`CODE=32`の次に調べる
+  - `got`が`want`を大きく上回る例もあり、直近1移動分という仮説に限定せず、
+    location IDの採用範囲とowner requestのsnapshot境界から再確認する
+- [ ] `CODE=27` のnearby椅子が最新の指定範囲から外れる競合を検証する
+  - Benchmark 36レビュー前は診断4件、通常10 / 0 / 49件。最終実装は3 / 0 / 0件
+  - DBの`chair_current_locations`、process cache revision、
+    nearby応答を同じchair IDとrequest時刻で採取する
+  - `CODE=26`のwatermarkを直した後に、共通の座標可視性問題か独立したcache staleかを判定する
 - [x] nearbyの集合SQL、chair statsの集約SQL、batch matcherを実装
 - [x] 上記3変更を別々のBenchmarkとして正当性・性能検証する
 
@@ -303,7 +331,7 @@
 |---|---|---|---|
 | P0 | `internal_get_matching` | 64件batch + 近傍優先、外部pollは500ms | 空き定義の集約、500msの最小待ち |
 | P0 | `app_get_nearby_chairs` | 最新座標はcurrent-state表 + process cache、active / 割当可否はDB、評価はsnapshot + revision + delivery leaseで除外 | 最終run例8.079ms。ride antijoinとtracker確認の内訳を測る |
-| P0 | 通知2経路 | recipient + chair stats dependency revision付きpayload cache。未送信statusは30ms、定常cacheは100ms。cursorはDBに維持 | `updated_at`最大rideが別rideの未送信statusを隠す反例を先に修正。その後connection再利用、response ACKなしの配送loss、long pollingを順に検証 |
+| P0 | 通知2経路 | recipient + chair stats dependency revision付きpayload cache。chairは配送状態機械でcurrent rideを維持。未送信statusは30ms、定常cacheは100ms | connection再利用、response ACKなしの配送loss、long pollingを順に検証 |
 | P0 | `get_chair_stats` | 評価時差分更新 + 主キーreadへ変更 | SQL累積は約89%減、スコア中央値は約3.5%低下したため次の通知施策と合わせて再評価 |
 | P0 | `app_post_ride_evaluation` | 準備transaction、transaction外の冪等決済、ride再lock付き完了transactionへ分割済み | connection所有平均は94.0%短縮。完了時の追加acquireとprocess crash後の自動回収を検討する |
 | P0 | `chair_post_coordinate` | 履歴INSERT + current UPDATE、遷移候補だけride lock + 最新status再読 | pool 50維持。上限追加で通常中央値は改善しなかったため、connection取得後のDB滞在をquery別に減らす |
@@ -789,10 +817,13 @@
 
 ### JSON通知の短期改善
 
-- [ ] chair通知で未送信statusを持つrideを`updated_at`最大rideより優先する
+- [x] chair通知のride選択を配送状態機械へ変更する
   - Benchmark 35失敗後DBでhidden pendingを25 chair確認
-  - `CODE=29` 142件でerror budgetを消費したため、connection再利用は一度戻した
-  - 詳細: [`tuning/35-notification-connection-reuse.md`](./tuning/35-notification-connection-reuse.md)
+  - 未送信だけの優先はdelivery gapで別rideへ切り替わるため、
+    `MATCHING`送信済み・`COMPLETED`未送信を最優先にする
+  - 最終通常3走の`CODE=12/29`は0件だが、2走は`CODE=32`で`pass=false`
+  - 合格実測`n=1`は86,532点、推定代表値なし
+  - 詳細: [`tuning/36-chair-notification-delivery-state.md`](./tuning/36-chair-notification-delivery-state.md)
 - [ ] ride存在確認とtransaction内の最新ride再取得を1回へまとめる
 - [ ] 未送信statusがない場合は高価なpayloadを再構築せず `data: null` を返せるかprevalidationで確認する
   - status追加なしで `rides.chair_id` が変わり、同じ `MATCHING` のpayloadへchair情報を
@@ -1190,29 +1221,35 @@
 
 ## 推奨する直近の実行順
 
-1. `CODE=26` を再現し、ベンチマーカーがresponseを受信済みの座標と
+1. `CODE=32`を再現し、pending ride、地域、空きchair、matcher batchとUPDATE結果を
+   同じtickで採取する。critical errorが0件の通常3走へ戻す
+2. `CODE=26` を再現し、ベンチマーカーがresponseを受信済みの座標と
    `owner_get_chairs` が集計する座標のwatermark差を同じchairで特定する。
    再現しない間も以下のP0計測は止めない
-2. 評価APIのphase計測は完了。connection所有平均319.754msの約94.6%が決済で、
+3. `CODE=8`が再発したらapp通知のride / user / cursorを同一requestで保存する
+4. 評価APIのphase計測は完了。connection所有平均319.754msの約94.6%が決済で、
    retry sleepだけで平均201.719msと確認した
-3. 短い準備transaction、transaction外の冪等決済、rideを再lockする短い完了transactionへ
+5. 短い準備transaction、transaction外の冪等決済、rideを再lockする短い完了transactionへ
    分ける。決済成功後のDB失敗は同じkeyで再開し、二重status・stats更新を防ぐ
-4. app / chair通知cache missのphase計測は完了。connection所有平均は約10msだが、
+6. app / chair通知cache missのphase計測は完了。connection所有平均は約10msだが、
    同じrequestの2回のacquire平均合計がapp 77.839ms、chair 82.513msだった
-5. pool上限50 / 75 / 100の比較は完了し、通常3走中央値が最も高い50を維持した
-6. rideあり通知で、存在確認に使ったconnectionを返さず同じconnectionでtransactionを
-   開き、2回目のacquire queueだけを除く
-7. owner request開始時に既知の座標までを集計する方法を設計し、決定的な赤・緑テストと
+7. pool上限50 / 75 / 100の比較は完了し、通常3走中央値が最も高い50を維持した
+8. chair通知のride選択は配送状態機械へ変更済み。hidden pendingとdelivery gapの
+   固定回帰、通常3走の`CODE=12/29` 0件を確認したが、全体gateは未通過
+9. owner request開始時に既知の座標までを集計する方法を設計し、決定的な赤・緑テストと
    通常3走で`CODE=26`のerror予算・scoreを比較する
-8. latest-coordinate cacheの `RwLock` とmaintenance gateの待機・保持時間を計測し、
+10. `CODE=27`を同じchairのDB current row、process cache、nearby応答で追跡する
+11. rideあり通知のconnection再利用は、`CODE=26/27`を解消してerror mapを安定させてから
+   再比較する
+12. latest-coordinate cacheの `RwLock` とmaintenance gateの待機・保持時間を計測し、
    2秒再同期時のglobal stallを定量化する
-9. 最新statusをcurrent-state化し、未送信statusがない通知pollの履歴lookupとpayload再構築をなくす
-10. matcherへ地域間の距離上限を追加し、500 / 100 / 30msの実行間隔と組み合わせて比較する
-11. app history、owner sales、ride作成のN+1を順に除去する
-12. current-state別表で最新statusをO(1)化する
-13. JSON long pollingで不足する場合だけSSEへ移し、状態変更時の即時pushまで実装する
-14. 貪欲matcherと最小費用二部マッチングを比較する
-15. 最後にMySQL、nginx、compiler設定をprofileに基づいて調整する
+13. 最新statusをcurrent-state化し、未送信statusがない通知pollの履歴lookupとpayload再構築をなくす
+14. matcherへ地域間の距離上限を追加し、500 / 100 / 30msの実行間隔と組み合わせて比較する
+15. app history、owner sales、ride作成のN+1を順に除去する
+16. current-state別表で最新statusをO(1)化する
+17. JSON long pollingで不足する場合だけSSEへ移し、状態変更時の即時pushまで実装する
+18. 貪欲matcherと最小費用二部マッチングを比較する
+19. 最後にMySQL、nginx、compiler設定をprofileに基づいて調整する
 
 ## 記録ルール
 

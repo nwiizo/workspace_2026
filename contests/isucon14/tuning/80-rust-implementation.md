@@ -1843,6 +1843,88 @@ Rustの抽象化を展開する目的は
 「低水準に書けば速い」ことではなく、どの`await`が何の資源を待つかを観測可能にすることです。
 詳細は[Benchmark 34](./34-notification-phase-diagnostics.md)に記録しています。
 
+## SQLの`CASE`で配送状態機械を表す
+
+Benchmark 36では、chair通知の対象rideを`updated_at`だけで選ぶ実装を、
+`MATCHING`と`COMPLETED`の配送cursorから選ぶ実装へ変更しました。
+
+Rust側で全rideを`Vec<Ride>`へ読み、ループでstatusを追加取得して並べることもできます。
+しかしその形はride数に応じたN+1 queryとheap allocationを生み、transaction中の
+connection所有時間を延ばします。今回の分類はSQLのJOINと`CASE`でDBへ寄せます。
+
+```sql
+ORDER BY CASE
+    WHEN matching_status.chair_sent_at IS NOT NULL
+     AND completed_status.chair_sent_at IS NULL THEN 0
+    WHEN matching_status.id IS NOT NULL
+     AND matching_status.chair_sent_at IS NULL
+     AND completed_status.chair_sent_at IS NULL THEN 1
+    ELSE 2
+END,
+matching_status.chair_sent_at DESC,
+rides.updated_at DESC,
+rides.created_at DESC,
+rides.id DESC
+LIMIT 1
+```
+
+`CASE`の0、1、2は単なる高速化用のmagic numberではありません。
+
+- 0: 椅子へ導入済みで、完了をまだ届けていないcurrent ride
+- 1: `MATCHING`をまだ届けておらず、`COMPLETED`も配送済みではない新しい割当
+- 2: 完了履歴
+
+最後の`created_at DESC, id DESC`は、前のsort keyがすべて同じ異常状態でも
+`LIMIT 1`の結果を決定的にします。DBがたまたま返す行順へ依存すると、同じfixtureでも
+実行計画や統計更新で別rideを選び得ます。
+
+Rustの`enum`で書けば名前を付けられますが、SQLのsort keyへそのまま渡すには結局、
+query側に表現が必要です。意味がずれないように、3群の不変条件を回帰テストと
+[Benchmark 36](./36-chair-notification-delivery-state.md)へ明記しています。
+
+### `LEFT JOIN`で「行がまだない」を状態として扱う
+
+current rideには`COMPLETED`行自体がまだ存在しないことがあります。`INNER JOIN`にすると
+そのrideが候補から消えるため、`LEFT JOIN`を使います。
+
+```text
+completed_status行なし
+  -> completed_status.chair_sent_at はNULL
+  -> 完了未配送としてcurrent rideを維持
+```
+
+SQLの`NULL`は値が空というだけでなく、LEFT JOIN先の行が存在しないことも表します。
+今回の条件では「完了状態が未生成」と「完了状態はあるが未送信」をどちらも
+配送ライフサイクル未完了として扱ってよいため、同じ`IS NULL`条件へまとめられます。
+また優先度1でもこの条件を使い、`COMPLETED`送信済みなのに古い`MATCHING`だけが
+残ったrideを新規割当として復活させないようにしています。
+
+### `query_as`の型安全性が保証しないもの
+
+`sqlx::query_as`は結果列を`Ride`へdecodeしますが、動的queryなのでcompile時にSQLの
+意味や実行計画までは検証しません。型が合っていても、別rideを選ぶqueryは正常に
+`Ride`へ変換されます。
+
+そのため次の3層を分けて確認しました。
+
+1. `cargo test`とClippyでRustの型・制御フローを確認
+2. 固定fixtureのHTTP回帰でride ID、user ID、status、DB cursorを確認
+3. 公式ベンチで並行負荷時の`CODE=12/29`が0件か確認
+
+型安全性は業務上の正しい行選択を自動では保証しません。SQLを変更するときは、
+返された型だけでなく「どの行であるべきか」をfixtureへ固定します。
+
+### INDEXでCASE sortが自動的に消えるとは限らない
+
+`rides(chair_id, created_at)`は1 chairの候補へ絞り、
+`ride_statuses(ride_id, status)`は`MATCHING`と`COMPLETED`を直接lookupします。
+一方、最終優先度は2つのJOIN結果から計算するため、既存の単一INDEXだけでは
+`CASE`順を作れません。
+
+局所fixtureではqueryが0.145–0.182msだったため、生成列やcurrent-state表を同時に
+追加しませんでした。sortを消すこと自体を目的にせず、候補行数、全request累積時間、
+write増加を測ってから物理化します。
+
 ## 避けるショートカット
 
 - N+1を無制限の `tokio::spawn` で隠す

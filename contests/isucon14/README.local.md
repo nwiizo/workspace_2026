@@ -51,6 +51,7 @@ git -C "$source_dir/isucon14" archive HEAD | tar -x -C contests/isucon14
 | `scripts/test-auth-cache.sh` | 初期token、動的登録、initialize失敗・成功後の認証cacheをHTTPとSQL回数で確認 |
 | `scripts/test-latest-location-reconciliation.sh` | commit後のcache更新欠落と同時刻tie-breakの故障注入 |
 | `scripts/test-status-notification-order.sh` | 時刻逆転時もapp / chair通知が状態遷移順になることをHTTPで確認 |
+| `scripts/test-chair-notification-pending-ride.sh` | hidden pendingとdelivery gapでもchair通知がcurrent rideを維持することをHTTPで確認 |
 | `scripts/test-chair-stats-consistency.sh` | 全初期chairを照合し、欠損・誤値・余分なrowを再起動で修復 |
 | `scripts/test-chair-stats-transitions.sh` | 評価の所有者認可、完了条件、決済rollback、barrier付き並行評価、再送時の非加算をHTTP検証 |
 | `scripts/payment-barrier-handler.sh` | 2件の決済POSTが到達するまで204を返さず、評価のTOCTOU競合を決定的に作るテスト用handler |
@@ -209,6 +210,10 @@ cd contests/isucon14
 # created_atが逆転しても通知と最新statusが状態遷移順になることを確認
 # 注意: POST /api/initializeを呼び、ローカルデータを初期化する
 ./scripts/test-status-notification-order.sh
+
+# hidden pendingとstatus間の空白でもchair通知がcurrent rideを維持することを確認
+# 注意: POST /api/initializeを呼び、ローカルデータを初期化する
+./scripts/test-chair-notification-pending-ride.sh
 
 # chair statsを照合し、故障注入後のwebapp再起動repairを確認
 # 注意: 開始時と終了時にPOST /api/initializeを呼び、ローカルデータを初期化する
@@ -378,6 +383,7 @@ RESET=1 ./scripts/down.sh
 | username衝突の限定再試行 | `users.username` のMySQL 1062だけを内部usernameで1回再試行。3走103,738–107,508点、中央値104,263点、全run `pass=true`、`CODE=17` 0件。直前中央値比-4.7%のため高速化ではなく正当性修正として採用 |
 | 招待登録の並行安全化 | 招待者UNIQUE行を直列化地点にし、couponを `COUNT(*)`、reward codeを新規user IDで一意化。3走99,775–105,304点、中央値102,569点、全run `pass=true`・error map空。並行回帰テストのMySQL 1062 / 1213増分0 |
 | coordinateのpool取得分解 | 診断1走124,064点・未推定。1,173 sampleでacquire p95 113.156ms、SQL BEGIN p95 2.327ms。78.1%がpool size 50 / idle 0 |
+| chair通知の配送状態機械 | レビュー修正後は86,532点`pass=true`、43,980 / 44,825点`pass=false`。`CODE=12/29`は0件だが`CODE=32`が2走。推定代表値なし。hidden pendingとride取り違えの固定回帰は成功 |
 
 初回の初期60秒走行ではMySQLのqueryが十数秒以上へ遅延し、ベンチマーカーの期限を
 超えました。同じ初期revisionを外部コンテナの大きな共有負荷がない条件で再計測
