@@ -2,7 +2,7 @@
 
 nwiizo が実戦投入してきた Claude Code 資産（`~/.claude` の `home-*` skills / agents）を、
 **配布・インストール可能なプラグイン**に再編成したマーケットプレイス。
-ローカルに散らばっていた個人ツールキットを、テーマ単位で独立インストールできる 7 プラグインに整理した。
+ローカルに散らばっていた個人ツールキットを、テーマ単位で独立インストールできる 6 プラグインに整理した。
 
 ## インストール
 
@@ -23,7 +23,6 @@ nwiizo が実戦投入してきた Claude Code 資産（`~/.claude` の `home-*`
 | `nwiizo-review` | 並列レビュー・ワークフロー（品質 / 独立観点 / 可読性の多角レビュー） | agents: code-reviewer, codex-reviewer, simplify-reviewer / skills: self-review, fix-review-comments, rust-code-review, design-review, cli-ux-review, proactive-suggestions |
 | `engineering-discipline` | Karpathy 由来の実装前ゲート（仮定の明示 / 過剰実装防止 / 外科的編集 / 検証可能ゴール） | skills: karpathy-guidelines |
 | `finops-investigation` | AWS / GCP のコスト調査・削減分析の実務知見 | skills: aws-finops-investigation, gcp-finops-investigation |
-| `jj-workflow` | Jujutsu (jj) の並列 workspace・commit サイクル・履歴監査 | skills: jj-agent-spawn, jj-commit-cycle / agent: jj-reviewer |
 | `prompt-engineering` | agent 向け指示の両面評価と反復改善 | skills: empirical-prompt-tuning, prompt-review |
 | `dev-workflow` | ツール開発の分割・反復・OSS 検証・タスク同期 | skills: orchestrator, iterative-refinement, validate-on-oss, sync-tasks / agents: planner, memory-optimizer |
 | `authoring` | Marp スライド・技術書翻訳の品質基準 | skills: marp-slide-editing, translation-quality |
@@ -32,7 +31,7 @@ nwiizo が実戦投入してきた Claude Code 資産（`~/.claude` の `home-*`
 
 ```
 nwiizo-claude-plugins/
-├── .claude-plugin/marketplace.json    # マーケットプレイス定義（7 プラグイン）
+├── .claude-plugin/marketplace.json    # マーケットプレイス定義（6 プラグイン）
 └── plugins/<plugin>/
     ├── .claude-plugin/plugin.json     # プラグイン metadata
     ├── skills/<skill>/SKILL.md        # スキル本体（参照ファイル同梱）
@@ -72,7 +71,7 @@ nwiizo-claude-plugins/
 | `code-review` / `code-simplifier` / `pr-review-toolkit` | `nwiizo-review`（code-reviewer / simplify-reviewer / codex-reviewer） |
 | `claude-md-management` | `dev-workflow`（memory-optimizer） |
 | `session-report` | `usage-analytics` plugin + `nippo` skill |
-| `commit-commands` | `jj-workflow` + Conventional Commits 運用 |
+| `commit-commands` | Git + Conventional Commits 運用 |
 | `karpathy-skills`（`multica-ai/andrej-karpathy-skills`） | `engineering-discipline`（karpathy-guidelines）。同じ 4 原則を内製済み。上流 `EXAMPLES.md` は before/after 例の参照元として有用 |
 | `learning-output-style` / `explanatory-output-style` / `math-olympiad` | ユースケース外 |
 

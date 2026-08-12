@@ -1,7 +1,7 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
   "name": "nwiizo-claude-plugins",
-  "description": "nwiizo の実戦投入済み Claude Code 資産を配布可能なプラグインに再編成したマーケットプレイス。並列レビュー・エンジニアリング規律・FinOps 調査・jj ワークフロー・プロンプト改善・ツール開発・技術コンテンツ作成の 7 プラグイン。",
+  "description": "nwiizo の実戦投入済み Claude Code 資産を配布可能なプラグインに再編成したマーケットプレイス。並列レビュー・エンジニアリング規律・FinOps 調査・プロンプト改善・ツール開発・技術コンテンツ作成の 6 プラグイン。",
   "owner": {
     "name": "nwiizo"
   },
@@ -26,13 +26,6 @@
       "description": "AWS / GCP の FinOps 調査・コスト削減分析。非対話認証の突破、Cost Explorer / Billing Export の読み解き罠、RI/SP・CUD/SUD の誤認パターン、レポート数値の分母混在を避ける実務知見。",
       "author": { "name": "nwiizo" },
       "category": "cloud"
-    },
-    {
-      "name": "jj-workflow",
-      "source": "./plugins/jj-workflow",
-      "description": "Jujutsu (jj) ワークフロー。jj-agent-spawn で並列エージェント workspace を立て、jj-commit-cycle で commit パターンを回し、jj-reviewer で履歴安全性を read-only 監査する。",
-      "author": { "name": "nwiizo" },
-      "category": "version-control"
     },
     {
       "name": "prompt-engineering",
