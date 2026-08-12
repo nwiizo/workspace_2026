@@ -13,6 +13,7 @@ The laboratory. Expect explosions.
 | [cargo-mutants-sample](./cargo-mutants-sample/) | Mutation testing experiments | Rust, cargo-mutants |
 | [rust-formal-verification](./rust-formal-verification/) | Rust formal verification tool evaluation with executable examples | Rust, Kani, Creusot, Prusti, Verus, Flux |
 | [thirty-seconds-silence](./thirty-seconds-silence/) | Blog sample code: hypothesis-driven problem solving | Python |
+| [tauri](./tauri/) | Hibi - local-only Markdown diary, one file per day | Rust, Tauri 2, TypeScript, Vite |
 
 ## Highlights
 
