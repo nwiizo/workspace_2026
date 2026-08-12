@@ -23,7 +23,7 @@ prepared statement統計を確認したため、この変更は採用します�
 
 ## 比較revisionと再現手順
 
-| 役割 | jj commit ID |
+| 役割 | Git commit ID |
 | --- | --- |
 | 同期対照 | `18f73352f07e2ba50aea8cfcbed496155132afb8` |
 | 1 SQL化した実装 | `78cd698211c643a30b4c6e95c4cbeb5299c1d632` |

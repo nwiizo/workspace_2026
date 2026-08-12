@@ -30,7 +30,7 @@ Benchmark 52は124,205–133,737点、中央値128,584点なので、中央値�
 
 ## 比較revisionと再現手順
 
-| 役割 | jj commit ID |
+| 役割 | Git commit ID |
 | --- | --- |
 | 対照 | `e291f270b9862c73ec83a047eb1cb22f6f6d71b2` |
 | 実装 | `57a2b354f3ba0785ad28eaa1a96991acbd387d2a` |

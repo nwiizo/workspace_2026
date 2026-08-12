@@ -14,7 +14,7 @@
 
 ## 対象 revision
 
-`jj log` でローカル変更履歴をたどり、最初に公式ソースを取り込んだ
+`git log` でローカル変更履歴をたどり、最初に公式ソースを取り込んだ
 `ef9265541d50`（`feat(isucon14): add Rust Docker benchmark environment`）だけを
 一時的な working copy として開きました。公式 ISUCON14 ソースの pin は
 `53f8b627e040c30ebec600457c6c97da008b84b0` です。
