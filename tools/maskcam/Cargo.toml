@@ -1,0 +1,29 @@
+[package]
+name = "maskcam"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license = "MIT"
+description = "A fail-closed face overlay camera preview for macOS"
+
+[dependencies]
+anyhow = "1.0.100"
+clap = { version = "4.5.53", features = ["derive"] }
+num-traits = "0.2.19"
+opencv = { version = "0.100.1", default-features = false, features = [
+    "clang-runtime",
+    "dnn",
+    "features",
+    "highgui",
+    "imgcodecs",
+    "imgproc",
+    "objdetect",
+    "videoio",
+] }
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = "deny"
+pedantic = "deny"

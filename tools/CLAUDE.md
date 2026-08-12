@@ -30,6 +30,7 @@
 | `cargo-api-drift/` | public API 差分の SemVer リスク分類 cargo サブコマンド (Rust, ra_ap_syntax + design-gate-core)。`--against <ref>` の git diff から breaking / risky / safe を分類（struct フィールド・ジェネリクス・re-export・const/static・bound 強化/緩和対応、cosmetic 属性は正規化で除外）。`--changelog` で Keep a Changelog 断片生成。strict semver 監査は cargo-semver-checks に譲る棲み分けを blind spot 宣言 |
 | `kuroko/` | 軽量 AWS サービスエミュレータ (Rust, axum 0.8, MIT)。port 4566・認証不要・単一バイナリ。AWS JSON 1.0/1.1, Query, REST, Smithy RPC v2 CBOR の 4 プロトコル dispatcher。**76 サービス全実装** (~50 はフル CRUD、14 は `resource_stub` パターンで最小制御プレーン)。AWS SDK for Rust + 公式仕様準拠で 341 テスト疎通検証済み。`/_kuroko/reset` / `/_kuroko/health` / `/_kuroko/services` / `/_kuroko/info` の introspection endpoint と KUROKO_DATA_DIR ベースの JSON snapshot 永続化対応 |
 | `lazyssh/` | lazygit / Adembc/lazyssh に着想を得た読み取り専用 SSH TUI (Rust, ratatui)。`~/.ssh/config` と Include を解析し、曖昧検索・接続詳細・再読込・システム OpenSSH への安全な接続を提供 |
+| `maskcam/` | macOS 専用のプライバシー優先カメラプレビュー (Rust, OpenCV 5 + YuNet)。顔をちょうど 1 つ検出して指定画像で覆い、未検出・複数検出時はフレーム全体を隠す。MVP は仮想カメラを登録せず、OBS の Window Capture 経由で配信する |
 
 ## コマンド
 
