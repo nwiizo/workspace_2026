@@ -1,0 +1,7 @@
+/target/
+!/Cargo.lock
+/test-results/
+/.topcoat/
+/tatami-log.db
+/tatami-log.db-shm
+/tatami-log.db-wal

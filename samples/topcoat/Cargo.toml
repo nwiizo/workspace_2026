@@ -1,0 +1,24 @@
+[package]
+name = "tatami-log"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+publish = false
+
+[dependencies]
+argon2 = "0.5.3"
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"
+time = { version = "0.3.55", features = ["formatting", "macros", "parsing"] }
+toasty = { version = "0.7.0", features = ["sqlite"] }
+tokio = { version = "1.51.1", features = ["macros", "rt-multi-thread"] }
+topcoat = "0.5.0"
+
+[dev-dependencies]
+serde_urlencoded = "0.7"
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+pedantic = "warn"

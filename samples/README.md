@@ -14,6 +14,7 @@ The laboratory. Expect explosions.
 | [rust-formal-verification](./rust-formal-verification/) | Rust formal verification tool evaluation with executable examples | Rust, Kani, Creusot, Prusti, Verus, Flux |
 | [thirty-seconds-silence](./thirty-seconds-silence/) | Blog sample code: hypothesis-driven problem solving | Python |
 | [tauri](./tauri/) | Hibi - local-only Markdown diary, one file per day | Rust, Tauri 2, TypeScript, Vite |
+| [topcoat](./topcoat/) | Tatami Log - BJJ training notes; Topcoat 0.5 full-stack verification | Rust, Topcoat, Toasty, SQLite |
 
 ## Highlights
 
