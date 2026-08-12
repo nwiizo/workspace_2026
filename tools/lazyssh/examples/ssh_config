@@ -1,0 +1,16 @@
+# A safe fixture for trying the UI without connecting.
+Host prod-web
+    HostName 10.0.0.8
+    User deploy
+    Port 2222
+    IdentityFile ~/.ssh/id_ed25519
+    ProxyJump bastion
+
+Host bastion
+    HostName bastion.example.com
+    User ops
+
+Host dev-api dev-worker
+    HostName dev.example.com
+    User developer
+
