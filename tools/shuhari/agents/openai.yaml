@@ -1,0 +1,4 @@
+interface:
+  display_name: "守破離"
+  short_description: "競合の一次情報を調査し、差分を安全な機能実装へつなげる"
+  default_prompt: "Use $shuhari to research a competitor feature, decide what is worth adopting, and implement the smallest verified version in this repository."
