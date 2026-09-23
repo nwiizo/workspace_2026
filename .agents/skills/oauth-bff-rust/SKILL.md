@@ -1,6 +1,6 @@
 ---
 name: oauth-bff-rust
-description: Rust/Axum などで SPA 向け OAuth 2.0 / OpenID Connect BFF を実装・レビュー・検証する。ブラウザにアクセストークンやリフレッシュトークンを出さない設計、HttpOnly Cookie セッション、CSRF/CORS/Origin 検証、Hydra などの認可サーバー連携、Playwright でのログイン往復検証を扱うときに使用。
+description: Rust/AxumでSPA向けOAuth/OIDC BFFを実装・レビューする。トークンのサーバー保持、Cookieセッション、CSRF対策、ログイン往復の検証に使う。
 ---
 
 # OAuth BFF Rust
@@ -9,9 +9,9 @@ description: Rust/Axum などで SPA 向け OAuth 2.0 / OpenID Connect BFF を�
 
 SPA で OAuth/OIDC を扱うときは、トークンをブラウザに置かず BFF が confidential client として保持する。Rust 実装では「OAuth Agent」と「OAuth Proxy」の責務を分け、Cookie はセッション識別子と CSRF 用の値だけにする。
 
-## Design Gate
+## 設計で確認すること
 
-実装前に次を明確にする。
+変更に関係する条件を、既存の実装・設定と依頼から確認する。合意済みの設計は引き継ぎ、結果を左右する未決事項だけ質問する。
 
 - SPA origin、BFF origin、認可サーバーの browser-visible URL、BFF から見た internal URL を分ける。Docker Compose では `http://localhost:4444` と `http://hydra:4444` が別物になりやすい。
 - OAuth client は confidential client とし、認可コード交換・refresh・logout を BFF 内に閉じる。
@@ -65,9 +65,11 @@ SPA で OAuth/OIDC を扱うときは、トークンをブラウザに置かず 
 
 ## Validation
 
-必ず local stack を起動してブラウザで検証する。Playwright MCP が使える場合は MCP を優先し、使えない場合は Playwright CLI で同じ観点を確認する。
+ログイン・セッション・Proxy・フロントエンドの動作を変更した場合は、local stackを起動してブラウザで影響する経路を検証する。Playwright MCPが使える場合はMCPを優先し、使えない場合はPlaywright CLIで確認する。起動できなければ、原因と未検証の経路を示し、実行できる検査を進める。
 
-Minimum checks:
+レビューだけの依頼では、ソース・設定・既存の実行証拠から確認できる内容を返す。実行確認も求められた場合や、具体的な懸念の再現に必要な場合に環境を起動する。文書だけの変更は参照と内容を確認する。
+
+動作変更時の検査（変更した層の必須検査と、影響する経路を選ぶ）:
 
 - Rust: `cargo fmt --check`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test --all --all-targets`。
 - Frontend: package manager に合う lint/build/typecheck。
