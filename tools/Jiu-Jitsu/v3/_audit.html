@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <title>pose audit</title>
+    <style>
+      html, body { margin: 0; height: 100%; background: #14161c; }
+      canvas { display: block; width: 100vw; height: 100vh; }
+      #labels { position: fixed; inset: 0; pointer-events: none; }
+      .lbl { position: absolute; color: #eee; font: 12px monospace; transform: translate(-50%, 0); }
+    </style>
+  </head>
+  <body>
+    <canvas id="c"></canvas>
+    <div id="labels"></div>
+    <script type="module" src="/src/audit.ts"></script>
+  </body>
+</html>

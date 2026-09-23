@@ -1,5 +1,17 @@
 # CLAUDE.md - Jiu-Jitsu Defense Dojo
 
+> **v3の人形制作（2026-09-08）**：[制作記録](v3/docs/model-production/README.md)にプロット、画像生成した3面図とプロンプト、構造設計、造形前後、最適化の実測値を残した。`mannequinShape.ts` が連続断面・四肢・足の形状、`mannequin.ts` が固定長IK・配置・固定部品の結合と形状共有を担当。股関節の外形は `HIP_RADII` を描画と床検査で共用する。`/_model-audit.html` はビルドにも含み、3面・骨格・ワイヤー・代表姿勢・描画統計を確認できる。変更後は `modelShape.test.ts` と `mannequinUpdate.test.ts` を含む既存検証を維持する。
+
+> **現行版は `v3/`（3.0.0）。** [v3/README.md](v3/README.md) と [技術選定](v3/docs/TECH_SELECTION.md) を先に読む。TypeScript + Three.jsを継続し、ポジション練習は14課題、登録ルートは11、連続例題は4。英語資料に基づく追加課題は `src/content/situationalPractice.ts`。ルート作成 `#route` と確認 `#route-watch` は別ページ・別状態。`src/engine/routePlayback.ts` がDOM非依存の再生、`src/render/mannequin.ts` が固定長IKと再利用するメッシュ、`src/engine/duel.ts` / `src/ui/duelTab.ts` が青固定の12手対戦・12種類の行動・履歴を担当する。`#dojo` は旧 `DojoTab` を使わない。未実装の返し・パスは説明を伴う局面切り替え。身体の可否・安全を保証する物理シミュレーションではない。
+> 保存キーは `jiu-jitsu-dojo-v3/progress`、`jiu-jitsu-dojo-v3/route`（作成中）、`jiu-jitsu-dojo-v3/route-library`（最大20件の独立した保存一覧）。単体ルートJSONの書き出し・読み込みにも対応。v2の保存データは移行・上書きしない。検証は `cd v3 && npm run check && npm test && npm run build` とブラウザでの編集・再生・対戦・複数視点の確認。ユーザー入力名はtextContentで描画。以下はv2以前の背景で、現行の機能数・入口は上記を優先する。
+
+> **現行の学習ゲームは `v2/`。** 入口はクイズ不要の「動きの道場」：SVG上の点のドラッグ／スライダーで腕のテコ・支持範囲と重心投影・股関節と膝を動かす。`src/anatomy/mechanics.ts` が結果と目標達成を計算し、`src/labs/bodyLab.ts` が骨格・筋肉の図と操作を担当する。補助のポジション練習は `src/content/practice.ts` / `src/engine/practice.ts` / `src/ui/practiceTab.ts` の5課題。青を自分に固定し、一手ずつ状態が変わる。タップで中断、ヒントありの練習と任意の確認、復習・記録に対応。`localStorage` の既存 v1 形式の `srs` に `body:<id>` / `practice:<id>:<mode>` のキーで記録し、実技の習熟や帯とは区別する。
+> **練習・応用ロール共通の人形**：`v2/src/render/practicePose.ts` / `rollPose.ts` が二人の配置と接点、`mannequin.ts` が固定長の二節の計算と身体／骨格、`bodyScene.ts` が観察用カメラを担当する。古い単体ポーズの root 接地補正と補間を使わず、膝・足の支持位置を先に決める。変更後は `tests/practicePose.test.ts` / `tests/rollPose.test.ts` と `/_practice-audit.html` で床への貫通、骨長、二人の重なり、説明との一致を検証する。練習は `?lesson=<id>&node=<id>`、応用ロールは `?roll=<scenario>&stage=<index>`。身体／骨格、透過、接点、回答後の前後比較は両画面にあり、応用ロールでは攻守に応じて自分の色と透過対象が変わる。
+> **身体理解の注意**：筋肉図は位置の模式図で活動量ではない。支持範囲モデルは重心を入力し、摩擦や相手の反応を計算しない。関節リグの角度・ゲームの目標値を人体の安全限界やタップ時点へ対応させない。図の範囲と実際に計算する量は `v2/README.md` に明記。検証は `cd v2 && npm run check && npm test && npm run build`、操作と表示はブラウザでも確認する。
+> **ルート作成**：`src/ui/routeTab.ts` / `src/engine/route.ts` が人形のドラッグ・姿勢登録・順番と秒数の変更・途中の再生と検査を担当。`src/content/routes.ts` の3例は2026年9月7日確認の出典付き練習例。`src/engine/routeStorage.ts` は自作1ルートを別キー `jiu-jitsu-dojo-v2/route` に保存し、不正・未対応データを上書きしない。ユーザー入力のルート名・姿勢名は textContent を使う。関節回旋・筋力・接触力・手足同士の衝突などは完全には判定できず、指摘なしを実技の可否と解釈しない。検証は `tests/route.test.ts` / `tests/routeStorage.test.ts` と実画面でのドラッグ・保存後再読込・途中での停止・モバイル。
+>
+> 以下の従来説明は既存ロールと `native/` 試作の背景。`v2/` は凍結を解除して学習ゲームとして開発中。
+
 > **現行の実装は `v2/` と `native/` の 2 系統。** `v2/` は TypeScript strict + Vite + Vitest + three/npm の Web 参照実装。解剖モデル (`v2/src/anatomy/`) がレンダリング clamp・ポーズ検証・関節ラボ教育の 3 役を駆動し、ロールは台本なしのスクランブル式 (ポジショングラフ歩行 + Leitner SRS)。検証は `cd v2 && npm run check && npm run test`、ポーズ目視は `v2/_audit.html?one=<red>+<blue>`。詳細は [v2/README.md](v2/README.md)。
 > `native/` は Rust + Bevy + Avian で物理関節へ移行する試作。検証は `cd native && cargo test -p anatomy && cargo check`。詳細は [native/README.md](native/README.md)。以下は v1 (このディレクトリ直下) の記述。
 > 注意: 座標規約のうち「仰向け頭+Z = rot[-90,180,0]」は v1 の Euler 合成順バグ。THREE の XYZ order では [-90,0,180] が正 (v2 で修正済み)。

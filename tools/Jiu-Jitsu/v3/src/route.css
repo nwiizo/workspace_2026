@@ -1,0 +1,55 @@
+.route-editor { height: 100%; overflow: auto; padding: 24px; }
+.route-heading h2 { margin: 0; font-size: 25px; }.route-heading p { color: var(--muted); }
+.route-heading { margin-bottom: 20px; }
+.duel { height: 100%; overflow: auto; padding: 20px; }.duel-settings { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }.duel-settings h2 { flex: 1 100%; margin: 0 0 8px; }
+.duel-settings select { padding: 10px; border: 1px solid #607286; border-radius: 8px; background: #192332; color: #eee; }
+.duel-hud { display: flex; flex-wrap: wrap; gap: 16px; margin: 18px 0; }.duel-hud > p { flex: 1 100%; margin: 0; }
+.duel-fighter { display: grid; flex: 1; gap: 8px; min-width: 200px; padding: 14px; border-radius: 8px; border: 1px solid #5287bf; background: #1b3047; }.duel-red { border-color: #bf745b; background: #422b2a; }
+.duel-fighter label { display: flex; align-items: center; gap: 10px; }.duel-fighter meter { flex: 1; width: 100%; }
+.duel-view { height: 48vh; min-height: 350px; position: relative; background: #172331; overflow: hidden; border-radius: 10px; }.duel-view canvas { width: 100%; height: 100%; }.duel-view .practice-cameras { top: 12px; bottom: auto; }
+.duel-message { padding: 14px; border-left: 3px solid #a5bfdf; min-height: 56px; background: #202b3c; }
+.duel-action { display: grid; width: 100%; gap: 8px; text-align: left; padding: 16px; margin: 10px 0; border: 1px solid #546f97; border-radius: 9px; background: #263b59; color: #f2f5ff; cursor: pointer; }.duel-action span { font-size: 12px; line-height: 1.6; }.duel-action:disabled { opacity: .5; cursor: default; }
+.duel-history-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }.duel-history { padding-left: 22px; max-height: 320px; overflow: auto; }.duel-history li { margin: 6px 0; }.duel .dojo-stage-wrap { grid-template-columns: minmax(0, 1fr) 340px; }
+@media (max-width: 850px) { .duel .dojo-stage-wrap { display: block; }.duel { padding: 14px; } }
+@media (max-width: 500px) { .duel-hud { gap: 10px; }.duel-fighter { min-width: 140px; padding: 10px; font-size: 12px; }.duel-fighter label { flex-wrap: wrap; gap: 2px; }.duel-fighter meter { flex-basis: 100%; }.duel .dojo-panel { padding: 14px; } }
+.route-courses { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-bottom: 20px; }
+.route-courses > h3, .route-courses > p { grid-column: 1 / -1; margin: 0; }.route-courses > p { color: var(--muted); }
+.route-courses article { border: 1px solid var(--line); background: var(--bg-2); padding: 14px; border-radius: 8px; }.route-courses h4 { margin: 0; }.route-courses p { font-size: 13px; line-height: 1.7; }
+.route-library-actions, .route-stage-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+.route-saved { padding: 16px; margin-bottom: 20px; border: 1px solid var(--line); border-radius: 10px; }
+.route-saved h3 { margin: 0; }.route-saved p { font-size: 13px; line-height: 1.7; }
+.route-saved summary { cursor: pointer; padding: 6px 0; }.route-saved .route-status:empty { display: none; }
+.route-saved-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 270px), 1fr)); gap: 12px; max-height: 360px; overflow: auto; padding: 8px 0; }
+.route-saved-cards article { padding: 12px; background: var(--bg-2); border-radius: 8px; overflow-wrap: anywhere; }.route-saved-cards h4 { margin: 0; }.route-saved-cards p { margin: 8px 0; }
+.route-cards .btn { margin: 4px 6px 0 0; }
+.route-viewing:empty { display: none; }.route-viewing { border: 1px solid #526a88; border-radius: 8px; padding: 12px 16px; margin-bottom: 12px; }
+.route-viewing h3 { margin: 4px 0; font-size: 18px; }.route-viewing p { font-size: 13px; line-height: 1.6; margin: 6px 0; }
+.route-viewing .route-stage-count { color: #bfcae0; font-size: 12px; }.route-transition-note { color: #e6d5b4; }
+.route-top-blue { color: #8ecaff; font-weight: bold; }.route-top-red { color: #ffa98c; font-weight: bold; }
+.route-stage-nav { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }.route-stage-nav [aria-pressed=true] { border-color: #abc8fa; }
+.route-viewing summary { cursor: pointer; font-size: 13px; }
+.route-library { border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin-bottom: 22px; }
+.route-library summary { cursor: pointer; font-weight: 700; }.route-library p { font-size: 13px; line-height: 1.7; }
+.route-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+.route-cards article { padding: 16px; background: var(--bg-2); border-radius: 8px; }.route-cards h3 { margin-top: 0; font-size: 16px; }
+.route-cards a { display: block; color: #b2d3ff; font-size: 12px; margin-bottom: 12px; }
+.route-workbench { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 24px; }
+.route-watch .route-workbench { grid-template-columns: minmax(0, 1fr); max-width: 1200px; margin: auto; }
+.route-observation { min-width: 0; }.route-view { height: min(56vh, 590px); min-height: 360px; position: relative; background: #172331; border: 1px solid #43506a; border-radius: 10px; overflow: hidden; }
+.route-view canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+.route-view .practice-cameras { top: 12px; bottom: auto; }
+.route-view .practice-caption { font-size: 12px; line-height: 1.6; }
+.route-controls { min-width: 0; }
+.route-playback { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 14px 0; }.route-playback input[type=range] { flex: 1 100%; min-width: 60px; }.route-playback label { display: flex; align-items: center; gap: 6px; font-size: 13px; }
+.route-controls { background: var(--bg-2); padding: 18px; border: 1px solid var(--line); border-radius: 10px; }
+.route-controls h3 { margin: 4px 0 12px; }.route-controls > label { display: block; font-size: 13px; margin: 10px 0; }
+.route-editor select, .route-editor input:not([type=range]):not([type=checkbox]) { border: 1px solid #657080; border-radius: 6px; background: #171e29; color: #f0f2f7; font: inherit; padding: 8px; max-width: 100%; }
+.route-controls > select, .route-controls > label input { display: block; width: 100%; margin-bottom: 10px; }
+.route-controls > .btn { margin: 5px 0; width: 100%; }.route-editor .btn { min-height: 38px; }
+.route-axes label { display: flex; align-items: center; justify-content: space-between; gap: 6px; font-size: 12px; margin: 8px 0; }.route-axes input { width: 110px; }
+.route-rotation p { font-size: 12px; }.route-rotation > div { display: flex; gap: 6px; align-items: center; margin: 6px 0; }.route-rotation span { flex: 1; font-size: 12px; }
+.route-issues { border: 1px solid #57768a; background: #1c2b37; border-radius: 8px; margin: 14px 0; padding: 12px; font-size: 12px; line-height: 1.7; }.route-issues.has-blocked { border-color: #e69881; background: #392c2b; }.route-issues p { margin-bottom: 0; }
+.route-timeline { margin: 0; padding: 0; list-style: none; }.route-timeline li { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 12px; border: 1px solid var(--line); border-radius: 8px; margin: 8px 0; }.route-timeline .selected { border-color: #abc8fa; }
+.route-frame { background: none; border: 0; color: #ecf1fc; cursor: pointer; text-align: left; flex: 1; min-width: 160px; font: inherit; }.route-frame-info, .route-problem { width: 100%; font-size: 12px; color: #b4bfd1; }.route-problem { color: #ffb59b; }
+.route-status { color: #e6d5b4; min-height: 24px; font-size: 13px; }.route-model-note { color: #b4bfd1; font-size: 12px; line-height: 1.8; max-width: 1000px; }
+@media (max-width: 850px) { .route-workbench { grid-template-columns: minmax(0, 1fr); }.route-cards, .route-courses { grid-template-columns: 1fr; }.route-editor { padding: 16px; }.route-view { min-height: 340px; height: 45vh; }.route-playback .btn { white-space: nowrap; } }

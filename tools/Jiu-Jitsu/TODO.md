@@ -1,5 +1,7 @@
 # TODO — 柔術ディフェンス道場
 
+以下はv1の作業履歴です。現行v3の範囲と対応は [v3/docs/REQUIREMENTS.md](v3/docs/REQUIREMENTS.md)、動作確認は [v3/docs/VERIFICATION.md](v3/docs/VERIFICATION.md)を参照してください。
+
 タスク全件と状態。要件定義・技術選定は [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md)、ポジション分類は [docs/POSITION_TAXONOMY.md](docs/POSITION_TAXONOMY.md)、詳細設計・研究は [docs/DESIGN.md](docs/DESIGN.md)、調査バンクは
 [docs/research-grappling.md](docs/research-grappling.md) / [docs/research-strength-anatomy.md](docs/research-strength-anatomy.md)。
 

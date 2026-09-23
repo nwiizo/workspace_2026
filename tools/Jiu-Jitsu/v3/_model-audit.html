@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>人形の3面図と形状検証</title>
+    <style>
+      * { box-sizing: border-box; }
+      body { margin: 0; background: #e6e8eb; color: #25354a; font: 14px system-ui; }
+      header { padding: 14px 20px; background: #fff; } h1 { font-size: 21px; margin: 0 0 10px; }
+      nav { display: flex; gap: 14px; flex-wrap: wrap; align-items: center; } select, button { padding: 8px; font: inherit; }
+      #views { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      figure { margin: 0; border-right: 1px solid #c6cbd2; } canvas { display: block; width: 100%; height: calc(100vh - 220px); min-height: 330px; }
+      figcaption { text-align: center; padding: 12px; font-weight: 700; } #stats { margin: 10px 20px; line-height: 1.7; }
+      .note { margin: 10px 20px; color: #526079; } a { color: #254d90; }
+      @media (max-width: 600px) { #views { grid-template-columns: 1fr; } canvas { height: 420px; } }
+    </style>
+  </head>
+  <body>
+    <header><h1>人形の3面図と形状検証</h1><nav id="toolbar"></nav></header>
+    <main id="views"></main>
+    <p id="stats" role="status"></p>
+    <p class="note">同じ縮尺の直交投影。数値は人形1体分、描画呼び出しは各ビューの人形のみ。<a id="reference">生成した3面図</a> · <a href="./#practice">ポジション練習へ</a></p>
+    <script type="module" src="/src/modelAudit.ts"></script>
+  </body>
+</html>
