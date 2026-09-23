@@ -1,0 +1,24 @@
+[package]
+name = "topcoat-tips"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+publish = false
+
+[dependencies]
+opentelemetry = { version = "0.32.0", default-features = false, features = ["trace"] }
+opentelemetry-stdout = { version = "0.32.0", default-features = false, features = ["trace"] }
+opentelemetry_sdk = { version = "0.32.1", default-features = false, features = ["testing", "trace"] }
+serde = { version = "1", features = ["derive"] }
+toasty = { version = "0.7.0", features = ["sqlite"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+topcoat = "0.5.0"
+tracing = "0.1.44"
+tracing-opentelemetry = { version = "0.33.0", default-features = false }
+tracing-subscriber = { version = "0.3.23", default-features = false, features = ["registry"] }
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+pedantic = "warn"
