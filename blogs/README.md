@@ -15,7 +15,7 @@ Blog articles, drafts, and the occasional existential crisis about whether anyon
 
 ## Local Config
 
-`.agents/` is the single source of truth for skills, rules, and docs. `.claude/` is just symlinks pointing at it, so Claude Code and Codex read the same brain. 🔮
+Shared editorial guidance lives in `~/.local/share/blog-agents/`. Codex and Claude Code use links under `~/.agents/skills/` and `~/.claude/skills/`. This workspace links to the shared rules and docs; `AGENTS.md` describes the layout.
 
 ## Pro Tips
 
