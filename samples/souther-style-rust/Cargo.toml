@@ -1,0 +1,22 @@
+[package]
+name = "souther-style-rust"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[features]
+# border 行 (on_point) を外した例表でテストする。cargo-mutants で取り逃しを再現するためだけに使う
+without-border = []
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)"] }
+
+[dependencies]
+nutype = { version = "0.8.0", default-features = false, features = ["serde"] }
+serde = { version = "1.0.229", default-features = false, features = ["derive"] }
+strum = { version = "0.28.0", default-features = false, features = ["derive"] }
+
+[dev-dependencies]
+serde_json = "1.0.151"

@@ -1,0 +1,2 @@
+# Kani の証明は通常の cargo test ではコンパイルされないので、変異対象から外す
+exclude_globs = ["src/proofs.rs"]
