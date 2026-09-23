@@ -1,0 +1,4 @@
+/target/
+/kindle-captures/
+/*.pdf
+config.local.yaml

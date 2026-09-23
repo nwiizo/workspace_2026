@@ -1,0 +1,48 @@
+# Kindle capture configuration
+
+browser:
+  # Chrome 136以降に合わせ、普段使いのChromeとは分離した専用プロファイルを使う。
+  # 通常のChromeとして起動し、既定のデバッグポート9445へ接続する。
+  chrome_profile: "~/Library/Application Support/kindle-app-rs/chrome-profile"
+  fallback_profile: null
+  headless: false
+  timeout: 30000
+  wait_for_login: true
+  login_timeout: 600000
+  viewport_width: 3840
+  viewport_height: 2160
+
+capture:
+  default_layout: "double"
+  max_pages: null
+  wait_strategy: "hybrid"
+  wait_timeout: 3.0
+  screenshot_format: "png"
+  output_dir: "./kindle-captures"
+
+app_capture:
+  app_name: "Amazon Kindle"
+  process_name: "Kindle"
+  window_title: null
+  capture_region: null
+  scale: 1.0
+  output_dir: "./kindle-captures"
+  wait_after_turn: 0.6
+  initial_wait: 0.4
+  # 末尾検出が不安定でも無制限に保存し続けないための安全上限。
+  max_pages: 2000
+  duplicate_threshold: 3
+  duplicate_diff_mean: 3.0
+  duplicate_size_kb: null
+  duplicate_size_ratio: 0.02
+  duplicate_limit: 5
+  min_pages: 2
+  next_key: "right"
+  log_file: null
+
+pdf:
+  default_quality: 85
+  default_resize: 1.0
+
+trim:
+  default_output_subdir: "trimmed"
