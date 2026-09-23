@@ -23,7 +23,7 @@ export const closedGuardPosture: Scenario = {
       label: "姿勢を折る",
       cue: "頭が腰より前へ落ちたら、肘を内側へ戻して姿勢を立てる",
       weight: 2,
-      attack: { red: "redGuardArmbarFinish", blue: "blueGuardArmbarCaught", badge: "赤: 頭を下げさせ<b>姿勢を折る</b>" },
+      attack: { red: "redGuardArmbarFinish", blue: "blueGuardArmbarCaught", body: "guard-pull", badge: "赤: 頭を下げさせ<b>姿勢を折る</b>" },
       readCues: ["姿勢", "肘", "頭"],
       pressure: {
         early: "赤が手首を引き、頭を下げさせてガードの中へ折り込む",
@@ -35,7 +35,7 @@ export const closedGuardPosture: Scenario = {
       label: "腰角度を作る",
       cue: "相手の腰角度と片腕の孤立を見て、肘を中心線へ戻す",
       weight: 1,
-      attack: { red: "redGuardArmbarFinish", blue: "blueGuardArmbarCaught", badge: "赤: 腰角度を作り<b>片腕を孤立</b>" },
+      attack: { red: "redGuardArmbarFinish", blue: "blueGuardArmbarCaught", body: "guard-angle", badge: "赤: 腰角度を作り<b>片腕を孤立</b>" },
       readCues: ["腰角度", "片腕", "膝"],
       pressure: {
         early: "赤が腰を切り、あなたの片腕を中心線から外そうとしている",

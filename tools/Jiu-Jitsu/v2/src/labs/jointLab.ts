@@ -10,12 +10,12 @@ import { DojoScene } from "../render/scene";
 export interface JointLabHandle {
   /** タブ切替などレイアウト変更後に呼ぶ */
   refreshSize(): void;
+  setActive(active: boolean): void;
   dispose(): void;
 }
 
 const ARC_RADIUS = 0.3;
-const ARC_SAFE_COLOR = 0x3ecf7a;
-const ARC_DANGER_COLOR = 0xe0453a;
+const ARC_COLOR = 0x87b7ee;
 const AXIS_INDEX: Record<Axis, number> = { x: 0, y: 1, z: 2 };
 
 function el<K extends keyof HTMLElementTagNameMap>(
@@ -51,8 +51,6 @@ class JointLab implements JointLabHandle {
   private selectedAxisIdx = 0;
   private axisRows: AxisRow[] = [];
   private arcLines: THREE.Line[] = [];
-  private tapBanner: HTMLElement | null = null;
-  private animHandle: number | null = null;
   private disposed = false;
 
   constructor(container: HTMLElement) {
@@ -70,10 +68,11 @@ class JointLab implements JointLabHandle {
     this.scene.refreshSize();
   }
 
+  setActive(active: boolean): void { this.scene.setActive(active); }
+
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
-    this.stopAnimation();
     this.clearArcs();
     this.scene.dispose();
     this.container.replaceChildren();
@@ -110,7 +109,6 @@ class JointLab implements JointLabHandle {
   }
 
   private selectJoint(spec: JointSpec): void {
-    this.stopAnimation();
     this.selected = spec;
     this.angles = [0, 0, 0];
     this.selectedAxisIdx = 0;
@@ -134,12 +132,10 @@ class JointLab implements JointLabHandle {
     this.axisRows = s.axes.map((axisSpec, i) => this.buildAxisRow(axisSpec, i));
     for (const row of this.axisRows) axesEl.appendChild(row.rootEl);
 
-    const subBtn = el("button", "lab-submission-btn", "サブミッション再現");
+    const subBtn = el("button", "lab-submission-btn", "表示を元に戻す");
     subBtn.type = "button";
-    subBtn.addEventListener("click", () => this.playSubmission());
-
-    this.tapBanner = el("div", "lab-tap-banner");
-    this.tapBanner.hidden = true;
+    subBtn.addEventListener("click", () => this.selectJoint(this.selected));
+    const modelNote = el("p", "lab-joint-note", "角度と円弧は簡易リグを動かすための表示値です。人体の可動域や安全限界とは一致しません。タップは表示の限界や痛みを待たずに行います。");
 
     const info = el("dl", "lab-info");
     const addTerm = (term: string, desc: string): void => {
@@ -158,7 +154,7 @@ class JointLab implements JointLabHandle {
       subs.appendChild(item);
     }
 
-    const children: HTMLElement[] = [title, kind, axesEl, subBtn, this.tapBanner, info, subs];
+    const children: HTMLElement[] = [title, kind, modelNote, axesEl, subBtn, info, subs];
     if (s.note) children.push(el("p", "lab-joint-note", s.note));
     this.detailEl.replaceChildren(...children);
     for (const row of this.axisRows) this.updateAxisRow(row);
@@ -179,6 +175,7 @@ class JointLab implements JointLabHandle {
     slider.max = String(spec.rigRangeDeg[1]);
     slider.step = "1";
     slider.value = "0";
+    slider.setAttribute("aria-label", `${this.selected.jp} ${spec.motion[0]}・${spec.motion[1]}`);
 
     const readout = el("div", "lab-axis-readout");
     const valueEl = el("span", "lab-axis-value");
@@ -195,8 +192,6 @@ class JointLab implements JointLabHandle {
     slider.addEventListener("pointerdown", onTouch);
     slider.addEventListener("focus", onTouch);
     slider.addEventListener("input", () => {
-      this.stopAnimation();
-      if (this.tapBanner) this.tapBanner.hidden = true;
       onTouch();
       this.angles[AXIS_INDEX[spec.axis]] = Number(slider.value);
       this.applyAngles();
@@ -211,10 +206,8 @@ class JointLab implements JointLabHandle {
     const value = this.angles[AXIS_INDEX[row.spec.axis]]!;
     row.slider.value = String(Math.round(value));
     row.valueEl.textContent = `${Math.round(value)}°`;
-    const [aMin, aMax] = row.spec.anatomicalRangeDeg;
-    const safe = value >= aMin && value <= aMax;
-    row.zoneEl.textContent = safe ? "安全域" : "限界域 (ここでタップ)";
-    row.zoneEl.className = safe ? "lab-axis-zone lab-zone-safe" : "lab-axis-zone lab-zone-danger";
+    row.zoneEl.textContent = "表示用の角度・安全性は判定しません";
+    row.zoneEl.className = "lab-axis-zone";
     row.rootEl.className = this.selectedAxisIdx === row.index ? "lab-axis is-active" : "lab-axis";
   }
 
@@ -234,8 +227,7 @@ class JointLab implements JointLabHandle {
     );
   }
 
-  // 選択軸の可動域を関節位置中心の円弧で示す。緑=解剖学的安全域、赤=リグ限界までの危険域。
-  // 厳密な回転平面の追従より「安全域と危険域が見える」ことを優先し、親フレーム基準で静的に描く。
+  // リグの表示範囲を円弧で示す。人体の安全域とは対応させない。
   private redrawArcs(): void {
     this.clearArcs();
     const axisSpec = this.selected.axes[this.selectedAxisIdx];
@@ -281,11 +273,7 @@ class JointLab implements JointLabHandle {
     };
 
     const [rigMin, rigMax] = axisSpec.rigRangeDeg;
-    const safeMin = Math.max(axisSpec.anatomicalRangeDeg[0], rigMin);
-    const safeMax = Math.min(axisSpec.anatomicalRangeDeg[1], rigMax);
-    addArc(safeMin, safeMax, ARC_SAFE_COLOR);
-    addArc(rigMin, safeMin, ARC_DANGER_COLOR);
-    addArc(safeMax, rigMax, ARC_DANGER_COLOR);
+    addArc(rigMin, rigMax, ARC_COLOR);
 
     for (const row of this.axisRows) this.updateAxisRow(row);
   }
@@ -299,62 +287,6 @@ class JointLab implements JointLabHandle {
     this.arcLines = [];
   }
 
-  /** リグ限界のうち anatomicalRange を超える側があればその方向を優先して選ぶ */
-  private submissionTarget(): { axisIdx: number; targetDeg: number } {
-    for (let i = 0; i < this.selected.axes.length; i++) {
-      const axis = this.selected.axes[i]!;
-      const [rigMin, rigMax] = axis.rigRangeDeg;
-      const [aMin, aMax] = axis.anatomicalRangeDeg;
-      if (rigMin < aMin) return { axisIdx: i, targetDeg: rigMin };
-      if (rigMax > aMax) return { axisIdx: i, targetDeg: rigMax };
-    }
-    const first = this.selected.axes[0]!;
-    return { axisIdx: 0, targetDeg: first.rigRangeDeg[1] };
-  }
-
-  private playSubmission(): void {
-    this.stopAnimation();
-    if (this.tapBanner) this.tapBanner.hidden = true;
-
-    const { axisIdx, targetDeg } = this.submissionTarget();
-    const axisSpec = this.selected.axes[axisIdx]!;
-    if (this.selectedAxisIdx !== axisIdx) {
-      this.selectedAxisIdx = axisIdx;
-      this.redrawArcs();
-    }
-
-    const angleIdx = AXIS_INDEX[axisSpec.axis];
-    const startDeg = this.angles[angleIdx]!;
-    const durationMs = 1400;
-    const startTime = performance.now();
-    const failureMode = this.selected.failureMode;
-
-    const step = (now: number): void => {
-      const t = Math.min((now - startTime) / durationMs, 1);
-      const eased = 1 - Math.pow(1 - t, 3);
-      this.angles[angleIdx] = startDeg + (targetDeg - startDeg) * eased;
-      this.applyAngles();
-      const row = this.axisRows[axisIdx];
-      if (row) this.updateAxisRow(row);
-      if (t < 1) {
-        this.animHandle = requestAnimationFrame(step);
-        return;
-      }
-      this.animHandle = null;
-      if (this.tapBanner) {
-        this.tapBanner.textContent = `ここでタップ — ${failureMode}`;
-        this.tapBanner.hidden = false;
-      }
-    };
-    this.animHandle = requestAnimationFrame(step);
-  }
-
-  private stopAnimation(): void {
-    if (this.animHandle !== null) {
-      cancelAnimationFrame(this.animHandle);
-      this.animHandle = null;
-    }
-  }
 }
 
 export function createJointLab(container: HTMLElement): JointLabHandle {

@@ -1,8 +1,8 @@
 // タブ1: 道場 — 連続ロールの状態機械 UI。
 // setup(相手の初動は伏せる) → attack(判断) → feedback(採点) → 次局面 or レビュー。
 
-import { DojoScene } from "../render/scene";
-import { poseByName } from "../render/poses";
+import { BodyScene } from "../render/bodyScene";
+import { rollPair } from "../render/rollPose";
 import { RollEngine, type Difficulty, type Focus, type Outcome } from "../engine/roll";
 import { recordResult } from "../engine/srs";
 import { loadProgress, saveProgress, type KeyValueStore, type ProgressData } from "../engine/storage";
@@ -37,8 +37,14 @@ const SETUP_MS = 1200;
 
 export class DojoTab {
   readonly root: HTMLElement;
-  private readonly scene: DojoScene;
+  private readonly scene: BodyScene;
   private readonly captionEl: HTMLElement;
+  private readonly legendEl = h("div", { class: "practice-legend" });
+  private readonly cuesEl = h("div", { class: "roll-cues" });
+  private readonly comparisonEl = h("div", { class: "practice-comparison", attrs: { role: "group", "aria-label": "一手の前後を比較", hidden: "" } });
+  private bones = false;
+  private faded = false;
+  private markers = true;
   private readonly settingsEl: HTMLElement;
   private readonly panelEl: HTMLElement;
   private readonly store: KeyValueStore;
@@ -59,16 +65,36 @@ export class DojoTab {
   private raf: number | null = null;
   private timerFill: HTMLElement | null = null;
   private pressureEl: HTMLElement | null = null;
+  private active = true;
+  private activatedAt = performance.now();
 
   constructor(store: KeyValueStore, deps: DojoDeps) {
     this.store = store;
     this.deps = deps;
     this.progress = loadProgress(store);
 
-    const canvas = h("canvas", { class: "dojo-canvas" });
+    const canvas = h("canvas", { class: "dojo-canvas", attrs: { "aria-label": "応用ロールの二人の身体。ドラッグで視点を回転" } });
     const canvasWrap = h("div", { class: "dojo-canvas-wrap" }, canvas);
     this.captionEl = h("div", { class: "dojo-caption" });
-    canvasWrap.append(this.captionEl);
+    const pins = h("div", { class: "practice-pins", attrs: { "aria-hidden": "true" } });
+    const cameras = h("div", { class: "practice-cameras", attrs: { role: "group", "aria-label": "視点" } });
+    for (const [label, view] of [["斜め", "diagonal"], ["接地を横から", "side"], ["真上", "top"]] as const) {
+      cameras.append(h("button", { class: "btn", text: label, onClick: () => this.scene.setCamera(view) }));
+    }
+    canvasWrap.append(this.captionEl, this.legendEl, pins, cameras);
+    const display = h("div", { class: "practice-display", attrs: { role: "group", "aria-label": "人形の表示" } });
+    for (const [label, bones] of [["身体", false], ["骨格", true]] as const) {
+      display.append(h("button", { class: "btn", text: label, attrs: { "aria-pressed": String(!bones), "data-layer": String(bones) }, onClick: () => {
+        this.bones = bones;
+        display.querySelectorAll<HTMLButtonElement>("[data-layer]").forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.layer === String(bones))));
+        this.updateDisplay();
+      } }));
+    }
+    for (const [label, key, checked] of [["相手を透かす", "faded", false], ["接点を表示", "markers", true]] as const) {
+      const input = h("input", { attrs: { type: "checkbox", ...(checked ? { checked: "" } : {}) } });
+      input.addEventListener("change", () => { this[key] = input.checked; this.updateDisplay(); });
+      display.append(h("label", {}, input, document.createTextNode(label)));
+    }
 
     this.panelEl = h("div", { class: "dojo-panel" });
     this.settingsEl = h("div", { class: "dojo-settings" });
@@ -77,17 +103,33 @@ export class DojoTab {
       "div",
       { class: "dojo" },
       this.settingsEl,
-      h("div", { class: "dojo-stage-wrap" }, canvasWrap, this.panelEl),
+      h("div", { class: "dojo-stage-wrap" }, h("div", { class: "roll-observation" }, display, canvasWrap, this.comparisonEl, this.cuesEl,
+        h("p", { class: "practice-model-note", text: "一手の前後を切り替えて観察する模式図。丸印は床につく場所です。力や筋肉の働きは計算していません。ギ／ノーギは選択肢に反映します。" })), this.panelEl),
     );
 
-    this.scene = new DojoScene({ canvas, pair: true });
-    this.applyStage({ red: "standingRed", blue: "standingBlue", badge: "礼 — 設定を選んでロールを開始" });
+    this.scene = new BodyScene(canvas, pins);
+    this.applyStage({ red: "standingRed", blue: "standingBlue", badge: "設定を選んでロールを開始" });
     this.renderSettings();
     this.renderPanel();
   }
 
   refreshSize(): void {
     this.scene.refreshSize();
+  }
+
+  setActive(active: boolean): void {
+    this.scene.setActive(active);
+    if (this.active === active) return;
+    this.active = active;
+    this.activatedAt = performance.now();
+    if (active && this.phase === "setup" && this.setupTimer === null) this.scheduleAttack();
+  }
+
+  private scheduleAttack(): void {
+    this.setupTimer = window.setTimeout(() => {
+      this.setupTimer = null;
+      if (this.active) this.enterAttack();
+    }, SETUP_MS);
   }
 
   // --- 設定バー ---------------------------------------------------------------
@@ -166,14 +208,13 @@ export class DojoTab {
   private enterSetup(): void {
     this.cancelTimers();
     this.phase = "setup";
+    this.comparisonEl.hidden = true;
     const step = this.engine?.step;
     if (!step) return;
     this.applyStage(step.scenario.setup);
-    this.scene.blue.highlightJoint(null);
-    this.scene.red?.highlightJoint(null);
     this.renderSettings();
     this.renderPanel();
-    this.setupTimer = window.setTimeout(() => this.enterAttack(), SETUP_MS);
+    this.scheduleAttack();
   }
 
   private enterAttack(): void {
@@ -206,6 +247,14 @@ export class DojoTab {
     const step = this.engine?.step;
     if (!step) return;
     this.applyStage(outcome.choice.result);
+    this.comparisonEl.hidden = false;
+    this.comparisonEl.replaceChildren();
+    for (const [label, before] of [["一手の前", true], ["一手の後", false]] as const) {
+      this.comparisonEl.append(h("button", { class: "btn", text: label, attrs: { "aria-pressed": String(!before) }, onClick: () => {
+        this.applyStage(before ? step.action.attack : outcome.choice.result);
+        this.comparisonEl.querySelectorAll("button").forEach((button) => button.setAttribute("aria-pressed", String(button.textContent === label)));
+      } }));
+    }
 
     const now = Date.now();
     const key = outcome.srsKey;
@@ -248,11 +297,14 @@ export class DojoTab {
   // --- タイマー ---------------------------------------------------------------
   private startCountdown(limitSec: number, pressure: { early: string; urgent: string }): void {
     const total = limitSec * 1000;
-    const start = performance.now();
+    let lastTick = performance.now();
+    let elapsed = 0;
     let earlyShown = false;
     let urgentShown = false;
     const tick = (t: number): void => {
-      const remain = Math.max(0, total - (t - start));
+      if (this.active) elapsed += Math.max(0, t - Math.max(lastTick, this.activatedAt));
+      lastTick = t;
+      const remain = Math.max(0, total - elapsed);
       const frac = remain / total;
       if (this.timerFill) this.timerFill.style.width = `${frac * 100}%`;
       if (frac <= 0.4 && !earlyShown) {
@@ -294,20 +346,29 @@ export class DojoTab {
   }
 
   private applyStage(stage: Stage): void {
-    this.scene.red?.applyPose(poseByName(stage.red));
-    this.scene.blue.applyPose(poseByName(stage.blue));
+    const pair = rollPair(stage);
+    this.scene.show(pair);
+    const offense = this.engine?.step?.scenario.role === "offense";
+    this.legendEl.replaceChildren(h("span", { class: "you", text: `● 青＝${offense ? "相手" : "あなた"}` }), h("span", { class: "opponent", text: `● 赤＝${offense ? "あなた" : "相手"}` }));
+    this.cuesEl.replaceChildren(...pair.cues.map((cue, index) => h("span", { text: `${index + 1}. ${cue.label}` })));
+    this.updateDisplay();
     this.captionEl.innerHTML = stage.badge;
+  }
+
+  private updateDisplay(): void {
+    this.scene.setDisplay(this.bones, this.faded, this.markers, this.engine?.step?.scenario.role === "offense" ? "blue" : "red");
+    this.cuesEl.hidden = !this.markers;
   }
 
   // --- キーボード -------------------------------------------------------------
   handleKey(e: KeyboardEvent): void {
-    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey || e.repeat) return;
     const el = document.activeElement;
     if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT")) return;
     if (this.phase === "attack" && e.key >= "1" && e.key <= "4") {
       e.preventDefault();
       this.selectOption(Number(e.key) - 1);
-    } else if (this.phase === "feedback" && e.key === "Enter") {
+    } else if (this.phase === "feedback" && e.key === "Enter" && el?.tagName !== "BUTTON") {
       e.preventDefault();
       this.advance();
     }

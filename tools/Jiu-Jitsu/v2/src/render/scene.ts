@@ -95,6 +95,12 @@ export class DojoScene {
     this.resize();
   }
 
+  setActive(active: boolean): void {
+    this.clock.getDelta();
+    this.renderer.setAnimationLoop(active ? this.tick : null);
+    if (active) this.resize();
+  }
+
   private tick = (): void => {
     if (this.disposed) return;
     const dt = Math.min(this.clock.getDelta(), 0.05);

@@ -45,7 +45,7 @@ export interface AxisSpec {
   /** 表示リグで許す角度レンジ (度)。ポーズ検証と clamp に使う */
   rigRangeDeg: [number, number];
   /**
-   * 解剖学的な参考可動域 (度)。関節ラボの安全域表示に使う。
+   * 解剖学的な参考可動域 (度)。人体の安全限界やタップ時点の判定には使わない。
    * リグは簡易ヒンジ化のため rigRange と一致しないことがある。
    */
   anatomicalRangeDeg: [number, number];

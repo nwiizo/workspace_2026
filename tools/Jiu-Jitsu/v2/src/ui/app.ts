@@ -1,37 +1,41 @@
-// アプリシェル: ヘッダー (タイトル + タブ + 現在の帯) と 4 タブの切替。
-// DojoScene / JointLab は各タブで 1 度だけ生成し、タブ切替では refreshSize する。
+// 動きの道場を入口に、ポジション練習・資料・記録をつなぐ。
 
-import { allItemKeys } from "../engine/roll";
-import { beltFor, masteredCount } from "../engine/srs";
 import { loadProgress, type KeyValueStore } from "../engine/storage";
-import { createJointLab, type JointLabHandle } from "../labs/jointLab";
+import { BodyLab, type BodyExperiment } from "../labs/bodyLab";
 import { DojoTab } from "./dojoTab";
+import { PracticeTab } from "./practiceTab";
 import { renderNotesTab } from "./notesTab";
 import { renderRecordsTab } from "./recordsTab";
 import { h } from "./dom";
+import { RouteTab } from "./routeTab";
 
-type TabId = "dojo" | "lab" | "records" | "notes";
+type TabId = "practice" | "dojo" | "lab" | "route" | "route-watch" | "records" | "notes";
 
 const TABS: readonly (readonly [TabId, string])[] = [
-  ["dojo", "道場"],
-  ["lab", "関節ラボ"],
+  ["lab", "動きの道場"],
+  ["practice", "ポジション練習"],
+  ["route-watch", "ルート確認"],
+  ["route", "ルート作成"],
+  ["dojo", "応用ロール"],
   ["records", "稽古記録"],
   ["notes", "心得"],
 ];
 
-const TOTAL_ITEMS = allItemKeys().length;
-
 export class App {
   private readonly store: KeyValueStore;
-  private active: TabId = "dojo";
+  private active: TabId = "lab";
 
   private readonly beltEl: HTMLElement;
   private readonly tabButtons = new Map<TabId, HTMLButtonElement>();
   private readonly panels = new Map<TabId, HTMLElement>();
 
-  private readonly dojo: DojoTab;
+  private dojo: DojoTab | null = null;
+  private route: RouteTab | null = null;
+  private routeWatch: RouteTab | null = null;
+  private readonly practice: PracticeTab;
   private readonly labContainer: HTMLElement;
-  private lab: JointLabHandle | null = null;
+  private lab: BodyLab | null = null;
+  private returningToPractice = false;
 
   constructor(root: HTMLElement, store: KeyValueStore) {
     this.store = store;
@@ -46,21 +50,28 @@ export class App {
     const header = h("header", { class: "app-header" },
       h("div", { class: "app-brand" },
         h("h1", { class: "app-title", text: "柔術道場" }),
-        h("span", { class: "app-subtitle", text: "Grappling Structure Dojo" }),
+        h("span", { class: "app-subtitle", text: "JIU-JITSU / 一手ずつ、理解する" }),
       ),
       nav,
       this.beltEl,
     );
 
-    this.dojo = new DojoTab(store, {
-      switchToLab: () => this.switchTab("lab"),
-      onProgressChange: () => this.onProgressChange(),
+    this.practice = new PracticeTab(store, () => this.onProgressChange(), (experiment) => this.openBody(experiment), (course) => {
+      this.switchTab("route-watch"); this.routeWatch?.openCourse(course);
     });
     this.labContainer = h("div", { class: "lab-root" });
+    this.lab = new BodyLab(this.labContainer, (experiment) => {
+      if (!this.returningToPractice) this.practice.openLesson(experiment === "base" ? "mount-base" : "side-space");
+      this.returningToPractice = false;
+      this.switchTab("practice");
+    }, store, () => this.onProgressChange());
     const recordsPanel = h("div", { class: "tab-panel" });
     const notesPanel = h("div", { class: "tab-panel" });
 
-    this.panels.set("dojo", h("div", { class: "tab-panel" }, this.dojo.root));
+    this.panels.set("practice", h("div", { class: "tab-panel" }, this.practice.root));
+    this.panels.set("dojo", h("div", { class: "tab-panel" }));
+    this.panels.set("route", h("div", { class: "tab-panel" }));
+    this.panels.set("route-watch", h("div", { class: "tab-panel" }));
     this.panels.set("lab", h("div", { class: "tab-panel" }, this.labContainer));
     this.panels.set("records", recordsPanel);
     this.panels.set("notes", notesPanel);
@@ -75,10 +86,11 @@ export class App {
     this.applyActive();
 
     window.addEventListener("keydown", (e) => {
-      if (this.active === "dojo") this.dojo.handleKey(e);
+      if (this.active === "dojo") this.dojo?.handleKey(e);
+      if (this.active === "practice") this.practice.handleKey(e);
     });
-
-    requestAnimationFrame(() => this.dojo.refreshSize());
+    document.addEventListener("visibilitychange", () => this.applyActive());
+    requestAnimationFrame(() => this.applyActive());
   }
 
   private switchTab(id: TabId): void {
@@ -86,17 +98,49 @@ export class App {
     this.active = id;
     this.applyActive();
 
-    if (id === "dojo") requestAnimationFrame(() => this.dojo.refreshSize());
+    if (id === "dojo") {
+      if (!this.dojo) {
+        this.dojo = new DojoTab(this.store, {
+          switchToLab: () => this.switchTab("lab"),
+          onProgressChange: () => this.onProgressChange(),
+        });
+        this.panels.get("dojo")!.append(this.dojo.root);
+      }
+      requestAnimationFrame(() => this.dojo?.refreshSize());
+    }
     if (id === "records") renderRecordsTab(this.panels.get("records")!, this.store);
+    if (id === "route" && !this.route) {
+      this.route = new RouteTab(this.store, "edit", (item) => { this.switchTab("route-watch"); this.routeWatch?.openRoute(item); }); this.panels.get("route")!.append(this.route.root);
+      requestAnimationFrame(() => this.applyActive());
+    }
+    if (id === "route-watch" && !this.routeWatch) {
+      this.routeWatch = new RouteTab(this.store, "watch", (item) => { this.switchTab("route"); this.route?.editExample(item); });
+      this.panels.get("route-watch")!.append(this.routeWatch.root);
+      requestAnimationFrame(() => this.applyActive());
+    }
     if (id === "lab") {
-      if (!this.lab) this.lab = createJointLab(this.labContainer);
       requestAnimationFrame(() => this.lab?.refreshSize());
     }
+    this.applyActive();
+  }
+
+  private openBody(experiment: BodyExperiment): void {
+    this.returningToPractice = true;
+    this.switchTab("lab");
+    this.lab?.open(experiment);
   }
 
   private applyActive(): void {
-    for (const [id, btn] of this.tabButtons) btn.classList.toggle("tab-on", id === this.active);
+    for (const [id, btn] of this.tabButtons) {
+      btn.classList.toggle("tab-on", id === this.active);
+      btn.setAttribute("aria-pressed", String(id === this.active));
+    }
     for (const [id, panel] of this.panels) panel.classList.toggle("tab-panel-on", id === this.active);
+    this.practice.setActive(this.active === "practice" && !document.hidden);
+    this.dojo?.setActive(this.active === "dojo" && !document.hidden);
+    this.route?.setActive(this.active === "route" && !document.hidden);
+    this.routeWatch?.setActive(this.active === "route-watch" && !document.hidden);
+    this.lab?.setActive(this.active === "lab" && !document.hidden);
   }
 
   private onProgressChange(): void {
@@ -106,6 +150,6 @@ export class App {
 
   private updateBelt(): void {
     const srs = loadProgress(this.store).srs;
-    this.beltEl.textContent = beltFor(masteredCount(srs), TOTAL_ITEMS);
+    this.beltEl.textContent = `動きの発見 ${["lever", "base", "leg"].filter((id) => srs[`body:${id}`]).length} / 3`;
   }
 }

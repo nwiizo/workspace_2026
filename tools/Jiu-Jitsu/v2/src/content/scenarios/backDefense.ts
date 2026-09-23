@@ -117,7 +117,7 @@ export const backDefense: Scenario = {
       stateEffects: { add: ["neck-exposed"], remove: ["neck-safe"] },
       next: [{ id: "mount-escape", weight: 2 }, { id: "side-escape", weight: 1 }],
       consequence: "首を守れず赤に主導権が残る。タップ後の再開でも上から圧を受ける局面になりやすい",
-      result: { red: "redBackControl", blue: "blueTapped", badge: "赤: <b>裸絞め</b>成功 (タップ)" },
+      result: { red: "redBackControl", blue: "blueTapped", body: "released", badge: "タップで<b>中断</b>し、腕と脚をほどく" },
       feedback:
         "悪手。首を空けて手を下げた瞬間に絞め腕が入りタップに至ります。順序が逆。<b>首 → 上半身 → 下半身</b>の順に守るのが原則。",
     },

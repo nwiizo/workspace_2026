@@ -76,7 +76,7 @@ export const attackFromBack: Scenario = {
       correct: false,
       next: [{ id: "attack-from-mount", weight: 2 }, { id: "attack-from-side", weight: 1 }],
       consequence: "フックを捨てたことで青の腰が逃げる。あなたは上位ポジションへ移って支配を作り直す",
-      result: { red: "redBackControl", blue: "blueBackDefend", badge: "青: 弱い側へ<b>脱出</b>" },
+      result: { red: "redBackControl", blue: "blueBackDefend", body: "released", badge: "青: 弱い側へ<b>脱出</b>" },
       feedback: "悪手。フックを捨てると相手の腰が逃げます。バックは脚で位置、腕で首を管理する。",
     },
     {

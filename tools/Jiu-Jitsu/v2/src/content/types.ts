@@ -39,6 +39,8 @@ export interface Stage {
   red: PoseName;
   blue: PoseName;
   badge: string;
+  /** 同じ役割ペア内で、支持位置や姿勢が異なる場面。 */
+  body?: "high-mount" | "guard-pull" | "guard-angle" | "released";
 }
 
 /** 判断タイマー中に表示する相手の能動アクション */

@@ -40,7 +40,7 @@ body {
 #app {
   display: flex;
   flex-direction: column;
-  min-width: 1000px;
+  min-width: 320px;
 }
 
 /* ヘッダー ------------------------------------------------------------------ */
@@ -55,8 +55,9 @@ body {
 
 .app-brand {
   display: flex;
-  align-items: baseline;
-  gap: 10px;
+  align-items: flex-start;
+  flex-direction: column;
+  gap: 0;
 }
 
 .app-title {
@@ -207,6 +208,13 @@ body {
   min-height: 0;
   background: radial-gradient(circle at 50% 40%, #1b1f2a, #101218);
 }
+
+.roll-observation { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.roll-observation .dojo-canvas-wrap { flex: 1; min-height: 280px; }
+.roll-cues { display: flex; flex-wrap: wrap; gap: 6px 18px; padding: 10px 16px; font-size: 13px; color: var(--cream); }
+.roll-cues[hidden] { display: none; }
+.roll-observation .practice-model-note { margin: 0; padding: 6px 16px 12px; }
+.roll-observation .practice-display, .roll-observation .practice-comparison { padding: 8px 16px; }
 
 .dojo-canvas {
   display: block;

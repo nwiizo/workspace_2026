@@ -79,6 +79,16 @@ describe("beltFor", () => {
 });
 
 describe("storage", () => {
+  it("壊れた項目だけを除き、読み取れる過去の練習記録を残す", () => {
+    const store = memoryStore();
+    const valid = { box: 2, dueAt: 123, attempts: 4, correct: 3, lastAt: 100 };
+    store.setItem("jiu-jitsu-dojo-v2/progress", JSON.stringify({
+      version: 1, rollsCompleted: -2,
+      srs: { "practice:side-space:check": valid, broken: null, wrongCount: { ...valid, correct: 5 }, wrongBox: { ...valid, box: 10 } },
+    }));
+    expect(loadProgress(store)).toEqual({ version: 1, rollsCompleted: 0, srs: { "practice:side-space:check": valid } });
+  });
+
   it("save → load でラウンドトリップする", () => {
     const store = memoryStore();
     const data: ProgressData = {

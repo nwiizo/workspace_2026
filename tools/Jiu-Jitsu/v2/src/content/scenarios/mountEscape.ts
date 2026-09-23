@@ -35,7 +35,7 @@ export const mountEscape: Scenario = {
       label: "高いマウントへ上がる",
       cue: "膝が脇へ上がる前に肘を戻し、腰の橋を残す",
       weight: 1,
-      attack: { red: "redMountTop", blue: "blueUnderMount", badge: "赤: <b>高いマウント</b>へ上がる" },
+      attack: { red: "redMountTop", blue: "blueUnderMount", body: "high-mount", badge: "赤: <b>高いマウント</b>へ上がる" },
       readCues: ["膝の位置", "腰", "肘"],
       pressure: {
         early: "赤が膝を脇へ上げ、腰を重くして橋を殺しにくる",
