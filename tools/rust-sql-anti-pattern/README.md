@@ -6,8 +6,6 @@ SQLアンチパターンをRust + PostgreSQL（sqlx）で解説するブログ�
 
 ```
 .
-├── PLAN.md                          # ブログ構成計画
-├── TODO.md                          # 続編テーマリスト
 ├── SPECIFICATION.md                 # 元のアンチパターン仕様書
 ├── INDEX.md                         # 目次
 ├── blog_01_db_design_pitfalls/      # DB設計の落とし穴
