@@ -6,6 +6,7 @@ The laboratory. Expect explosions.
 
 | Directory | Description | Tech |
 |-----------|-------------|------|
+| [practice-not-adding](./practice-not-adding/) | 「足さない練習」学生向けワークショップの配布資料・進行ガイドを作るプロンプト | Markdown |
 | [ory-hydra-rust](./ory-hydra-rust/) | DONADONA - Gamified engineer assignment platform with OAuth2/OIDC | Rust, Axum, Next.js, Ory Hydra |
 | [ory-hydra-verification](./ory-hydra-verification/) | Minimal OAuth2/OIDC flow verification (Login/Consent Provider) | Rust, Axum, Ory Hydra |
 | [ory-kratos-verification](./ory-kratos-verification/) | Identity management verification with Ory Kratos | Docker, Ory Kratos, Hydra |
