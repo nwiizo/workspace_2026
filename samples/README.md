@@ -17,6 +17,7 @@ The laboratory. Expect explosions.
 | [tauri](./tauri/) | Hibi - local-only Markdown diary, one file per day | Rust, Tauri 2, TypeScript, Vite |
 | [topcoat](./topcoat/) | Tatami Log - BJJ training notes; Topcoat 0.5 full-stack verification | Rust, Topcoat, Toasty, SQLite |
 | [souther-style-rust](./souther-style-rust/) | Souther-style business model guarantees built with Rust types | Rust, nutype, strum, cargo-mutants, Kani |
+| [fundamentals-of-software-rust](./fundamentals-of-software-rust/) | Executable Rust exercises for Fundamentals of Software Engineering (pricing, composition, orders, transactions, configuration) | Rust, rusqlite (SQLite), thiserror |
 
 ## Highlights
 

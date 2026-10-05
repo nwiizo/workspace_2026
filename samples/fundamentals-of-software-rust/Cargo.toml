@@ -1,0 +1,10 @@
+[package]
+name = "fundamentals-of-software-rust"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.90"
+publish = false
+
+[dependencies]
+rusqlite = { version = "0.40.2", default-features = false, features = ["bundled"] }
+thiserror = "2.0.21"
