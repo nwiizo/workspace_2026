@@ -1,37 +1,30 @@
-# blogs/ ✍️
+# ブログの執筆ワークスペース
 
-Where mass production meets prose.
+原稿は `contents/`、編集の入口はローカルの `AGENTS.md` です。連載の構成は各ディレクトリのREADMEを参照します。以下の設定・資料はローカルに置き、Gitでは管理しません。
 
-## What's Here
+## ルールとSkill
 
-Blog articles, drafts, and the occasional existential crisis about whether anyone actually reads these.
+ルール、Skill、編集資料の実体はこのワークスペースにあります。
 
-## Workflow
+- `.agents/rules/`：編集範囲、著者の好み、企画と反響
+- `.agents/skill-sources/`：ホームから呼び出すSkillの実体
+- `.agents/docs/skills.md`：Skillの用途一覧
+- `docs/codex/finishing.md`：本文の検証と校正
 
-1. Write something
-2. Regret half of it
-3. Publish anyway
-4. Repeat
+ホームの `~/.agents/skills/` と `~/.claude/skills/` は同じSkillを参照します。設定や資料を直すときは `.agents/docs/skill-maintenance.md` を使います。媒体別のルールは設けません。
 
-## Local Config
+公開済み記事の履歴は別の `hatena-blog-pull` リポジトリで確認します。保存時点と公開日時を区別し、最近の記事が保存されていなければ公開ページから補います。編集中の記事へ一括取得を重ねません。
 
-Shared editorial guidance lives in `~/.local/share/blog-agents/`. Codex and Claude Code use links under `~/.agents/skills/` and `~/.claude/skills/`. This workspace links to the shared rules and docs; `AGENTS.md` describes the layout.
+## 校正
 
-## Textlint
-
-Run these commands from `blogs/`. Restore the local dependencies from the lockfile before the first check:
+依存関係が未導入の場合は、このワークスペースのlockfileから復元します。
 
 ```sh
-npm ci --include=dev --ignore-scripts --no-audit --no-fund
-npx --no-install textlint contents/senior-engineer-learning.md
+rtk proxy npm ci --include=dev --ignore-scripts --no-audit --no-fund
+rtk proxy suiko lint contents/blog.md --genre essay --json
+rtk proxy npx --no-install textlint contents/blog.md
 ```
 
-Replace the article path as needed. The workspace's `.textlintrc.json` loads the Japanese rules and `prh.yml`. A global Textlint installation alone does not provide these local dependencies. If Textlint reports `No rules found`, add `--debug` to the check command to see which configuration or rule failed to load.
+対象のパスとジャンルは記事に合わせます。Textlintはローカルの設定とprh.ymlを使います。書名を含む見出しはprhの置換対象外ですが、他のルールでは検査します。
 
-The prose replacements in `prh.yml` exclude headings, which may contain official book titles. Preserve those titles and verify them against their sources; the other Textlint rules still check headings.
-
-## Pro Tips
-
-- First drafts are supposed to be bad. That's what makes them first drafts.
-- "I'll polish it later" is a valid strategy (sometimes).
-- The best blog post is the one you actually publish.
+このワークスペースはREADME以外Gitの対象外です。原稿と私用の記録を公開リポジトリへ追加せず、ignore設定を保ちます。
