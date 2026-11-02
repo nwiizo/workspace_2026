@@ -20,7 +20,7 @@ rust_toolchain=$(rustup show active-toolchain)
 fixpoint_version=$(fixpoint --version)
 z3_version=$(z3 --version)
 
-expect_contains Flux "$flux_version" "85ae8dc"
-expect_contains Rust "$rust_toolchain" "nightly-2025-11-25"
-expect_contains Liquid-Fixpoint "$fixpoint_version" "0.9.6.3.7"
+expect_contains Flux "$flux_version" "bd5de27"
+expect_contains Rust "$rust_toolchain" "nightly-2026-10-22"
+expect_contains Liquid-Fixpoint "$fixpoint_version" "0.9.6.3.8"
 expect_contains Z3 "$z3_version" "4.16"

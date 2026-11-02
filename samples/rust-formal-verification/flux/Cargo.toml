@@ -9,11 +9,11 @@ members = ["service"]
 resolver = "3"
 
 [dependencies]
-flux-rs = { git = "https://github.com/flux-rs/flux.git", rev = "85ae8dca62b561bd49ed0a96d057625451539ad1" }
+flux-rs = { git = "https://github.com/flux-rs/flux.git", rev = "bd5de273235457a5922280cc180c4a6a2990418a" }
 
 [package.metadata.flux]
 enabled = true
-check_overflow = "strict"
+check-overflow = "strict"
 
 [features]
 failing = []
