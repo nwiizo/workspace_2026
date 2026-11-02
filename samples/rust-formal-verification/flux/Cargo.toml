@@ -13,7 +13,7 @@ flux-rs = { git = "https://github.com/flux-rs/flux.git", rev = "bd5de273235457a5
 
 [package.metadata.flux]
 enabled = true
-check_overflow = "strict"
+check-overflow = "strict"
 
 [features]
 failing = []

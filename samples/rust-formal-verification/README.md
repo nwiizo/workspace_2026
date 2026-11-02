@@ -28,6 +28,8 @@ HTTP、JSON、status codeは証明対象に含めません。採用候補のKani
 
 計測時間はこの端末での1回の実行値であり、性能比較のbenchmarkではありません。導入時に待つ時間の規模を知るための記録です。
 
+以下の比較表は2026-07-15の計測結果です。Fluxは2026-11-02に更新・再検証しており、現在の環境と結果は[FluxのREADME](flux/README.md)に記載しています。
+
 ## 結果
 
 | Tool | 方式 | 正例 | 誤例 | service | 判断 |
@@ -50,7 +52,7 @@ HTTP、JSON、status codeは証明対象に含めません。採用候補のKani
 
 ### Flux
 
-percentage、ID、index、buffer lengthなど、値域や大小関係を関数境界へ自然に書ける場合に使います。`check_overflow = "strict"`を必須とし、Flux、Rust nightly、Liquid Fixpoint、Z3のversionをCIで検査します。
+percentage、ID、index、buffer lengthなど、値域や大小関係を関数境界へ自然に書ける場合に使います。`check-overflow = "strict"`を必須とし、Flux、Rust nightly、Liquid Fixpoint、Z3のversionをCIで検査します。
 
 ### Creusot
 
