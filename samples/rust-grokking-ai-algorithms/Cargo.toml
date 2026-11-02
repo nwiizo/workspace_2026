@@ -1,0 +1,11 @@
+[package]
+name = "rust-grokking-ai-algorithms"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Dependency-free teaching implementations across Grokking AI Algorithms, Second Edition"
+license = "MIT"
+
+[lib]
+name = "grokking_ai_algorithms"
+path = "src/lib.rs"
