@@ -1,0 +1,13 @@
+[package]
+name = "php2shell-rust-safety"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.90"
+publish = false
+
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+
+[[example]]
+name = "unsafe_initialization"
+test = false
