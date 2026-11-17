@@ -9,7 +9,7 @@ members = ["service"]
 resolver = "3"
 
 [dependencies]
-flux-rs = { git = "https://github.com/flux-rs/flux.git", rev = "bd5de273235457a5922280cc180c4a6a2990418a" }
+flux-rs = { git = "https://github.com/flux-rs/flux.git", rev = "42b2480a39e84de21fd4405d2fd1518bec7b5816" }
 
 [package.metadata.flux]
 enabled = true
