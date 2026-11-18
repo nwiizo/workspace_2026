@@ -2,7 +2,7 @@ name: isucon14-rust
 
 services:
   db:
-    image: public.ecr.aws/docker/library/mysql:8.4@sha256:a0225d1ea6631c8bc2385dc4c2faba17bbf1834ecf369e1659a9a382bd8d5dd7
+    image: public.ecr.aws/docker/library/mysql:8.4@sha256:a81d043930e51745522bd5c430961cf8286f0a23f0a9a2a6e0108f7ea71b0902
     command:
       - --innodb-flush-log-at-trx-commit=${MYSQL_INNODB_FLUSH_LOG_AT_TRX_COMMIT:-2}
       - --sync-binlog=${MYSQL_SYNC_BINLOG:-0}
